@@ -22,8 +22,25 @@ entity, not of any downstream model.
 | `loan_installments` | Lending | One row per loan per scheduled installment | Incremental on `updated_at` | Scheduled and actual payment dates and amounts. Source of the delinquency buckets in question 7. |
 | `gl_entries` | Finance | One row per ledger line | Append only, immutable at source | Double-entry postings. Debits and credits must balance per posting date, which is the control in question 16. |
 | `fraud_alerts` | Fraud | One row per alert | Incremental on `updated_at`, disposition mutates | Detection rule id, triggering transaction, analyst disposition. Disposition arrives days after the alert, which makes precision a moving measure. |
-| `login_sessions` | Digital | One row per session | Append only, high volume | Device, IP country, authentication outcome. Feeds account activity and the fraud signals. |
+| `login_sessions` | Digital | One row per session | Append only, high volume | Device fingerprint, IP country, channel and authentication outcome. Source of the unrecognised-device measure in question 19. |
 | `products` | Reference | One row per product version | Incremental on `updated_at`, SCD2 in silver | Account, card and loan product catalogue with fees and rates. Product terms change over time and reporting must use the terms in force. |
-| `branches` | Reference | One row per branch | Full refresh, small volume | Servicing locations and their country. Small dimension used for attribution. |
+| `agent_locations` | Reference | One row per partner agent location | Full refresh, small volume | Cash-in and cash-out points in the partner network: post offices and retail agents where a customer pays in or withdraws cash. The location dimension behind cash transactions, and the geography behind the structuring analysis in question 11. |
 | `fx_rates` | Market data | One row per currency pair per rate date | Incremental by date, gaps carried forward | ECB reference rates from the Frankfurter API. Every EUR conversion in the platform resolves here. |
 | `sanctions_entities` | Compliance | One row per sanctioned entity per snapshot version | Weekly full refresh, versioned snapshot | OpenSanctions consolidated list. Screening results cite the version they matched against, so past decisions stay explainable. |
+
+## Entity decisions
+
+**`agent_locations` replaces `branches`.** The approved inventory named `branches`. Nordbank
+is a licensed neobank with no branch network, so a branch table would be a dimension for
+something the business does not have, and every model joining to it would be documenting a
+fiction.
+
+The real requirement underneath it is a location dimension for cash. Customers of a branchless
+bank still pay in and take out cash, through post offices and retail partners, and the
+platform needs those locations for two concrete reasons: cash transactions otherwise have no
+geography at all, and question 11 is specifically about cash deposit patterns, which are far
+more interesting when they can be grouped by where the cash was paid in.
+
+`agent_locations` therefore carries the partner network: location id, partner name, address,
+country, and the date range it was active for Nordbank. It becomes DDL at M2. Recorded as an
+amendment to spec 000.
