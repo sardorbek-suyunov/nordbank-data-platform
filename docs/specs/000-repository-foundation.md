@@ -236,3 +236,168 @@ The second check is simplified from "no `TODO` marker outside the milestone stat
 "no `TODO` token anywhere in `README.md`". The milestone table uses `done`, `in progress` and
 `pending` as status values and therefore never carries a `TODO` marker, which makes the
 positional exception unnecessary and ambiguous to implement.
+
+### 2026-09-17 — Commit count cap removed
+
+Acceptance criterion 9 required between 5 and 9 commits. The cap is removed. A commit must be
+a coherent, independently reviewable change; the number of commits is whatever that produces.
+The rest of criterion 9 stands: Conventional Commits, imperative mood, one logical change per
+commit.
+
+### 2026-09-17 — ADR word budget replaced by a quality bar
+
+Section 4 set a budget of 150 to 300 words per ADR. The budget is removed. A record must
+instead name at least one rejected alternative with the reason it lost, and at least one
+negative consequence of the option chosen. The four existing ADRs, which ran 307 to 383
+words, stand unchanged.
+
+### 2026-09-17 — Agent and editor configuration excluded from the repository (item 2)
+
+Section 2 lists the contents of `.gitignore`. Four patterns are added, covering agent and
+editor configuration: the agent configuration directory, its instructions file, `.mcp.json`
+and `*.plan.md`; the patterns themselves are in `.gitignore`. Local tooling configuration is
+not part of the platform and does not belong in a repository that documents it.
+
+### 2026-09-17 — History rewritten to remove committed configuration (item 3)
+
+One such file had already been committed. History was rewritten with `git filter-repo` to
+remove it from every commit, and `main` was force-pushed. Every commit hash from that point in
+the history onward changed, so the hashes in the M0 checkpoint are the rewritten ones. The
+repository has no collaborators, which is what makes this safe now and impossible later.
+
+### 2026-09-17 — No tool is named anywhere in the repository (item 4)
+
+`docs/conventions.md` named a specific tool configuration file when stating the commit
+attribution rule. The sentence is removed. The rule now reads without naming anything: commit
+messages and pull request descriptions carry no attribution trailers, no `Co-Authored-By`
+lines and no generated-with notices, for every contributor and every tool. No specific tool is
+named in any file in this project.
+
+### 2026-09-17 — PII handling replaced with crypto-shredding (item 5)
+
+Section 3 required a PII handling narrative; the delivered version tokenised in silver and
+kept raw identifiers in bronze, which cannot satisfy erasure without editing bronze.
+Replaced: identifiers are tokenised at ingest, before anything reaches the lake, and the
+reversible mapping lives in a vault table in `meta`. Erasure deletes the vault entry, leaving
+bronze byte-identical and permanently unresolvable. Erasure is irreversible and published
+aggregates are not retracted. Recorded in full as ADR 0005, which raises the ADR count in
+section 4 from four to five.
+
+### 2026-09-17 — Watermark extraction uses an explicit overlap (item 6)
+
+Section 6 describes incremental extraction by watermark on `updated_at`. The predicate is
+`updated_at >= watermark - EXTRACT_LAG`, default 15 minutes, not `> watermark`. It defends
+against rows sharing the boundary `updated_at` and rows committed after the watermark was
+taken. The duplicates it produces are absorbed by idempotent deduplication in silver.
+
+### 2026-09-17 — Hard deletes documented as a limitation (item 7)
+
+Watermark extraction cannot detect a physical delete in the source. Added as an explicit
+limitation, with the mitigation: a scheduled full primary-key reconciliation diffing source
+keys against silver and reporting orphans to `dq`, implemented at M7.
+
+### 2026-09-17 — Bronze fidelity reconciled with typing (item 8)
+
+Typed against the contract and what is stored is what the source sent contradicted each other.
+Resolved: for API and file sources bronze retains the raw payload alongside the parsed
+columns, a failed cast routes the row to quarantine with the reason and is never coerced to
+null, and the source row count is always reconstructable as landed plus quarantined.
+
+### 2026-09-17 — Operational marts read ops and dq (item 9)
+
+The gold contract said gold is rebuilt from silver and holds no state of its own. Amended:
+gold is rebuilt from silver, except the operational marts in the `ops` domain, which read
+`ops` and `dq` by design because the data they report on exists nowhere else.
+
+### 2026-09-17 — Currency conversion is as-of and never restated (item 10)
+
+Conversion is an as-of join taking the latest rate where `rate_date <= transaction_date`, with
+no restatement once the true same-day rate publishes, and every converted fact carries
+`fx_rate`, `fx_rate_date` and `fx_is_carried`. The ECB publishes mid-afternoon CET, so
+late-day transactions have no same-day rate at ingest, and silent restatement would make an
+already published report irreproducible.
+
+### 2026-09-17 — Schema drift behaviour defined in the bronze contract (item 11)
+
+Added to the bronze layer contract: additive source columns are accepted and logged to `meta`;
+a type change, a removed column or a primary-key change quarantines the whole batch and fails
+the ingestion gate, rather than loading part of it.
+
+### 2026-09-17 — Three scale profiles replace two (item 12)
+
+Section 3 specified an environment strategy of `dev` and `full`. Replaced with `ci` (about 500
+customers, tens of thousands of transactions, full run under a minute), `dev` (about 5,000
+customers, a few million transactions, the default) and `full` (about 250,000 customers, tens
+of millions of transactions). `.env.example` is updated. The rule that no model, DAG or
+contract is conditional on the profile is unchanged.
+
+### 2026-09-17 — Consumption path made concrete (item 13)
+
+Power BI reads gold as Parquet exported to `exports/` through a folder source until M10, then
+through the BigQuery native connector once the second dbt target exists. Streamlit opens the
+DuckDB file read-only. DuckDB has no first-party Power BI connector, which the previous text
+left unsaid.
+
+### 2026-09-17 — Silver naming rule made deterministic (item 14)
+
+`sl_<entity>` was ambiguous about singular and plural. Silver model names are plural and
+mirror the source entity name exactly (`sl_customers`, `sl_loan_installments`). Dimensions are
+singular (`dim_customer`). Facts are named for their grain (`fct_transactions`,
+`fct_account_balance_daily`).
+
+### 2026-09-17 — Numeric precision rule added (item 15)
+
+Section 5 fixed money at `DECIMAL(18,4)` and said nothing about rates. Added: exchange rates
+and interest rates are `DECIMAL(18,8)`, and percentages are stored as decimal fractions, never
+as values from 0 to 100.
+
+### 2026-09-17 — Reserved dimension members added (item 16)
+
+Every dimension carries surrogate key `-1` for Unknown and `-2` for Not applicable. Facts join
+dimensions with a left join and coalesce to those members, so a fact row is never dropped or
+silently orphaned by a missing dimension record.
+
+### 2026-09-17 — SCD2 join policy added (item 17)
+
+A fact resolves its dimension surrogate key as of the event timestamp using `_valid_from` and
+`_valid_to`. Every SCD2 dimension also exposes the natural business key as a durable key for
+current-state slicing and for Power BI relationships on latest state. Both columns are
+mandatory.
+
+### 2026-09-17 — Primary key testing rule added (item 18)
+
+Every model declares its primary key and tests it with `unique` and `not_null`, or documents
+an exemption in its schema file with the reason.
+
+### 2026-09-17 — Rate provenance required beside converted amounts (item 19)
+
+Wherever an `_amount_eur` column exists, `fx_rate` and `fx_rate_date` exist beside it. A
+converted amount with no visible rate provenance is a defect.
+
+### 2026-09-17 — Metric definitions added as a separate document (item 20)
+
+Added `docs/metric_definitions.md`, referenced from `docs/business_questions.md`: one entry per
+contested term with the exact rule, the source columns and the questions that consume it.
+Terms that genuinely cannot be decided yet, the inter-regional interchange rates and the
+funding cost assumption, are marked as undecided and to be resolved before M6, with what the
+decision depends on.
+
+### 2026-09-17 — Nineteenth business question added (item 21)
+
+`login_sessions` was ingested and consumed by nothing. Added question 19 to the Fraud and AML
+group: share of transactions preceded by a login from an unrecognised device within 24 hours,
+by channel and month, persona Head of Fraud, mart `mart_fraud_device_risk`, grain one row per
+month and channel. Acceptance criterion 5 changes from 18 questions to 19.
+
+### 2026-09-17 — Coverage rule added (item 22)
+
+Added to `docs/business_questions.md`: every source entity feeds at least one silver model, and
+every silver model either feeds a gold model or is documented as reference-only. An
+unreferenced entity is a design defect, not an accident.
+
+### 2026-09-17 — agent_locations replaces branches (item 23)
+
+Section 7 listed `branches`. A licensed neobank has no branch network, so the entity described
+something the business does not have. Replaced with `agent_locations`, the cash-in and
+cash-out partner network, which gives cash transactions a geography and supports the
+structuring analysis in question 11. The entity count in acceptance criterion 6 stays at 18.
