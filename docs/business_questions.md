@@ -5,7 +5,8 @@ these; a model that answers none of them needs a question added here first, and 
 that no model answers is an open gap.
 
 Grain is the grain the question requires, which is the grain the answering mart declares and
-tests.
+tests. Every term below that could be computed more than one defensible way is pinned in
+[metric_definitions.md](metric_definitions.md), which the answering model implements.
 
 ## Growth and customer
 
@@ -39,6 +40,7 @@ tests.
 | 11 | Customers with multiple sub-threshold cash deposits within a rolling 7-day window (structuring candidates) | Money Laundering Reporting Officer | `mart_aml_structuring_candidates` | One row per customer and window end date that breaches the rule |
 | 12 | Customers transacting with counterparties matched to the sanctions list | Money Laundering Reporting Officer | `mart_aml_sanctions_exposure` | One row per customer, matched sanctioned entity and sanctions list version |
 | 13 | Cross-border payment volume and decline rate by corridor | Head of Payments | `mart_payments_cross_border` | One row per month, origin country and destination country |
+| 19 | Share of transactions preceded by a login from an unrecognised device within 24 hours, by channel and month | Head of Fraud | `mart_fraud_device_risk` | One row per month and channel |
 
 ## Treasury and control
 
@@ -54,3 +56,16 @@ tests.
 |---|---|---|---|---|
 | 17 | Freshness SLA compliance per source per day | Data Platform Owner | `mart_ops_freshness` | One row per date and source |
 | 18 | Data quality check pass rate trend by layer and severity | Data Platform Owner | `mart_ops_quality` | One row per date, layer and severity |
+
+## Coverage
+
+Two rules, checked when a milestone closes rather than argued about per model.
+
+Every source entity in [data_dictionary.md](data_dictionary.md) feeds at least one silver
+model. Every silver model either feeds a gold model or is documented in its schema file as
+reference-only, with the reason it exists.
+
+An entity that reaches the warehouse and is consumed by nothing is a design defect: either a
+question is missing, or the entity should not be ingested. Question 19 exists because
+`login_sessions` was such an entity, and the correct response was to state the question it
+answers rather than to quietly keep loading it.
