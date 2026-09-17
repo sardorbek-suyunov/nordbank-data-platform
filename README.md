@@ -4,7 +4,7 @@ Nordbank is a simulated EU-licensed neobank. This repository is the data platfor
 a synthetic core banking system and four external feeds are ingested into a medallion
 lakehouse (bronze, silver, gold) on MinIO and DuckDB, orchestrated by Airflow, transformed by
 dbt, checked by explicit data quality gates, and consumed by a Power BI semantic model and a
-Streamlit application. The platform is built to answer the eighteen numbered questions in
+Streamlit application. The platform is built to answer the nineteen numbered questions in
 [docs/business_questions.md](docs/business_questions.md), which are the acceptance baseline
 for the gold layer.
 
@@ -28,12 +28,12 @@ to `docs/diagrams/png/` for embedding here. Until then, the end-to-end descripti
 
 | Layer | Holds | Guarantees | Does not do |
 |---|---|---|---|
-| Bronze | Landed source data, partitioned by ingest date | Typed against a contract, append only, immutable once registered, audit columns on every row, contract failures quarantined with a reason | Business logic, joins, renaming, deduplication beyond exact batch replay |
-| Silver | Conformed entities at entity grain | One row per business entity version, soft deletes applied, late arrivals ordered, EUR amounts in `DECIMAL(18,4)`, UTC timestamps, PII tokenised, SCD2 where the source mutates | Aggregation to a reporting grain |
-| Gold | Dimensional model and marts | Declared and tested grain per model, conformed dimensions, rebuildable from silver, BI-tool agnostic | Holding state that cannot be rebuilt |
+| Bronze | Landed source data, partitioned by ingest date | Typed against a contract with the raw payload retained, direct identifiers tokenised at ingest, append only, immutable once registered, audit columns on every row, contract failures quarantined with a reason | Business logic, joins, renaming, deduplication beyond exact batch replay |
+| Silver | Conformed entities at entity grain | One row per business entity version, soft deletes applied, late arrivals ordered, EUR amounts in `DECIMAL(18,4)` with rate provenance, UTC timestamps, SCD2 where the source mutates | Aggregation to a reporting grain |
+| Gold | Dimensional model and marts | Declared and tested grain per model, conformed dimensions, rebuildable from silver, BI-tool agnostic | Holding state that cannot be rebuilt. Operational marts are the one exception and read `ops` and `dq` |
 
-Two supporting schemas sit beside them: `dq` for quality check results and `ops` for batch
-registry, watermarks and freshness, with `meta` for contracts and lineage.
+Three supporting schemas sit beside them: `dq` for quality check results, `ops` for batch
+registry, watermarks and freshness, and `meta` for contracts, lineage and the PII vault.
 
 ## Stack
 
@@ -45,7 +45,7 @@ registry, watermarks and freshness, with `meta` for contracts and lineage.
 | Orchestration | Airflow 3.x | Asset-driven scheduling; the `warehouse_write` pool serialises DuckDB writes |
 | Transformation | dbt | Model naming, tests and documentation as code (ADR 0001) |
 | Quality | dbt tests and explicit gates writing to `dq` | Results are data, not log lines |
-| Consumption | Power BI, Streamlit | Semantic model and a public deployment (ADR 0004) |
+| Consumption | Power BI, Streamlit | Semantic model over exported Parquet, and a public deployment reading DuckDB read-only (ADR 0004) |
 | Tooling | uv, ruff, sqlfluff, pre-commit, GNU make | One entry point per task, pinned lockfile |
 
 ## Quickstart
@@ -105,10 +105,11 @@ Every directory carries a README stating its purpose and its ownership boundary.
 
 - [Architecture](docs/architecture.md) — sources, ingestion patterns, layer contracts, storage, orchestration, security, scale
 - [Conventions](docs/conventions.md) — the locked decisions and the naming rules
-- [Business questions](docs/business_questions.md) — the eighteen questions gold is measured against
+- [Business questions](docs/business_questions.md) — the nineteen questions gold is measured against
+- [Metric definitions](docs/metric_definitions.md) — the exact rule behind every contested term
 - [Data dictionary](docs/data_dictionary.md) — entity inventory, grain and load pattern
 - [Runbook](docs/runbook.md) — local setup, endpoints, failures, backfill, escalation
-- [Decision records](docs/adr/) — medallion layering, DuckDB, synthetic source, BI tooling
+- [Decision records](docs/adr/) — medallion layering, DuckDB, synthetic source, BI tooling, PII crypto-shredding
 - [Specifications](docs/specs/) — numbered specs and the amendment protocol
 - [Checkpoints](docs/checkpoints/) — one report per completed milestone
 
