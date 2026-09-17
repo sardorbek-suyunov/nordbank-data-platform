@@ -1,0 +1,299 @@
+# Metric definitions
+
+Every term used by [business_questions.md](business_questions.md) that could be computed two
+defensible ways is pinned here. A model that computes one of these terms implements the rule
+on this page; if the rule is wrong, this page changes first and the model follows.
+
+Entries marked **undecided, resolve before M6** depend on a decision that cannot honestly be
+made yet. They are listed with what the decision depends on, and they block the marts that
+consume them, not the layers below.
+
+All dates are UTC calendar dates. All amounts are EUR equivalents converted as-of, per the
+currency conversion rule in [architecture.md](architecture.md).
+
+## Active account
+
+**Rule.** An account is active in month M if it was open for at least one day in M and
+carried at least one customer-initiated posted transaction with a booking timestamp in M.
+Customer-initiated excludes interest postings, fee charges, and any other bank-initiated
+entry: an account that only accrued a monthly fee is not active. An account opened and closed
+inside M can still be active.
+
+**Source columns.** `sl_accounts.opened_date`, `sl_accounts.closed_date`,
+`sl_accounts.status`; `fct_transactions.account_sk`, `fct_transactions.booked_at`,
+`fct_transactions.is_customer_initiated`; `fct_payments.account_sk`, `fct_payments.booked_at`.
+
+**Used by.** Q1, and as the base of active customer for Q6.
+
+## Active customer
+
+**Rule.** A customer is active in month M if they own at least one account that is active in M
+by the definition above. This is a customer-level count: a customer with three active accounts
+counts once. Joint accounts count for every owner.
+
+The distinction from active account is not cosmetic. Q1 measures product usage at account
+level and Q6 measures revenue per person, so the two denominators differ by design and are
+never interchangeable.
+
+**Source columns.** `dim_customer.customer_sk`, `dim_account.customer_sk`, plus the active
+account inputs.
+
+**Used by.** Q6, and the denominator of any per-customer measure.
+
+## Month-over-month growth basis
+
+**Rule.** For a measure X over completed calendar months,
+`growth(M) = (X(M) - X(M-1)) / X(M-1)`. M-1 is the immediately preceding calendar month, not
+the same month last year and not a trailing 30 days. The current, incomplete month is
+excluded from the mart entirely rather than shown as a partial figure. When `X(M-1)` is zero
+the result is null, not zero and not infinity. No seasonal adjustment is applied at any point.
+
+**Source columns.** The measure's own columns plus `dim_date.month_start_date`.
+
+**Used by.** Q1.
+
+## Deposit balance
+
+**Rule.** The end-of-day balance on the last calendar day of the month, summed over accounts
+whose product class is deposit-taking: current accounts and savings accounts. Loan accounts,
+card settlement accounts and internal or suspense accounts are excluded. Overdrawn accounts
+are included at their negative balance, so the total is a net customer liability position and
+not a sum of positive balances. Accounts closed before the month end contribute nothing.
+
+**Source columns.** `fct_account_balance_daily.balance_amount`,
+`fct_account_balance_daily.balance_date`, `dim_account.product_class`,
+`dim_account.currency_code`, `dim_account.account_type`.
+
+**Used by.** Q3.
+
+## Interchange rate assumption
+
+**Rule (partially undecided).** Interchange on a settled card transaction is
+`transaction_amount_eur * interchange_rate`, where the rate is looked up from the
+`interchange_rates` seed keyed on card product class, merchant region and MCC band.
+
+The intra-EEA consumer rates are fixed by regulation and are used as given: 0.20 per cent for
+consumer debit and 0.30 per cent for consumer credit. Commercial card rates and
+inter-regional rates are **undecided, resolve before M6**: they are commercially negotiated,
+there is no single public number, and inventing one would make Q4 look precise while being
+arbitrary. The decision depends on which card products the generator issues, which is settled
+at M2.
+
+**Source columns.** `fct_transactions.transaction_amount_eur`, `dim_card.product_class`,
+`dim_merchant.country_code`, `dim_merchant.mcc_code`, `seed_interchange_rates.rate`.
+
+**Used by.** Q4, Q6.
+
+## Net interest income proxy
+
+**Rule (partially undecided).** For a loan in month M:
+
+```
+interest_accrued = outstanding_principal * nominal_annual_rate * days_in_month / 365
+nii_proxy        = interest_accrued - funding_cost
+```
+
+Outstanding principal is the month-end balance after scheduled repayments. The rate is the
+contractual nominal rate in force during M, taken from the SCD2 product dimension as of the
+month end. Fee income is excluded: it belongs to Q4 and Q6 and double counting it here would
+overstate the loan book.
+
+The funding cost assumption is **undecided, resolve before M6**. The candidate basis is the
+ECB deposit facility rate as the funding proxy applied to the funded portion of the loan
+book, which requires deciding the funding mix between customer deposits and wholesale
+funding, neither of which the source system models today. Until it is decided, Q5 reports
+gross interest accrued and states that funding cost is excluded, rather than reporting a
+number that silently equals gross.
+
+**Source columns.** `fct_loan_balance_daily.outstanding_principal`, `dim_loan_product.rate`,
+`dim_date.days_in_month`, `sl_loans.disbursed_date`.
+
+**Used by.** Q5.
+
+## Origination vintage
+
+**Rule.** The calendar month of the loan disbursement date. Not the application month and not
+the approval month: money leaving the bank is what starts the risk. A loan's vintage never
+changes, including after restructuring.
+
+**Source columns.** `sl_loans.disbursed_date`.
+
+**Used by.** Q5, Q7.
+
+## Delinquency at 30, 60 and 90 days
+
+**Rule.** Days past due at a reporting date is the reporting date minus the due date of the
+oldest installment that is not fully paid, where not fully paid means
+`paid_amount < due_amount` as at that reporting date. A loan with no unpaid installment has
+zero days past due.
+
+The buckets are cumulative: a loan at 95 days past due appears in 30+, 60+ and 90+. The
+headline delinquency rate is value-weighted, `outstanding principal in bucket / total
+outstanding principal for the vintage`, with the count-weighted rate reported beside it,
+because the two diverge when a few large loans go bad and reporting only one hides that.
+
+A loan that pays its arrears cures and leaves the bucket at the next reporting date. Cures
+are visible as a fall in the rate, not as a retrospective edit of earlier months.
+
+**Source columns.** `sl_loan_installments.due_date`, `sl_loan_installments.due_amount`,
+`sl_loan_installments.paid_amount`, `fct_loan_balance_daily.outstanding_principal`,
+`sl_loans.disbursed_date`.
+
+**Used by.** Q7.
+
+## Default
+
+**Rule.** A loan is in default from the first date it is either 90 or more days past due, or
+has been written off or terminated for non-payment by the bank, whichever happens first. The
+90-day backstop follows the regulatory convention rather than a project-specific threshold.
+
+Default is absorbing for cohort analysis: a loan that later cures is still counted as ever
+defaulted in the vintage and risk-band cohorts, because the question being asked is how often
+underwriting decisions go wrong.
+
+**Source columns.** The delinquency inputs, plus `sl_loans.status` and
+`sl_loans.written_off_date`.
+
+**Used by.** Q8.
+
+## Approval rate
+
+**Rule.** `approved applications / decided applications`, where decided is approved plus
+rejected. Applications that were withdrawn by the customer or expired without a decision are
+excluded from both numerator and denominator, and their count is reported beside the rate so
+that a rising withdrawal rate cannot hide inside an unchanged approval rate. Applications are
+attributed to the month of the decision, and the risk band is the band assigned at decision
+time, not the customer's band today.
+
+**Source columns.** `sl_loan_applications.status`, `sl_loan_applications.decided_at`,
+`sl_loan_applications.risk_band`.
+
+**Used by.** Q8.
+
+## Alert precision and false positive rate
+
+**Rule.** Over alerts that reached a final analyst disposition in month M, attributed to the
+month of disposition rather than the month the alert fired:
+
+```
+precision      = confirmed_fraud / (confirmed_fraud + dismissed)
+false_positive = dismissed / (confirmed_fraud + dismissed)
+```
+
+Alerts still open at the end of M are excluded and counted separately as a pending backlog.
+Attributing by disposition month is deliberate: dispositions arrive days after the alert, and
+attributing by alert date would force last month's published precision to change every time
+an analyst closes an old case.
+
+**Source columns.** `sl_fraud_alerts.rule_id`, `sl_fraud_alerts.disposition`,
+`sl_fraud_alerts.dispositioned_at`, `sl_fraud_alerts.created_at`.
+
+**Used by.** Q10.
+
+## Structuring threshold and window
+
+**Rule.** A customer is a structuring candidate on date D when, within the rolling 7 calendar
+day window ending on D, they made at least three cash deposits, each individually below EUR
+10,000, whose total is EUR 10,000 or more. The individual-deposit condition is what makes it
+structuring rather than a large legitimate deposit: the pattern of interest is deliberately
+staying under the reporting threshold.
+
+The window is evaluated on every date, so one customer can appear on several consecutive
+dates for the same cluster of deposits. That is intended; the mart is a candidate list for
+investigation, not a count of distinct events.
+
+Only cash deposits count. Incoming transfers and card refunds are excluded.
+
+**Source columns.** `fct_transactions.transaction_type`, `fct_transactions.channel`,
+`fct_transactions.transaction_amount_eur`, `fct_transactions.booked_at`,
+`dim_customer.customer_sk`.
+
+**Used by.** Q11.
+
+## Cross-border
+
+**Rule.** A payment is cross-border when the counterparty institution country differs from
+the country of the originating account. The originating account's country is used, not the
+customer's country of residence, because the account is what the payment leaves. The corridor
+is the ordered pair `origin account country -> counterparty country`, so a corridor is
+directional and inbound and outbound are never netted.
+
+Both SEPA and non-SEPA payments are in scope, flagged by scheme, since a cross-border SEPA
+payment is still cross-border.
+
+**Source columns.** `sl_payments.counterparty_country_code`, `dim_account.country_code`,
+`sl_payments.scheme`, `sl_payments.status`.
+
+**Used by.** Q13.
+
+## Settlement break and materiality
+
+**Rule.** For a settlement date and card network, a break is any absolute difference greater
+than EUR 0.01 between the file total and the internal ledger total for the same date and
+network, after converting both to EUR.
+
+Materiality governs the response, not the detection: a break is reported whenever it exists.
+A break below EUR 100 and below 0.1 per cent of the file total is severity `warn`. A break at
+or above either threshold is severity `error`, fails the reconciliation gate, and escalates.
+The percentage term exists so that a large file is not waved through on an absolute number,
+and the absolute term so that a tiny file is not escalated over rounding.
+
+**Source columns.** `sl_card_settlements.file_total_amount`,
+`sl_card_settlements.settlement_date`, `sl_card_settlements.network`,
+`fct_gl_entries.amount_eur`, `fct_gl_entries.posting_date`.
+
+**Used by.** Q15.
+
+## Freshness SLA per source
+
+**Rule.** A source is fresh on date D when its most recent successful batch landed within the
+window below, measured from the batch's end time recorded in `ops`. Compliance is the share
+of days on which every expected batch for that source was fresh.
+
+| Source | Expected by | Window |
+|---|---|---|
+| Core banking | 06:00 UTC daily | 24 hours plus a 2 hour grace |
+| ECB FX rates | 17:00 UTC on ECB working days | Until 17:00 UTC the previous published rate is not stale |
+| Card settlement files | 08:00 UTC daily | 24 hours plus a 4 hour grace, because the file is produced by a third party |
+| Sanctions list | 09:00 UTC each Monday | 8 days |
+| FRED macro series | 09:00 UTC on the 15th of the month | 35 days |
+
+**Source columns.** `ops.batch_registry.source`, `ops.batch_registry.ended_at`,
+`ops.batch_registry.status`, `ops.freshness_sla.window_hours`.
+
+**Used by.** Q17.
+
+## Quality check severity
+
+**Rule.** Severity is a property of the check, declared once where the check is defined, and
+is never decided per run.
+
+| Severity | Meaning | Effect |
+|---|---|---|
+| `error` | The data is wrong in a way that makes downstream numbers wrong | Fails the gate, blocks promotion of that layer, pages the owner |
+| `warn` | The data is suspicious but usable | Recorded in `dq`, does not block, reviewed in the trend |
+| `info` | A measurement kept for trend only, such as a row count drift | Recorded in `dq`, never blocks |
+
+Pass rate is `passing checks / executed checks` per layer and severity per day. A check that
+errored before it could evaluate counts as executed and failing, not as absent, so an
+outage cannot look like a clean day.
+
+**Source columns.** `dq.check_results.check_name`, `dq.check_results.severity`,
+`dq.check_results.status`, `dq.check_results.layer`, `dq.check_results.executed_at`.
+
+**Used by.** Q18.
+
+## Unrecognised device
+
+**Rule.** A device is unrecognised for a customer when its fingerprint does not appear in
+that customer's successful login sessions in the trailing 90 days before the session in
+question. A customer's first ever login is therefore always from an unrecognised device, and
+is flagged as such rather than excluded.
+
+Channel is the session channel: mobile app, web, or API.
+
+**Source columns.** `sl_login_sessions.device_fingerprint`,
+`sl_login_sessions.customer_id`, `sl_login_sessions.started_at`,
+`sl_login_sessions.auth_outcome`, `sl_login_sessions.channel`.
+
+**Used by.** Q19.
