@@ -31,7 +31,12 @@ standalone_admin_password.txt
 *.pem
 *.key
 service-account*.json
-.claude/settings.local.json
+
+# Agent and editor configuration, kept out of the repository entirely
+.claude/
+CLAUDE.md
+.mcp.json
+*.plan.md
 
 # Local scratch and generated data
 .notes/
