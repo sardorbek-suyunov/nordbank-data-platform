@@ -193,3 +193,46 @@ Streamlit application; Power BI artifacts.
 9. Commit history contains between 5 and 9 commits, each Conventional Commit
    format, each independently coherent.
 10. `docs/checkpoints/M0-summary.md` exists and documents deferred items.
+
+## Amendments
+
+Appended during implementation. The scope text above is left as approved; the protocol is in
+`docs/specs/README.md`.
+
+### 2026-09-17 — No `.gitkeep` files
+
+Section 1 asks for `.gitkeep` where a directory must exist with no content, and in the same
+paragraph asks for a `README.md` in every directory. The README already makes the directory
+tracked, so `.gitkeep` would add a file that does nothing. None is created.
+
+### 2026-09-17 — sqlfluff runs without dbt at M0
+
+Section 2 specifies `sqlfluff-templater-dbt` and section 9 specifies a tolerant `sqlfluff
+lint`. The dbt templater cannot run without a dbt project, and dbt project initialisation is
+out of scope for this milestone, so the dependency would pull `dbt-core` and `metricflow`
+into a milestone with no SQL and still not lint anything.
+
+Changed: the dev group installs plain `sqlfluff`. `.sqlfluff` uses `templater = jinja` with
+stub macros for `ref`, `source` and `config` under `[sqlfluff:templater:jinja:macros]`, so dbt
+models lint without a dbt install. `make lint` and CI skip sqlfluff when no `.sql` file exists
+under `dbt/`, printing an explicit skip message rather than reporting a silent pass. Revisited
+at M4, when the dbt project exists and the templater changes to `dbt`.
+
+### 2026-09-17 — No `.github/README.md`
+
+Section 1 lists `.github/workflows/` and section 3 requires a README per directory. GitHub
+resolves the repository homepage README in the order `.github/README.md`, root `README.md`,
+`docs/README.md`, so a README in `.github/` would replace the project README on the homepage
+and break acceptance criterion 7. `.github/` holds no README; the CI setup is documented in
+`.github/workflows/README.md`.
+
+### 2026-09-17 — CI documentation checks narrowed and simplified
+
+Section 9 requires the `Status:` check over every file in `docs/adr/` and `docs/specs/`, which
+would fail on the purpose READMEs that section 1 requires in those same directories. README
+files are exempt from the status check.
+
+The second check is simplified from "no `TODO` marker outside the milestone status table" to
+"no `TODO` token anywhere in `README.md`". The milestone table uses `done`, `in progress` and
+`pending` as status values and therefore never carries a `TODO` marker, which makes the
+positional exception unnecessary and ambiguous to implement.
