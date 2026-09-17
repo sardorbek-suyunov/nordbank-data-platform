@@ -36,43 +36,104 @@ Warehouse side, in DuckDB:
 - `gold` is the dimensional model and the marts built on it.
 - `dq` holds data quality check results, one row per check run.
 - `ops` holds pipeline state: batch registry, watermarks, run outcomes, freshness.
-- `meta` holds contract versions, column lineage and the model catalogue.
+- `meta` holds contract versions, column lineage, the model catalogue and the PII vault.
 
 ## Naming
 
-**Models.** Bronze is `br_<source>__<entity>`, with a double underscore between source and
-entity so the source stays readable when the entity name itself contains an underscore, for
-example `br_corebank__loan_installments`. Silver is `sl_<entity>`, singular for a concept and
-plural for a collection matching the source table name. Gold is `dim_<entity>`,
-`fct_<grain>` and `mart_<domain>_<subject>`.
+**Bronze.** `br_<source>__<entity>`, with a double underscore between source and entity so the
+source stays readable when the entity name itself contains an underscore, for example
+`br_corebank__loan_installments`.
 
-**Columns.** `snake_case`. Business keys keep the source name and the `_id` suffix.
-Surrogate keys take the `_sk` suffix and are the hash of the business key, plus the valid-from
+**Silver.** `sl_<entity>`, where `<entity>` is plural and mirrors the source entity name
+exactly: `sl_customers`, `sl_loan_installments`, `sl_gl_entries`. No renaming, no
+singularisation, no interpretation. The rule is mechanical so that two engineers deriving a
+name from the same source table arrive at the same answer.
+
+**Gold.** Dimensions are singular: `dim_customer`, `dim_merchant`, `dim_date`. Facts are named
+for their grain, not for their source: `fct_transactions` is one row per transaction,
+`fct_account_balance_daily` is one row per account per day. If the grain cannot be read off
+the model name, the name is wrong. Marts are `mart_<domain>_<subject>`.
+
+**Columns.** `snake_case`. Business keys keep the source name and the `_id` suffix. Surrogate
+keys take the `_sk` suffix and are the hash of the business key, plus the valid-from
 timestamp where the entity is SCD2. Booleans read as a statement: `is_active`,
 `has_collateral`. Dates end in `_date`, timestamps in `_at`. Money columns end in the
 currency treatment they carry: `_amount` is in the transaction currency and travels with a
-`_currency` column, `_amount_eur` is converted at the rate of the transaction date.
-Platform-generated columns start with an underscore, so a column beginning with `_` is never
-sourced from the bank.
+`_currency` column, `_amount_eur` is the converted value. Platform-generated columns start
+with an underscore, so a column beginning with `_` is never sourced from the bank.
 
 **DAG ids.** `ingest_<source>` for extraction into bronze, `transform_<layer>` for dbt runs,
 `dq_<scope>` for quality gates, `ops_<purpose>` for maintenance, `gov_<purpose>` for
-governance work such as GDPR deletion. The DAG id, the module filename and the Airflow
-asset prefix are identical.
+governance work such as erasure. The DAG id, the module filename and the Airflow asset prefix
+are identical.
 
-**Tests.** A generic dbt test is declared in the model schema file next to the column it
-constrains. A singular test lives in `dbt/tests/` and is named for the rule it enforces, for
-example `assert_gl_entries_balance_by_day.sql`. Every test declares a severity: `error`
-blocks the run, `warn` is recorded in the `dq` schema and reported.
+## Numeric types
+
+| Kind of value | Type | Notes |
+|---|---|---|
+| Monetary amounts | `DECIMAL(18,4)` | Floating point is prohibited, including in intermediate arithmetic |
+| Exchange rates and interest rates | `DECIMAL(18,8)` | Four decimals is not enough for a rate that multiplies a balance |
+| Percentages and ratios | `DECIMAL(18,8)` as a decimal fraction | 0.0425 means 4.25 per cent. Never stored as 0 to 100, and never as an integer |
+
+Formatting a fraction as a percentage is the presentation layer's job. A column holding 4.25
+for 4.25 per cent is a defect, because the next person to multiply by it will be wrong by two
+orders of magnitude and nothing will fail.
+
+## Currency provenance
+
+Wherever an `_amount_eur` column exists, `fx_rate` and `fx_rate_date` exist beside it, and
+`fx_is_carried` where the rate may have been carried forward. A converted amount with no
+visible rate provenance is a defect: the number cannot be reproduced, checked or explained
+without them.
+
+## Dimensional modelling
+
+**Reserved members.** Every dimension carries two reserved rows: surrogate key `-1` for
+Unknown, meaning the business key was absent or did not resolve, and `-2` for Not applicable,
+meaning the relationship does not exist for that fact.
+
+**Joins.** Facts join dimensions with a left join and coalesce the resulting surrogate key to
+`-1` or `-2`. A fact row is never dropped because a dimension record is missing, and a
+missing dimension record never silently becomes a null that disappears from a grouped result.
+A rising count of `-1` members is a data quality signal, and it is reported as one in `dq`.
+
+**SCD2 resolution.** A fact resolves its dimension surrogate key as of the event timestamp:
+
+```
+on  f.event_at >= d._valid_from
+and f.event_at <  d._valid_to
+```
+
+so that a transaction from March joins the customer as they were in March, not as they are
+today.
+
+Every SCD2 dimension also exposes the natural business key as a durable key, stable across
+versions. Current-state slicing and the Power BI relationships that point at latest state use
+the durable key; history-aware facts use the surrogate key. Both columns are present on every
+SCD2 dimension, and neither is optional.
+
+## Tests
+
+A generic dbt test is declared in the model schema file next to the column it constrains. A
+singular test lives in `dbt/tests/` and is named for the rule it enforces, for example
+`assert_gl_entries_balance_by_day.sql`.
+
+Every model declares its primary key and tests it with `unique` and `not_null`. A model that
+cannot is exempt only by documenting the exemption in its schema file, with the reason. An
+undeclared grain is not an exemption, it is an unfinished model.
+
+Every test declares a severity: `error` blocks the run, `warn` is recorded in the `dq` schema
+and reported.
 
 ## Commits
 
 Conventional Commits, imperative mood, lower case subject, no trailing period, one logical
 change per commit. Types in use: `feat`, `fix`, `docs`, `build`, `ci`, `refactor`, `test`,
-`chore`.
+`chore`. The number of commits in a change is whatever coherent, independently reviewable
+units produce; there is no target count.
 
 No emoji anywhere in the repository, including commit messages.
 
 Commit messages and pull request descriptions carry no attribution trailers: no
-`Co-Authored-By` lines, no generated-with notices. `.claude/settings.json` sets this for any
-agent run inside the repository; contributors working by hand follow the same rule.
+`Co-Authored-By` lines and no generated-with notices. This applies to every contributor and
+every tool.
