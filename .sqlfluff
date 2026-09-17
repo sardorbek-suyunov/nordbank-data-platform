@@ -1,0 +1,32 @@
+[sqlfluff]
+dialect = duckdb
+templater = jinja
+max_line_length = 120
+
+[sqlfluff:indentation]
+tab_space_size = 4
+indent_unit = space
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = lower
+
+# dbt is not installed at M0 (see the amendment dated 2026-09-17 in
+# docs/specs/000-repository-foundation.md). These stubs let dbt models lint with the jinja
+# templater and no dbt project. Revisited at M4, when the dbt project exists and the
+# templater switches to dbt.
+[sqlfluff:templater:jinja:macros]
+ref = {% macro ref(model_name) %}{{ model_name }}{% endmacro %}
+source = {% macro source(source_name, table_name) %}{{ source_name }}_{{ table_name }}{% endmacro %}
+config = {% macro config() %}{% set _ = kwargs %}{% endmacro %}

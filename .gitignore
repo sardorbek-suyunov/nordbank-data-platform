@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# uv
+.venv/
+.uv-cache/
+
+# dbt
+target/
+dbt_packages/
+logs/
+.user.yml
+
+# DuckDB
+*.duckdb
+*.duckdb.wal
+
+# Airflow
+airflow.db
+airflow-webserver.pid
+standalone_admin_password.txt
+
+# Secrets and local configuration
+.env
+*.pem
+*.key
+service-account*.json
+.claude/settings.local.json
+
+# Local scratch and generated data
+.notes/
+data/
+exports/
+
+# IDE and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
