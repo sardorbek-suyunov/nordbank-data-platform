@@ -3,7 +3,10 @@
 Status: Accepted
 Date: 2026-09-17
 Revised: 2026-09-18, during the M0 review, to add the payload fidelity and quarantine
-consequences. The decision itself is unchanged.
+consequences. Revised again 2026-09-18, at M2, to add the consequence that the vault is also
+the only path to a sanctions screen, and that erasure therefore also destroys the ability to
+re-screen a subject. The decision itself is unchanged in both cases; the screening decision
+that produced the second revision is its own record, ADR 0010.
 
 ## Context
 
@@ -68,6 +71,25 @@ glance at the data.
 
 The key cannot be rotated cheaply. Rotation changes every token and therefore every join key
 derived from it, which means re-tokenising the vault and rebuilding silver and gold.
+
+**Added at M2: the vault is the only path to a sanctions screen, as well as the only path to
+erasure.** A payment counterparty name is an identifier and is tokenised like any other, so
+screening cannot happen in silver against a hash. It runs instead as a governance-domain job
+that resolves tokens through the vault, matches them against a named list version, and
+persists only the token, the matched entity, the list version and the score. The raw name
+never leaves the vault.
+
+This is what makes historical re-screening possible. Screening once at ingest would answer the
+question only for the list as it stood that day, and re-screening the book when the list
+changes is how the control is actually operated.
+
+Two consequences follow. First, **erasure also destroys the ability to re-screen that
+subject**: their tokens no longer resolve, so no future list version can be matched against
+them. That is correct behaviour rather than a defect, and it is recorded here so that it is
+not discovered during an investigation. Second, the concentration of risk described above is
+now larger than this record originally stated: the vault was a single point of failure for
+erasure, and it is now a single point of failure for a compliance control as well. Access to
+`meta` is restricted accordingly, and separately from access to the warehouse.
 
 ## Alternatives considered
 
