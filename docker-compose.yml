@@ -1,8 +1,11 @@
 # Local stack for the Nordbank platform (spec 001).
 #
-# Memory limits are deliberate: the total across the long-running services is about 7.5 GiB, so
-# the stack is validated at the documented floor rather than at whatever the developer machine
-# happens to have. `mem_limit` is used rather than `deploy.resources`, which is swarm-scoped.
+# Memory limits are deliberate and measured: 5632 MiB across the long-running services, set
+# from observed usage rather than guessed, so the stack is validated at a documented floor
+# instead of at whatever the developer machine happens to have. The scheduler keeps the largest
+# share because LocalExecutor runs tasks inside it, and dbt and pyarrow arrive at M4. The floor
+# is re-measured at every milestone that adds runtime work; see docs/runbook.md.
+# `mem_limit` is used rather than `deploy.resources`, which is swarm-scoped.
 #
 # The MinIO images are pinned by tag and digest because those repositories have already moved
 # registry once; everything else is pinned by tag.
@@ -101,7 +104,7 @@ services:
   minio:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
-    mem_limit: 1g
+    mem_limit: 512m
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -154,7 +157,7 @@ services:
   airflow-apiserver:
     <<: *airflow-common
     restart: unless-stopped
-    mem_limit: 1536m
+    mem_limit: 1024m
     command: api-server
     ports:
       - "${AIRFLOW_WEB_PORT}:8080"
@@ -186,7 +189,7 @@ services:
   airflow-dag-processor:
     <<: *airflow-common
     restart: unless-stopped
-    mem_limit: 1g
+    mem_limit: 512m
     command: dag-processor
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
@@ -201,7 +204,7 @@ services:
   airflow-triggerer:
     <<: *airflow-common
     restart: unless-stopped
-    mem_limit: 1g
+    mem_limit: 512m
     command: triggerer
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
