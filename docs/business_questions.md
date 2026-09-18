@@ -69,6 +69,14 @@ entity should not be ingested. Question 19 exists because `login_sessions` was s
 and the correct response was to state the question it answers rather than to quietly keep
 loading it.
 
+A `ref` table is not exempt from this. Exempting reference data would reopen exactly the
+orphan problem the rule closes, on the twenty-eight tables least likely to be looked at. The
+rule applies in the form the reference layer makes sense in: **a `ref` table either becomes a
+conformed dimension in its own right, or is consumed as attributes of one, and either way it
+is named in [model_inventory.md](model_inventory.md) and
+[data_dictionary.md](data_dictionary.md) with the dimension that consumes it.** Nothing is
+unaccounted for, and nothing needs twenty-eight silver models.
+
 **Nothing homeless.** Every object named in [metric_definitions.md](metric_definitions.md) or
 in a mart specification appears in [model_inventory.md](model_inventory.md) with a layer, a
 grain and the milestone that builds it. A metric that reads from a table nobody has planned is

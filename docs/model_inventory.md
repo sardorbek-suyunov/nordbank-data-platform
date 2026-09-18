@@ -14,14 +14,14 @@ Naming follows [conventions.md](conventions.md).
 
 ## Seeds
 
-| Object | Grain | Upstream | Serves | Milestone |
-|---|---|---|---|---|
-| `seed_mcc_codes` | One row per merchant category code | `mcc_codes` reference data, version controlled | Q4 | M5 |
-| `seed_interchange_rates` | One row per card product class, merchant region and MCC band | Regulated EEA rates plus the assumptions recorded in metric definitions | Q4, Q6 | M5 |
-| `seed_country_currency` | One row per country | ISO country and currency reference | Q1, Q13, Q14 | M5 |
-| `seed_risk_bands` | One row per risk band | Underwriting band thresholds | Q8 | M5 |
+There are none. The four seeds this table carried at M0 were dropped at M2: `seed_mcc_codes`,
+`seed_interchange_rates`, `seed_country_currency` and `seed_risk_bands` all duplicated data
+that now lives in the source database's `ref` schema, and two homes for one rate table is two
+numbers that can disagree. The reference tables are ingested like any other source entity.
 
-Seeds are their own source, so the coverage rule treats them as reference-only by definition.
+Reference data is version controlled either way; the difference is that it is now version
+controlled in one place, `infra/docker/postgres-source/seed/`, and reaches the warehouse
+through the same extraction path as everything else.
 
 ## Silver
 
@@ -40,10 +40,14 @@ One model per source entity, at entity grain, built at M5 unless noted.
 | `sl_loans` | One row per loan version (SCD2) | `br_corebank__loans` | Q5, Q7, Q8, Q9 |
 | `sl_loan_applications` | One row per application version | `br_corebank__loan_applications` | Q8, Q9 |
 | `sl_loan_installments` | One row per loan and installment version | `br_corebank__loan_installments` | Q7, Q8, Q9 |
+| `sl_gl_transactions` | One row per posting batch | `br_corebank__gl_transactions` | Q16 |
 | `sl_gl_entries` | One row per ledger line | `br_corebank__gl_entries` | Q15, Q16 |
 | `sl_fraud_alerts` | One row per alert version | `br_corebank__fraud_alerts` | Q10 |
 | `sl_login_sessions` | One row per session | `br_corebank__login_sessions` | Q19 |
-| `sl_products` | One row per product version (SCD2) | `br_corebank__products` | Q1, Q5 |
+| `sl_fraud_rules` | One row per detection rule version (SCD2) | `br_corebank__fraud_rules` | Q10 |
+| `sl_account_types` | One row per account type version (SCD2) | `br_corebank__account_types` | Q1, Q3 |
+| `sl_card_products` | One row per card product version (SCD2) | `br_corebank__card_products` | Q4 |
+| `sl_loan_products` | One row per loan product version (SCD2) | `br_corebank__loan_products` | Q5 |
 | `sl_agent_locations` | One row per agent location version (SCD2) | `br_corebank__agent_locations` | Q11 |
 | `sl_fx_rates` | One row per currency per calendar date | `br_ecb__fx_rates`, gap-filled | Every EUR conversion, Q14 |
 | `sl_sanctions_entities` | One row per sanctioned entity per list version | `br_opensanctions__entities` | Q12 |
@@ -52,7 +56,24 @@ One model per source entity, at entity grain, built at M5 unless noted.
 
 `sl_card_settlements` and `sl_macro_indicators` come from sources whose entities are not in the
 M0 entity inventory, which lists the core banking entities plus `fx_rates` and
-`sanctions_entities`. Their entity-level and column-level definitions arrive with spec 002.
+`sanctions_entities`. Their entity-level and column-level definitions arrive at **M4** with the
+contracts for the card settlement file and the FRED feed. This table previously said spec 002,
+which was wrong: spec 002's scope is the core banking system, and those two are separate
+sources with separate contracts.
+
+**The `products` entity is gone.** The M0 inventory carried one `sl_products` model over one
+`products` source entity covering account, card and loan products. Spec 002 replaced it with
+three reference tables, because the three have different attributes and different consumers and
+one table would have been a union of three disjoint column sets. The three silver models above
+replace it.
+
+**The remaining reference tables** are consumed as conformed attributes of the dimensions that
+use them rather than as silver models of their own. Each is named in
+[data_dictionary.md](data_dictionary.md) with the dimension that consumes it, so the coverage
+rule is satisfied in both directions without twenty-eight silver models. Whether an individual
+reference table materialises as its own silver model or is joined in as attributes of the
+dimension that consumes it is an M5 decision; what M2 fixes is that none of them is
+unaccounted for.
 
 ## Gold dimensions
 
@@ -62,13 +83,13 @@ and a durable business key, per the conventions.
 | Object | Grain | Upstream | Serves |
 |---|---|---|---|
 | `dim_customer` | One row per customer version | `sl_customers`, `sl_customer_addresses` | Q1, Q2, Q6, Q8, Q11, Q12, Q19 |
-| `dim_account` | One row per account version | `sl_accounts`, `sl_products` | Q1, Q3, Q13 |
-| `dim_card` | One row per card version | `sl_cards`, `sl_products` | Q4, Q10 |
-| `dim_merchant` | One row per merchant version | `sl_merchants`, `seed_mcc_codes` | Q4 |
-| `dim_loan_product` | One row per loan product version | `sl_products` | Q5, Q7, Q8 |
+| `dim_account` | One row per account version | `sl_accounts`, `sl_account_types` | Q1, Q3, Q13 |
+| `dim_card` | One row per card version | `sl_cards`, `sl_card_products` | Q4, Q10 |
+| `dim_merchant` | One row per merchant version | `sl_merchants`, `ref.mcc_codes` attributes | Q4 |
+| `dim_loan_product` | One row per loan product version | `sl_loan_products` | Q5, Q7, Q8 |
 | `dim_agent_location` | One row per agent location version | `sl_agent_locations` | Q11 |
-| `dim_currency` | One row per currency | `seed_country_currency` | Q3, Q14 |
-| `dim_detection_rule` | One row per fraud detection rule version | `sl_fraud_alerts` | Q10 |
+| `dim_currency` | One row per currency | `ref.currencies` | Q3, Q14 |
+| `dim_detection_rule` | One row per fraud detection rule version | `sl_fraud_rules` | Q10 |
 | `dim_date` | One row per calendar date | Generated | All time series questions |
 | `bridge_account_holder` | One row per account and holder | `sl_account_holders` | Q3, Q6, Q11 |
 
@@ -138,7 +159,7 @@ operational marts, which is the exception to gold reading only silver.
 
 | Flag | Defined in | Derived in | Serves |
 |---|---|---|---|
-| `is_customer_initiated` | [metric_definitions.md](metric_definitions.md) | `sl_transactions`, `sl_payments` | Q1, Q6 |
+| `is_customer_initiated` | `ref.transaction_types`, `ref.payment_types` | `sl_transactions`, `sl_payments` | Q1, Q6 |
 | `fx_is_carried` | [architecture.md](architecture.md) | `sl_fx_rates` | Every converted amount |
 | `fx_is_missing` | [architecture.md](architecture.md) | Conversion macro | Every converted amount |
 | `_is_current` | [conventions.md](conventions.md) | Every SCD2 silver model | History-aware joins |

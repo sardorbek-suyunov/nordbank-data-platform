@@ -7,8 +7,8 @@ default, because the default would silently be the least protective one.
 
 | Class | What it is | Handling |
 |---|---|---|
-| `identifier` | Singles out a person directly: full name, national identifier, email address, phone number, IBAN, card PAN, device fingerprint | Tokenised in the extraction task with a keyed hash, before anything is written to the lake. The token-to-value mapping goes to the vault in `meta`. Quarantine stores the token, never the cleartext. Erasable: deleting the vault entry is the erasure |
-| `quasi-identifier` | Does not identify alone, but does in combination: date of birth, postcode, address, signup date, employer, IP address | Retained in the clear in bronze and silver, because generalising needs the underlying value. Generalised before gold: age band, country and region, tenure band. Never exposed raw in gold or in any export |
+| `identifier` | Singles out a person directly: full name, national identifier, email address, phone number, IBAN, card PAN, device fingerprint, IP address, address lines, a payment counterparty name | Tokenised in the extraction task with a keyed hash, before anything is written to the lake. The token-to-value mapping goes to the vault in `meta`. Quarantine stores the token, never the cleartext. Erasable: deleting the vault entry is the erasure |
+| `quasi-identifier` | Does not identify alone, but does in combination: date of birth, city, postal code, country, signup date, employer | Retained in the clear in bronze and silver, because generalising needs the underlying value. Generalised before gold: age band, country and region, tenure band. Never exposed raw in gold or in any export |
 | `sensitive` | Special category or otherwise restricted, and meaningful only at full precision: KYC risk rating, sanctions match detail, fraud disposition notes, income | Retained at full precision, access-restricted at the schema level, and not generalised, because banding it would destroy the analysis it exists for. Exposed in gold only in aggregate |
 | `non-personal` | Everything else: amounts, currencies, product codes, MCC, timestamps of system events, merchant identity | No restriction |
 
@@ -29,6 +29,28 @@ have been both useless analytically and weak in practice.
 
 The general rule follows from that example. Tokenise what needs to be joinable and never
 needs to be interpreted. Generalise what needs to be interpreted but not identified.
+
+## Where the line falls on an address and on an IP address
+
+Spec 002 applies the taxonomy column by column, and two of its rulings moved columns this page
+had previously grouped together.
+
+**An address splits.** The address lines are an `identifier`: a street and number identify a
+household directly, and nothing downstream interprets them. The city, the postal code and the
+country are `quasi-identifiers`: they are what geography reporting and cross-border checks are
+built from, so they stay in the clear and are generalised before gold.
+
+The postal code is stored in full and the district used before gold is `left(postal_code, 2)`.
+That is a deliberate simplification, recorded rather than hidden: EU postcode formats differ,
+and a production system would apply a country-specific rule instead of a fixed prefix.
+
+**An IP address is an `identifier`, not a quasi-identifier.** It singles out a connection and,
+with a subscriber record, a person; and unlike a date of birth, nothing downstream needs to
+interpret its value. It is therefore tokenised. The consequence is that the geography Q19
+groups by cannot be recovered from the token, so `core.login_sessions.ip_country_code` is
+resolved at the source and classified as a quasi-identifier alongside the address geography.
+Resolving it at the source rather than after tokenisation is the whole reason that column
+exists.
 
 ## Interaction with erasure
 

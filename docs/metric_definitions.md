@@ -67,8 +67,11 @@ whether the customer touched the account or not. The flag is derived once, in si
 source transaction type, and every downstream activity measure uses it rather than
 re-deriving its own list.
 
-**Source columns.** `sl_transactions.transaction_type`, `sl_transactions.initiator`,
-`sl_payments.payment_type`.
+**Source columns.** `sl_transactions.transaction_type` with
+`ref.transaction_types.is_customer_initiated`, and `sl_payments.payment_type` with
+`ref.payment_types.is_customer_initiated`. The flag has one source, the reference table
+reached through the type foreign key. An `initiator` column on the transaction itself was
+considered and rejected at M2: it would be a second source that can disagree with the first.
 
 **Used by.** Active account, and through it Q1 and Q6.
 
@@ -112,7 +115,12 @@ arbitrary. The decision depends on which card products the generator issues, whi
 at M2.
 
 **Source columns.** `fct_transactions.transaction_amount_eur`, `dim_card.product_class`,
-`dim_merchant.country_code`, `dim_merchant.mcc_code`, `seed_interchange_rates.rate`.
+`dim_merchant.country_code`, `dim_merchant.mcc_code`, `ref.interchange_rates.rate`.
+
+A null rate is an error condition, never zero. A transaction that resolves to a null rate
+raises a `dq` check of severity `error`, blocks the mart, and Q4 publishes no number for the
+affected period. Treating a null as zero would understate interchange revenue silently, which
+is the failure mode this page exists to prevent.
 
 **Used by.** Q4, Q6.
 
@@ -142,8 +150,10 @@ funding, neither of which the source system models today. Until it is decided, Q
 gross interest accrued and states that funding cost is excluded, rather than reporting a
 number that silently equals gross.
 
-**Source columns.** `fct_loan_balance_daily.outstanding_principal`, `dim_loan_product.rate`,
-`dim_date.days_in_month`, `sl_loans.disbursed_date`.
+**Source columns.** `fct_loan_balance_daily.outstanding_principal`, `dim_loan_product.rate`
+from `ref.loan_products.nominal_annual_rate`, `dim_date.days_in_month`,
+`sl_loans.disbursed_date`. A disbursed loan also carries its own `nominal_annual_rate`, copied
+from the product at disbursement, because a loan keeps the terms it was written under.
 
 **Used by.** Q5.
 
@@ -223,7 +233,10 @@ attributing by alert date would force last month's published precision to change
 an analyst closes an old case.
 
 **Source columns.** `sl_fraud_alerts.rule_id`, `sl_fraud_alerts.disposition`,
-`sl_fraud_alerts.dispositioned_at`, `sl_fraud_alerts.created_at`.
+`sl_fraud_alerts.dispositioned_at`, `sl_fraud_alerts.alerted_at`. The alert instant is
+`alerted_at` and not `created_at`: from M2, `created_at` and `updated_at` are reserved for
+audit columns on every table, because the loader writes a historical alert time and a
+trigger writes the audit time, so one column cannot honestly be both.
 
 **Used by.** Q10.
 
