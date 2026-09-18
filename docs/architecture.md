@@ -132,6 +132,14 @@ drift means a new contract version and an explicit rerun.
 business key, resolves late arrivals by `updated_at`, applies soft deletes, converts amounts
 to `DECIMAL(18,4)` with an EUR equivalent, and normalises timestamps to UTC.
 
+A soft delete and a deactivated reference code are not the same thing and are not applied the
+same way. `is_deleted` on a `core` row means the entity is gone, and silver removes it.
+`is_active = false` on a `ref` row means the code is no longer offered, and silver **retains**
+the row: a dimension must still describe historical facts that reference a retired code, and a
+transaction booked under a channel the bank has since withdrawn still needs that channel to
+have a name. `ref` tables therefore carry `is_active` and never `is_deleted`, which is what
+makes the two cases impossible to confuse (spec 002 design rule 3).
+
 Identifiers stay tokenised: silver never resolves a token, and a keyed hash could not be
 resolved without the vault in any case. The attributes reporting needs are derived instead by
 generalising quasi-identifiers, which are retained in the clear precisely so that they can be:
@@ -306,6 +314,35 @@ generalised attributes such as country and age band, never cleartext identifiers
 The erasure workflow itself is a governance DAG (`gov_erasure`), implemented at M8, which
 records each erasure in `meta` with its request, timestamp and the tokens affected, so the
 platform can prove what it did without retaining what it erased.
+
+### Sanctions screening reads the vault
+
+A payment's counterparty name is an identifier, so it is tokenised at ingest like any other,
+which appears to make question 12 impossible: a sanctions list is matched on names, and silver
+holds a hash.
+
+Screening therefore runs as a **governance-domain job with vault access**, not as a
+transformation in silver. It resolves tokens to names through the vault, screens them against a
+named list version, and persists only the token, the matched entity, the list version and the
+match score. The raw name never leaves the vault, and never reaches silver, gold or an export.
+
+Screening at ingest time, before tokenisation, was the obvious alternative and is wrong. A
+sanctions list changes weekly, and the question a compliance function actually asks is whether
+anyone the bank has already paid appears on the list as it stands today. Screening once at
+ingest answers that only for the list as it stood then, and re-screening the book against an
+updated list is how the control is really operated. Resolving through the vault at screening
+time is what makes historical re-screening possible at all.
+
+The consequence follows and is stated rather than discovered: **erasing a subject also destroys
+the ability to re-screen them.** Their tokens no longer resolve, so no future list version can
+be matched against them. That is correct — the subject has exercised a right to be forgotten,
+and what remains is a hash with no surviving key material — but it is a real capability lost at
+a real moment, and it belongs in the erasure record rather than in a surprise.
+
+This makes the vault load-bearing for a second reason. It was already the only path to erasure;
+it is now also the only path to a sanctions screen. The concentration of risk noted in ADR 0005
+is correspondingly larger, and access to `meta` is correspondingly more restricted than access
+to the warehouse.
 
 The rationale, the rejected alternatives and the full set of consequences are in ADR 0005.
 
