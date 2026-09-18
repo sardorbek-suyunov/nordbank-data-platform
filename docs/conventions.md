@@ -64,8 +64,15 @@ keys take the `_sk` suffix and are the hash of the business key, plus the valid-
 timestamp where the entity is SCD2. Booleans read as a statement: `is_active`,
 `has_collateral`. Dates end in `_date`, timestamps in `_at`. Money columns end in the
 currency treatment they carry: `_amount` is in the transaction currency and travels with a
-`_currency` column, `_amount_eur` is the converted value. Platform-generated columns start
-with an underscore, so a column beginning with `_` is never sourced from the bank.
+`_currency_code` column, `_amount_eur` is the converted value. Platform-generated columns
+start with an underscore, so a column beginning with `_` is never sourced from the bank.
+
+**`created_at` and `updated_at` are reserved.** No business timestamp on any table may take
+either name. Both are audit columns whose meaning must be uniform, because watermark
+extraction depends on it: a table where `created_at` held a business event time would have
+that column written by the loader and its `updated_at` written by the trigger, so the two
+would disagree and `created_at` would no longer say when the row entered the database. A
+business timestamp is named for its event: `alerted_at`, `booked_at`, `started_at`.
 
 **DAG ids.** `ingest_<source>` for extraction into bronze, `transform_<layer>` for dbt runs,
 `dq_<scope>` for quality gates, `ops_<purpose>` for maintenance, `gov_<purpose>` for
@@ -77,12 +84,56 @@ are identical.
 | Kind of value | Type | Notes |
 |---|---|---|
 | Monetary amounts | `DECIMAL(18,4)` | Floating point is prohibited, including in intermediate arithmetic |
+| Ledger amounts | `DECIMAL(18,4)`, **signed** | Documented exception to the non-negative guidance, below |
 | Exchange rates and interest rates | `DECIMAL(18,8)` | Four decimals is not enough for a rate that multiplies a balance |
 | Percentages and ratios | `DECIMAL(18,8)` as a decimal fraction | 0.0425 means 4.25 per cent. Never stored as 0 to 100, and never as an integer |
 
 Formatting a fraction as a percentage is the presentation layer's job. A column holding 4.25
 for 4.25 per cent is a defect, because the next person to multiply by it will be wrong by two
 orders of magnitude and nothing will fail.
+
+**Signed ledger amounts are a deliberate exception.** `core.gl_entries.amount` is signed: a
+debit is positive and a credit is negative, bound to `entry_side_code` by a check constraint.
+The general guidance that amounts are non-negative where the domain requires it does not apply
+to it. This is recorded here because the alternative looks like a defect to anyone who has not
+read spec 002: with signed amounts, "the batch balances" is literally `sum(amount) = 0` per
+currency, and making the column non-negative would replace one check with a comparison of two
+aggregates and gain nothing. Do not "fix" it.
+
+## Reference data and categorical values
+
+**A categorical value earns a lookup table in `ref` if either limb holds.**
+
+*Behavioural attribute.* The table carries at least one attribute beyond `code`, `name` and
+`is_active` that a model or metric named in `metric_definitions.md` or `model_inventory.md`
+consumes, and that attribute adds information the code does not already carry.
+`transaction_types.is_customer_initiated` is the template: it groups eight codes into one flag.
+A boolean that is true for exactly one code of a two-value domain restates the code and does
+not qualify.
+
+*Open vocabulary.* The set of values is open and expected to grow with data rather than with
+schema changes. A vocabulary that grows with data must live in data, or every new value is a
+schema migration in a system whose purpose is generating varied data. This limb is independent
+of the first and is the stronger of the two, because it is about where a value can be added
+from rather than about what reads it. `loan_applications.decision_reason_code` qualifies on it
+alone and carries no attribute at all.
+
+A categorical domain satisfying neither limb is a **check constraint against a value list
+documented in `data_dictionary.md`**, on the column that holds it, not a table.
+
+**The stopping rule.** A categorical attribute of a `ref` row stays a plain column unless it is
+a join key shared with another table. Without it the rule recurses into a lookup for every
+adjective on a lookup.
+
+**`is_deleted` in `core`, `is_active` in `ref`, and the difference matters.** A `core` table
+carries `created_at`, `updated_at` and `is_deleted`. A `ref` table carries `created_at`,
+`updated_at` and `is_active`, and never `is_deleted`: reference rows are deactivated, not
+deleted, and two overlapping flags on one row would be a defect rather than thoroughness. The
+distinction is a downstream contract, not a naming preference. `is_deleted` on a `core` row
+means the entity is removed from silver. `is_active = false` on a `ref` row means the row is
+**retained**, because a dimension must still describe historical facts that reference a retired
+code: a transaction booked under a channel the bank has since withdrawn still needs that
+channel to have a name.
 
 ## Currency provenance
 
@@ -175,12 +226,13 @@ From M2 onward, work happens on a branch and lands through a pull request. `main
 written to directly.
 
 - Branch names are `feat/M<n>-<slug>`, for example `feat/M2-source-ddl`.
-- A pull request is required, and the `ci` and `stack` checks must pass before it can merge.
+- A pull request is required, and four status checks must pass before it can merge: `lint`,
+  `dags` and `docs` from the `ci` workflow, and `stack` from the `stack` workflow.
 - **Rebase merge only.** Squash merging and merge commits are disabled in the repository
   settings. The commits in a branch are written to be individually reviewable, and squashing
   them into one would throw that away; a merge commit would add a node that says nothing.
-- `main` is protected: both status checks required, a pull request required, force pushes
-  refused.
+- `main` is protected: all four status checks required, a pull request required, force pushes
+  refused, and `enforce_admins` on.
 
 A pull request description is an engineering summary, under the same prose rules as the
 documentation: what changed, why it changed, how it was verified, and what was deliberately
