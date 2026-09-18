@@ -54,6 +54,11 @@ for their grain, not for their source: `fct_transactions` is one row per transac
 `fct_account_balance_daily` is one row per account per day. If the grain cannot be read off
 the model name, the name is wrong. Marts are `mart_<domain>_<subject>`.
 
+A many-to-many relationship between two dimensions is a bridge, named
+`bridge_<relationship>` and singular: `bridge_account_holder` is one row per account and
+holder. A bridge carries the allocation factor the relationship needs, so that monetary
+measures can be split while counts are not.
+
 **Columns.** `snake_case`. Business keys keep the source name and the `_id` suffix. Surrogate
 keys take the `_sk` suffix and are the hash of the business key, plus the valid-from
 timestamp where the entity is SCD2. Booleans read as a statement: `is_active`,
@@ -86,6 +91,10 @@ Wherever an `_amount_eur` column exists, `fx_rate` and `fx_rate_date` exist besi
 visible rate provenance is a defect: the number cannot be reproduced, checked or explained
 without them.
 
+`fx_is_missing` marks a row for which no rate existed at or before the transaction date. Such
+a row has a null `amount_eur` and raises a `dq` check of severity `error`. A missing rate is
+never written as zero and never as the unconverted amount.
+
 ## Dimensional modelling
 
 **Reserved members.** Every dimension carries two reserved rows: surrogate key `-1` for
@@ -112,6 +121,20 @@ versions. Current-state slicing and the Power BI relationships that point at lat
 the durable key; history-aware facts use the surrogate key. Both columns are present on every
 SCD2 dimension, and neither is optional.
 
+## Data classification
+
+Every column in every contract carries one of four classifications: `identifier`,
+`quasi-identifier`, `sensitive` or `non-personal`. The classification decides whether the
+column is tokenised at extraction, generalised before gold, access-restricted, or left alone.
+The taxonomy and the handling rule for each class are in
+[pii_classification.md](pii_classification.md).
+
+Two rules follow from it and are stated here because they are naming and modelling rules
+rather than privacy narrative. A tokenised column keeps its source name and the `_id` suffix
+where the source had one, so `customer_id` holds a token and not a cleartext value; nothing is
+renamed to advertise that it was tokenised. A generalised column is named for the
+generalisation, not for the source column it came from: `age_band`, not `date_of_birth_band`.
+
 ## Tests
 
 A generic dbt test is declared in the model schema file next to the column it constrains. A
@@ -122,8 +145,16 @@ Every model declares its primary key and tests it with `unique` and `not_null`. 
 cannot is exempt only by documenting the exemption in its schema file, with the reason. An
 undeclared grain is not an exemption, it is an unfinished model.
 
-Every test declares a severity: `error` blocks the run, `warn` is recorded in the `dq` schema
-and reported.
+Every test and every quality check declares a severity, once, where it is defined:
+
+| Severity | Meaning | Effect |
+|---|---|---|
+| `error` | The data is wrong in a way that makes downstream numbers wrong | Fails the gate, blocks promotion of that layer, pages the owner |
+| `warn` | The data is suspicious but usable | Recorded in `dq`, does not block, reviewed in the trend |
+| `info` | A measurement kept for trend only, such as row count drift or the share of Unknown dimension members | Recorded in `dq`, never blocks |
+
+The same three levels are used by `docs/metric_definitions.md` when it defines the quality
+check pass rate, so a check has one severity everywhere it appears.
 
 ## Commits
 
