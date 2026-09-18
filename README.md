@@ -107,6 +107,7 @@ Every directory carries a README stating its purpose and its ownership boundary.
 
 ## Documentation
 
+- [Project state](docs/project_state.md) — start here: what exists today, how to verify it, what is next
 - [Architecture](docs/architecture.md) — sources, ingestion patterns, layer contracts, storage, orchestration, security, scale
 - [Conventions](docs/conventions.md) — the locked decisions and the naming rules
 - [Business questions](docs/business_questions.md) — the nineteen questions gold is measured against

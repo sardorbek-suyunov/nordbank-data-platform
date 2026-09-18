@@ -186,3 +186,6 @@ A pull request description is an engineering summary, under the same prose rules
 documentation: what changed, why it changed, how it was verified, and what was deliberately
 left out. "Updates" is not a description. If the branch closes a milestone, link the
 specification and the checkpoint.
+
+A milestone is not closed until `docs/project_state.md` reflects it. Updating that document is
+part of writing the checkpoint, not a follow-up to it.
