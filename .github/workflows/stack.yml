@@ -46,6 +46,18 @@ jobs:
       - name: Trigger and verify the health-check DAG
         run: make verify-dag
 
+      # Before the integration tests, because make test-integration now ends in
+      # schema-check, which would otherwise run against an empty database.
+      - name: Apply the source schema
+        run: make schema-apply
+
+      - name: Prove schema-apply is idempotent
+        run: |
+          make schema-dump OUT=/tmp/schema-before.txt
+          make schema-apply
+          make schema-dump OUT=/tmp/schema-after.txt
+          diff /tmp/schema-before.txt /tmp/schema-after.txt
+
       - name: Integration tests
         run: make test-integration
 
