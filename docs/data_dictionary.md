@@ -634,7 +634,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | `gl_source_entity_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
 | `code` | character varying(40) | no | `non-personal` | Stable business code naming the kind of business event that produced a posting batch, and the vocabulary half of the polymorphic reference on core.gl_transactions. | fct_gl_entries, Q16, spec 003 invariant 6 |
 | `name` | character varying(120) | no | `non-personal` | Human readable name. | - |
-| `description` | text | yes | `non-personal` | Free text note on the row, where one is useful. Each row names the core table its source_entity_id points into, because a polymorphic reference that does not say where it points is unreadable. | - |
+| `description` | text | yes | `non-personal` | Free text note on the row, where one is useful. Each row names the core table its source_entity_id points into, because a polymorphic reference that does not say where it points is unreadable. Two codes are seeded, because the M2 load produces two kinds of posting; the vocabulary grows with the postings rather than ahead of them. | - |
 | `is_active` | boolean | no | `non-personal` | Whether the code is currently in use. An inactive row is retained, because a dimension must still describe facts that reference a retired code. | - |
 | `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
 | `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
