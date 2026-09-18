@@ -62,11 +62,16 @@ on conflict (code) do update
 --
 -- An open vocabulary by design rule 7's second limb: the M3 mutation engine and later
 -- milestones add posting sources as seed rows rather than as schema migrations.
+--
+-- Two codes, because the M2 historical load produces two kinds of posting. A loan
+-- disbursement and a loan repayment reach the customer's account as transactions and post
+-- under 'transaction' accordingly; a loan event with no customer-account movement, such as an
+-- impairment or a write-off against the loan book, has no code yet because nothing writes one
+-- yet. Seeding codes nothing produces would be inventing a vocabulary rather than recording
+-- one.
 insert into ref.gl_source_entities (code, name, description, is_active) values
-    ('transaction',       'Card or cash transaction', 'source_entity_id references core.transactions.transaction_id', true),
-    ('payment',           'Payment instruction',      'source_entity_id references core.payments.payment_id', true),
-    ('loan_disbursement', 'Loan disbursement',        'source_entity_id references core.loans.loan_id', true),
-    ('loan_installment',  'Loan installment payment', 'source_entity_id references core.loan_installments.loan_installment_id', true)
+    ('transaction', 'Card or cash transaction', 'source_entity_id references core.transactions.transaction_id', true),
+    ('payment',     'Payment instruction',      'source_entity_id references core.payments.payment_id', true)
 on conflict (code) do update
     set name = excluded.name, description = excluded.description, is_active = excluded.is_active
   where (ref.gl_source_entities.name, ref.gl_source_entities.description,

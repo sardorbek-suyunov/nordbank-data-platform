@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Medallion-architecture data platform for a simulated EU neobank: Airflow, dbt, DuckDB, Power BI."
 requires-python = ">=3.11,<3.12"
 license = { text = "MIT" }
-dependencies = []
+dependencies = [
+    "pyyaml>=6.0.3",
+]
 
 [dependency-groups]
 dev = [
