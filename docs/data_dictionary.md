@@ -12,6 +12,7 @@ entity, not of any downstream model.
 | `customers` | Customer | One row per customer | Incremental on `updated_at`, soft delete, SCD2 in silver | Identity, KYC status, signup date, residence country, risk band. Source of the PII tokens every other customer-keyed model uses. |
 | `customer_addresses` | Customer | One row per customer address version | Incremental on `updated_at`, history retained | Residential and correspondence addresses. Drives country attribution for reporting and cross-border checks. |
 | `accounts` | Deposits | One row per account | Incremental on `updated_at`, soft delete | Current and savings accounts: currency, product, opening and closing date, status. Basis of questions 1 and 3. |
+| `account_holders` | Deposits | One row per account and holder | Incremental on `updated_at`, soft delete, SCD2 in silver | Bridge between accounts and customers: holder role (primary, joint, authorised signatory) and an ownership weighting factor that sums to one per account. Counting people and splitting money both resolve here; without it every joint account is double counted in monetary aggregates. |
 | `cards` | Cards | One row per card | Incremental on `updated_at`, soft delete | Issued cards, network, status, linked account. A card is reissued as a new row, not an update, when the PAN changes. |
 | `merchants` | Cards | One row per merchant | Incremental on `updated_at` | Acquirer-side merchant identity, MCC, country. Merchant names are dirty by design, to require conformance in silver. |
 | `mcc_codes` | Reference | One row per merchant category code | Full refresh, dbt seed | Maps MCC to category and interchange band. Static reference, version controlled as a seed. |
@@ -29,6 +30,13 @@ entity, not of any downstream model.
 | `sanctions_entities` | Compliance | One row per sanctioned entity per snapshot version | Weekly full refresh, versioned snapshot | OpenSanctions consolidated list. Screening results cite the version they matched against, so past decisions stay explainable. |
 
 ## Entity decisions
+
+**`account_holders` was missing.** The metric definitions state that a joint account counts
+once per owner in customer counts and is split by ownership weight in monetary aggregates, and
+neither is computable from `accounts` alone, which has no holder relationship. The bridge is
+added, so the entity inventory moves from 18 entities to 19. Acceptance criterion 6 changes
+with it, recorded as an amendment to spec 000.
+
 
 **`agent_locations` replaces `branches`.** The approved inventory named `branches`. Nordbank
 is a licensed neobank with no branch network, so a branch table would be a dimension for
