@@ -1,0 +1,21 @@
+# Runtime dependencies for the project Airflow image.
+#
+# pyarrow, boto3, psycopg2-binary and requests are resolved against the official Airflow
+# constraints file for the pinned version, so their versions come from there.
+#
+# duckdb is not in the constraints file and is pinned here. 1.5.5 is chosen for compatibility
+# with the dbt-duckdb release that arrives at M4, which requires duckdb>=1.0.0 and pins 1.5.5
+# in its MotherDuck extra; it is not simply the newest.
+#
+# apache-airflow-providers-fab is required by the auth manager configured in compose. The build
+# verifies it imports rather than assuming the base image carries it.
+#
+# pytest is present so that DAG integrity tests can run inside this image on hosts where
+# Airflow does not import natively.
+duckdb==1.5.5
+pyarrow
+boto3
+psycopg2-binary
+requests
+apache-airflow-providers-fab
+pytest
