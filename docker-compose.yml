@@ -50,6 +50,9 @@ x-airflow-common: &airflow-common
     - ./airflow/plugins:/opt/airflow/plugins:ro
     - ./airflow/tests:/opt/airflow/tests:ro
     - ./scripts:/opt/airflow/scripts:ro
+    # The schema drift test compares the live database against docs/data_dictionary.md, and
+    # `make test-integration` runs it in here.
+    - ./docs:/opt/airflow/docs:ro
     - ./pyproject.toml:/opt/airflow/pyproject.toml:ro
     - airflow-logs:/opt/airflow/logs
     - warehouse:/opt/warehouse
@@ -71,6 +74,10 @@ services:
       TZ: UTC
     volumes:
       - ./infra/docker/postgres-source/init:/docker-entrypoint-initdb.d:ro
+      # Applied by `make schema-apply`, not by the entrypoint: the DDL is re-appliable and the
+      # entrypoint runs only once, on an empty volume.
+      - ./infra/docker/postgres-source/schema:/schema:ro
+      - ./infra/docker/postgres-source/seed:/seed:ro
       - postgres-source-data:/var/lib/postgresql/data
     ports:
       - "${POSTGRES_SOURCE_PORT}:5432"
