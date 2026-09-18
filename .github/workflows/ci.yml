@@ -31,8 +31,9 @@ jobs:
       # spends minutes discovering them.
       - name: Validate the compose file
         run: |
-          cp .env.example .env
+          make init-env
           docker compose config --quiet
+          uv run python scripts/check_env.py
 
       - name: Unit tests
         run: make test

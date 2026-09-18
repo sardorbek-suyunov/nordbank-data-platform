@@ -1,22 +1,10 @@
 name: stack
 
+# No path filters: this is a required check on every pull request, and a required check that
+# does not run cannot be satisfied.
 on:
   push:
-    paths:
-      - docker-compose.yml
-      - infra/docker/**
-      - airflow/**
-      - scripts/**
-      - Makefile
-      - .github/workflows/stack.yml
   pull_request:
-    paths:
-      - docker-compose.yml
-      - infra/docker/**
-      - airflow/**
-      - scripts/**
-      - Makefile
-      - .github/workflows/stack.yml
   workflow_dispatch:
 
 jobs:
@@ -33,14 +21,6 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Prepare the environment
-        run: |
-          cp .env.example .env
-          # A trigger should not wait for a DAG folder scan on a runner that is billed by time.
-          sed -i 's/^DAG_PROCESSOR_REFRESH_INTERVAL=.*/DAG_PROCESSOR_REFRESH_INTERVAL=5/' .env
-          # AIRFLOW_UID is deliberately left at 50000: every writable path is a named volume
-          # initialised from the image, and the Airflow install lives in that user's home.
-
       - name: Build the Airflow image
         uses: docker/build-push-action@v6
         with:
@@ -54,8 +34,11 @@ jobs:
         run: uv sync
 
       - name: Start the stack
+        # No .env is created here on purpose: `make up` generates one, which is the clean-clone
+        # path acceptance criterion 1 describes. DAG_PROCESSOR_REFRESH_INTERVAL comes from the
+        # environment, which compose prefers over the file, so a trigger does not wait a scan.
         # The image was built in the previous step, with a cache; compose must not rebuild it.
-        run: SKIP_BUILD=1 make up
+        run: SKIP_BUILD=1 DAG_PROCESSOR_REFRESH_INTERVAL=5 make up
 
       - name: Health probes
         run: make health STRICT=1
