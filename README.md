@@ -95,7 +95,7 @@ Every directory carries a README stating its purpose and its ownership boundary.
 |---|---|---|
 | M0 | Repository foundation and conventions | done |
 | M1 | Local stack: Postgres, MinIO, Airflow | done |
-| M2 | Source system DDL and initial historical load | pending |
+| M2 | Source system DDL and initial historical load | in progress |
 | M3 | Mutation engine: daily change generation | pending |
 | M4 | Bronze ingestion, contracts and quarantine | pending |
 | M5 | Silver: conformance, SCD2, PII tokenisation | pending |
