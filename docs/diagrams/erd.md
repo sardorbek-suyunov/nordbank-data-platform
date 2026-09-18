@@ -106,6 +106,8 @@ erDiagram
         bigint gl_transaction_id PK
         varchar gl_transaction_reference UK
         date posting_date
+        varchar source_entity_code FK "nullable"
+        bigint source_entity_id "nullable, polymorphic, no FK"
     }
     gl_entries {
         bigint gl_entry_id PK
@@ -186,6 +188,9 @@ erDiagram
     ref_payment_schemes {
         varchar code PK
     }
+    ref_gl_source_entities {
+        varchar code PK
+    }
     ref_payment_statuses {
         varchar code PK
     }
@@ -249,6 +254,7 @@ erDiagram
     ref_currencies ||--o{ payments : payment_currency_code
     ref_payment_schemes ||--o{ payments : payment_scheme_code
     ref_payment_statuses ||--o{ payments : payment_status_code
+    ref_gl_source_entities ||--o{ gl_transactions : source_entity_code
     ref_payment_types ||--o{ payments : payment_type_code
     accounts ||--o{ transactions : account_id
     agent_locations |o--o{ transactions : agent_location_id
@@ -302,6 +308,9 @@ erDiagram
         varchar code PK
     }
     ref_gl_accounts {
+        varchar code PK
+    }
+    ref_gl_source_entities {
         varchar code PK
     }
     ref_holder_roles {

@@ -95,9 +95,16 @@ card settlement accounts and internal or suspense accounts are excluded. Overdra
 are included at their negative balance, so the total is a net customer liability position and
 not a sum of positive balances. Accounts closed before the month end contribute nothing.
 
+Whether a movement counts towards a balance is read from the reference layer in both
+directions, never decided in a model: `ref.transaction_statuses.is_posted` for transactions and
+`ref.payment_statuses.is_posted` for payments. The payment flag was added at M2's data half,
+because the balance reconciliation needed a rule for the payment side and settling it in loader
+code would have put it where dbt cannot read it.
+
 **Source columns.** `fct_account_balance_daily.balance_amount`,
 `fct_account_balance_daily.balance_date`, `dim_account.product_class`,
-`dim_account.currency_code`, `dim_account.account_type`.
+`dim_account.currency_code`, `dim_account.account_type`,
+`ref.transaction_statuses.is_posted`, `ref.payment_statuses.is_posted`.
 
 **Used by.** Q3.
 
@@ -108,19 +115,45 @@ not a sum of positive balances. Accounts closed before the month end contribute 
 `interchange_rates` seed keyed on card product class, merchant region and MCC band.
 
 The intra-EEA consumer rates are fixed by regulation and are used as given: 0.20 per cent for
-consumer debit and 0.30 per cent for consumer credit.
+consumer debit and 0.30 per cent for consumer credit. The Interchange Fee Regulation caps do
+not vary by presentment, so the same rate applies whether or not the card was presented.
 
-**Inter-regional consumer rates are decided and land at M3.** European Commission press
-release IP/19/2311 of 29 April 2019 made binding the caps Mastercard and Visa offered in cases
-AT.40049 and AT.39398: card present 0.20 per cent debit and 0.30 per cent credit, card not
-present 1.15 per cent debit and 1.50 per cent credit. They are cited as the last published
-binding caps, whose five-year-and-six-month commitment period ended around October 2024, not
-as current regulation. Applying them needs a card-present dimension on the
-`ref.interchange_rates` key, which the M3 specification adds alongside the generator modelling
-card present against card not present.
+**Inter-regional consumer rates stay null, and the reason is a corridor mismatch rather than
+an absent figure.** This entry previously said the rates were decided and would land with a
+card-present dimension on the `ref.interchange_rates` key. Working the corridor through at M2
+showed that neither half of that was right.
+
+European Commission press release IP/19/2311 of 29 April 2019 made binding the caps Mastercard
+and Visa offered in cases AT.40049 and AT.39398: card present 0.20 per cent debit and 0.30 per
+cent credit, card not present 1.15 per cent debit and 1.50 per cent credit. Those are real,
+citable figures, and their five-year-and-six-month commitment period ended around October 2024,
+so they are the last published binding caps rather than current regulation.
+
+They also govern a corridor Nordbank is not in. The commitments cap interchange on cards
+**issued outside the EEA and used at EEA merchants** — the inbound corridor, where the issuer
+is outside the EEA and the acquirer inside it. Nordbank is an EEA issuer, so it never earns
+that interchange. Nordbank's own cards used at non-EEA merchants are the **outbound**
+inter-regional corridor, which those commitments do not govern and for which no published
+figure exists.
+
+`ref.interchange_rates` is keyed on the merchant region, so the rows those caps would describe
+are the `eea` merchant rows, which the Interchange Fee Regulation already fills correctly. The
+non-EEA merchant rows describe the outbound corridor. Seeding the 2019 figures into them would
+attach a real number to the wrong corridor, which is exactly the false precision the null rates
+exist to prevent. **The outbound inter-regional rates therefore stay null.**
+
+The card-present dimension went with them. Its only justification was the inbound presentment
+split, and a dimension no rate varies by is ceremony. `core.transactions.is_card_present`
+stays, justified on its own terms: fraud concentrates in card not present, and Q10 and Q19
+depend on it.
 
 **Commercial card rates remain undecided and stay null.** They are negotiated bilaterally with
 no published figure, and inventing one would make Q4 look precise while being arbitrary.
+
+**What Q4 can therefore answer.** Interchange revenue for intra-EEA consumer card volume,
+exactly. Everything else resolves to a null rate and fails the gate. The generator holds the
+non-EEA merchant share to a few percent, stated in `docs/generator_realism.md`, so the exposure
+is bounded and visible rather than dominant.
 
 **Source columns.** `fct_transactions.transaction_amount_eur`, `dim_card.product_class`,
 `dim_merchant.country_code`, `dim_merchant.mcc_code`, `ref.interchange_rates.rate`.
