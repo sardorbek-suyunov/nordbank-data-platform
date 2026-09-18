@@ -108,11 +108,19 @@ not a sum of positive balances. Accounts closed before the month end contribute 
 `interchange_rates` seed keyed on card product class, merchant region and MCC band.
 
 The intra-EEA consumer rates are fixed by regulation and are used as given: 0.20 per cent for
-consumer debit and 0.30 per cent for consumer credit. Commercial card rates and
-inter-regional rates are **undecided, resolve before M6**: they are commercially negotiated,
-there is no single public number, and inventing one would make Q4 look precise while being
-arbitrary. The decision depends on which card products the generator issues, which is settled
-at M2.
+consumer debit and 0.30 per cent for consumer credit.
+
+**Inter-regional consumer rates are decided and land at M3.** European Commission press
+release IP/19/2311 of 29 April 2019 made binding the caps Mastercard and Visa offered in cases
+AT.40049 and AT.39398: card present 0.20 per cent debit and 0.30 per cent credit, card not
+present 1.15 per cent debit and 1.50 per cent credit. They are cited as the last published
+binding caps, whose five-year-and-six-month commitment period ended around October 2024, not
+as current regulation. Applying them needs a card-present dimension on the
+`ref.interchange_rates` key, which the M3 specification adds alongside the generator modelling
+card present against card not present.
+
+**Commercial card rates remain undecided and stay null.** They are negotiated bilaterally with
+no published figure, and inventing one would make Q4 look precise while being arbitrary.
 
 **Source columns.** `fct_transactions.transaction_amount_eur`, `dim_card.product_class`,
 `dim_merchant.country_code`, `dim_merchant.mcc_code`, `ref.interchange_rates.rate`.
