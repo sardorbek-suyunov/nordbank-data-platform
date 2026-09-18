@@ -1,7 +1,7 @@
 # M0 — Repository foundation and conventions
 
 Specification: [000-repository-foundation.md](../specs/000-repository-foundation.md)
-Status: complete, including the remediation pass of 2026-09-17
+Status: complete, including the remediation passes of 2026-09-17 and 2026-09-18
 Date: 2026-09-17
 
 ## What was built
@@ -22,7 +22,9 @@ at this milestone and no pipeline code exists.
 - Documentation: `README.md`, `docs/architecture.md`, `docs/conventions.md`,
   `docs/business_questions.md` (19 questions with persona, target mart and grain),
   `docs/metric_definitions.md` (the exact rule behind every contested term),
-  `docs/data_dictionary.md` (18 entities), `docs/runbook.md` skeleton, five ADRs.
+  `docs/data_dictionary.md` (19 entities), `docs/model_inventory.md` (every planned model with
+  its grain, inputs and milestone), `docs/pii_classification.md` (four column classes and their
+  handling), `docs/runbook.md` skeleton, five ADRs.
 - CI: `.github/workflows/ci.yml` with a `lint` job and a `docs` job, both passing on a
   repository that contains no code yet.
 
@@ -50,6 +52,32 @@ recorded as a dated amendment in spec 000; the summary is:
   members, an SCD2 join policy, a primary key testing rule and the rate provenance rule.
 - `login_sessions` gained a consuming question (19) and the coverage rule that would have
   caught it. `branches` became `agent_locations`, which is what a branchless bank actually has.
+
+## What the second review pass changed
+
+2026-09-18. Repository hygiene and the design contradictions the first pass introduced or
+missed. Each is a dated amendment in spec 000:
+
+- Agent and editor configuration is excluded through `.git/info/exclude` and the global
+  `core.excludesfile`, both untracked, rather than through `.gitignore`. No tracked file names
+  a tool.
+- A force-push does not remove anything from a hosted repository: the pre-rewrite blob was
+  still served by SHA afterwards. Removing it requires deleting and recreating the remote.
+- Crypto-shredding is closed at its two leaks: quarantine stores tokens for identifier columns
+  and is inside erasure scope, and `_raw_payload` is structurally faithful with identifier
+  fields tokenised, which makes bronze structurally rather than byte-identically faithful.
+- Silver generalises quasi-identifiers instead of resolving tokens, which a keyed hash cannot
+  do. `docs/pii_classification.md` defines the four classes this depends on.
+- A missing exchange rate produces a null and a `dq` error, never a zero.
+- Rerun semantics: immutability is a property of registered partitions.
+- `account_holders` is added as a bridge entity, which is what makes joint accounts countable
+  once and divisible by ownership weight.
+- `docs/model_inventory.md` gives every referenced object a home, and the coverage rule now
+  runs in both directions.
+- Settlement reconciliation compares at source precision in the settlement currency; EUR is
+  for reporting a break, not detecting one.
+- Severity levels agree across documents; the day-count convention, the ECB publication time
+  and the bulk-load constraint on the `full` profile are stated explicitly.
 
 ## Deliberately deferred
 
@@ -85,6 +113,13 @@ Column-level data dictionary is deferred to spec 002, as stated in spec 000 sect
   of the 43 Markdown files currently contains a Python block, so no documentation prose is
   formatted or checked by that number. It measures files opened, not files with formatting
   enforced.
+- The remote repository still serves the pre-rewrite blob by SHA. Deleting and recreating it
+  is the remaining step, and it needs a token scope this session does not have.
+- `sl_card_settlements` and `sl_macro_indicators` read from sources whose entities are not in
+  the M0 entity inventory, which covers the core banking entities plus `fx_rates` and
+  `sanctions_entities`. Their entity and column definitions arrive with spec 002.
+- Column classifications exist as a taxonomy but not yet as data: no contract exists to carry
+  them until M2.
 - The architecture diagram is a link to a directory, not a diagram. Authored at M1.
 - The milestone table in `README.md` labels M5 as PII tokenisation. Tokenisation now happens
   at ingest in M4; the M5 label is kept as agreed and refers to token resolution in silver.
