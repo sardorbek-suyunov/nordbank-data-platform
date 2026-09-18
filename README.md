@@ -108,6 +108,8 @@ Every directory carries a README stating its purpose and its ownership boundary.
 - [Business questions](docs/business_questions.md) — the nineteen questions gold is measured against
 - [Metric definitions](docs/metric_definitions.md) — the exact rule behind every contested term
 - [Data dictionary](docs/data_dictionary.md) — entity inventory, grain and load pattern
+- [Model inventory](docs/model_inventory.md) — every planned model, its grain, inputs and milestone
+- [PII classification](docs/pii_classification.md) — the four column classes and how each is handled
 - [Runbook](docs/runbook.md) — local setup, endpoints, failures, backfill, escalation
 - [Decision records](docs/adr/) — medallion layering, DuckDB, synthetic source, BI tooling, PII crypto-shredding
 - [Specifications](docs/specs/) — numbered specs and the amendment protocol
