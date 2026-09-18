@@ -27,7 +27,7 @@ from pathlib import Path
 SCHEMAS: tuple[str, ...] = ("core", "ref", "platform")
 
 CLASSIFICATIONS: frozenset[str] = frozenset(
-    {"identifier", "quasi-identifier", "sensitive", "non-personal"}
+    {"identifier", "quasi-identifier", "pseudonymous_key", "sensitive", "non-personal"}
 )
 
 # The dictionary's column table header, validated before any row of that table is read. A

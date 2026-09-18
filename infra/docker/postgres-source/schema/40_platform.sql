@@ -18,7 +18,17 @@ create table if not exists platform.column_classifications (
     rationale                text        not null,
     created_at               timestamptz not null default now(),
     updated_at               timestamptz not null default now(),
-    constraint column_classifications_uq unique (schema_name, table_name, column_name),
-    constraint column_classifications_classification_ck
-        check (classification in ('identifier', 'quasi-identifier', 'sensitive', 'non-personal'))
+    constraint column_classifications_uq unique (schema_name, table_name, column_name)
 );
+
+-- The permitted vocabulary, dropped and re-added rather than declared inline, so that adding a
+-- class is a change this file can make to a table that already exists. pseudonymous_key was
+-- added at M2 after the first pass classified every join path to a person as non-personal,
+-- which was wrong: an internal customer number is pseudonymised personal data.
+alter table platform.column_classifications
+    drop constraint if exists column_classifications_classification_ck;
+
+alter table platform.column_classifications
+    add constraint column_classifications_classification_ck
+    check (classification in
+        ('identifier', 'quasi-identifier', 'pseudonymous_key', 'sensitive', 'non-personal'));

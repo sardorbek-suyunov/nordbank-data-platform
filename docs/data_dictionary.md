@@ -147,9 +147,9 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 
 | Column | Type | Nullable | Classification | Description | Consumed by |
 |---|---|---|---|---|---|
-| `account_holder_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
-| `account_id` | bigint | no | `non-personal` | Foreign key to core.accounts.account_id. | - |
-| `customer_id` | bigint | no | `non-personal` | Foreign key to core.customers.customer_id. | - |
+| `account_holder_id` | bigint | no | `pseudonymous_key` | Surrogate primary key of one account-and-holder pairing, which is a relationship between an account and a person. A pseudonymous key: retained unchanged, never tokenised. | - |
+| `account_id` | bigint | no | `pseudonymous_key` | Foreign key to core.accounts.account_id, which resolves to the people who hold the account. A pseudonymous key: retained unchanged, never tokenised. | - |
+| `customer_id` | bigint | no | `pseudonymous_key` | Foreign key to core.customers.customer_id, and therefore a reference to a person. A pseudonymous key: retained unchanged in every layer because it is the join path, and never tokenised, because tokenising the pseudonym would break every join without protecting anything the vault does not already protect. | - |
 | `holder_role_code` | character varying(40) | no | `non-personal` | Whether this holder is the primary holder, a joint holder or an authorised signatory. | bridge_account_holder, Q3, Q6, Q11 |
 | `ownership_weight` | numeric(18,8) | yes | `non-personal` | Share of the balance attributable to this holder, in (0,1]. Null for a role that carries no ownership. The rule that weights sum to one per account is a set property, checked in dq at M7. | bridge_account_holder, Q3, Q6, Q11 |
 | `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
@@ -160,7 +160,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 
 | Column | Type | Nullable | Classification | Description | Consumed by |
 |---|---|---|---|---|---|
-| `account_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `account_id` | bigint | no | `pseudonymous_key` | Surrogate primary key, and the join path from any account-keyed row to the people who hold it. A pseudonymous key: retained unchanged, never tokenised. | - |
 | `account_number` | character varying(40) | no | `identifier` | Internal account number. | - |
 | `iban` | character varying(34) | yes | `identifier` | International bank account number. Null for internal accounts, which have none. | - |
 | `account_type_code` | character varying(40) | no | `non-personal` | The product this account is. | dim_account, Q3 |
@@ -196,9 +196,9 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 
 | Column | Type | Nullable | Classification | Description | Consumed by |
 |---|---|---|---|---|---|
-| `card_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `card_id` | bigint | no | `pseudonymous_key` | Surrogate primary key of a card, which belongs to an account and through it to a person. A pseudonymous key: retained unchanged, never tokenised. | - |
 | `card_reference` | character(12) | no | `identifier` | Issuer reference for the card. A reissue is a new card row with a new reference, not an update. | - |
-| `account_id` | bigint | no | `non-personal` | Foreign key to core.accounts.account_id. | - |
+| `account_id` | bigint | no | `pseudonymous_key` | Foreign key to core.accounts.account_id, which resolves to the people who hold the account. A pseudonymous key: retained unchanged, never tokenised. | - |
 | `card_product_code` | character varying(12) | no | `non-personal` | The card product. Referenced against a code held to twelve characters, so this table cannot hold a card number. | Interchange rule, Q4 |
 | `card_bin` | character(6) | no | `non-personal` | The six-digit bank identification number, the leading digits of the card number. | - |
 | `card_last_four` | character(4) | no | `non-personal` | The last four digits of the card number. | - |
@@ -213,8 +213,8 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 
 | Column | Type | Nullable | Classification | Description | Consumed by |
 |---|---|---|---|---|---|
-| `customer_address_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
-| `customer_id` | bigint | no | `non-personal` | Foreign key to core.customers.customer_id. | - |
+| `customer_address_id` | bigint | no | `pseudonymous_key` | Surrogate primary key of one address version of a person. A pseudonymous key: retained unchanged because it is the join path, never tokenised. | - |
+| `customer_id` | bigint | no | `pseudonymous_key` | Foreign key to core.customers.customer_id, and therefore a reference to a person. A pseudonymous key: retained unchanged in every layer because it is the join path, and never tokenised, because tokenising the pseudonym would break every join without protecting anything the vault does not already protect. | - |
 | `address_type_code` | character varying(40) | no | `non-personal` | Whether this is the residential or the correspondence address. Closed two-value list, enforced by a check constraint. | - |
 | `address_line_1` | character varying(200) | no | `identifier` | First line of the street address. | - |
 | `address_line_2` | character varying(200) | yes | `identifier` | Second line of the street address, where there is one. | - |
@@ -231,7 +231,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 
 | Column | Type | Nullable | Classification | Description | Consumed by |
 |---|---|---|---|---|---|
-| `customer_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `customer_id` | bigint | no | `pseudonymous_key` | Surrogate primary key, and the platform join path to a person. A pseudonymous key: it is the pseudonym rather than the identifier, so it is never tokenised, and its personal character is neutralised by shredding the vault mappings of the identifiers on this row. | - |
 | `customer_reference` | character varying(40) | no | `identifier` | Bank-assigned customer number. The business key every customer-keyed model joins on, and a token after ingest. | - |
 | `full_name` | character varying(200) | no | `identifier` | Legal name as captured at onboarding. | - |
 | `email` | character varying(320) | yes | `identifier` | Contact email address. | - |
@@ -253,7 +253,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | `fraud_alert_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
 | `alert_reference` | character varying(40) | no | `non-personal` | Reference the alert is known by. | - |
 | `transaction_id` | bigint | no | `non-personal` | Foreign key to core.transactions.transaction_id. | - |
-| `customer_id` | bigint | no | `non-personal` | Foreign key to core.customers.customer_id. | - |
+| `customer_id` | bigint | no | `pseudonymous_key` | Foreign key to core.customers.customer_id, and therefore a reference to a person. A pseudonymous key: retained unchanged in every layer because it is the join path, and never tokenised, because tokenising the pseudonym would break every join without protecting anything the vault does not already protect. | - |
 | `fraud_rule_code` | character varying(40) | no | `non-personal` | The detection rule that fired. | Alert precision, Q10 |
 | `fraud_disposition_code` | character varying(40) | no | `sensitive` | What the analyst concluded. Only final dispositions count towards precision; the rest are the pending backlog. | Alert precision, Q10 |
 | `alerted_at` | timestamp with time zone | no | `non-personal` | When the rule fired. Not named created_at, which is reserved for the audit column: the loader writes this at a historical instant and the two would otherwise disagree on every backfilled row. | Alert precision, Q10 |
@@ -275,7 +275,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | `entry_side_code` | character(1) | no | `non-personal` | Debit or credit. Bound to the sign of amount by a check constraint so the two can never disagree. | GL integrity, Q16 |
 | `amount` | numeric(18,4) | no | `non-personal` | Signed amount: debit positive, credit negative, so a balanced batch sums to zero per currency. This is the documented exception to the non-negative amount guidance. | GL integrity, Q16; settlement reconciliation, Q15 |
 | `entry_currency_code` | character(3) | no | `non-personal` | Currency of amount. Balance is enforced per currency, not across them. | GL integrity, Q16; settlement reconciliation, Q15 |
-| `account_id` | bigint | yes | `non-personal` | The customer account the posting relates to, where it relates to one. Null for interest and fee postings to internal accounts. | - |
+| `account_id` | bigint | yes | `pseudonymous_key` | Foreign key to core.accounts.account_id, which resolves to the people who hold the account. A pseudonymous key: retained unchanged, never tokenised. | - |
 | `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
 | `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
 | `is_deleted` | boolean | no | `non-personal` | Soft delete flag. A deleted entity is removed from silver; the row itself stays. | - |
@@ -296,9 +296,9 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 
 | Column | Type | Nullable | Classification | Description | Consumed by |
 |---|---|---|---|---|---|
-| `loan_application_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `loan_application_id` | bigint | no | `pseudonymous_key` | Surrogate primary key of an application made by one person. A pseudonymous key: retained unchanged, never tokenised. | - |
 | `application_reference` | character varying(40) | no | `non-personal` | Reference the application is known by. | - |
-| `customer_id` | bigint | no | `non-personal` | Foreign key to core.customers.customer_id. | - |
+| `customer_id` | bigint | no | `pseudonymous_key` | Foreign key to core.customers.customer_id, and therefore a reference to a person. A pseudonymous key: retained unchanged in every layer because it is the join path, and never tokenised, because tokenising the pseudonym would break every join without protecting anything the vault does not already protect. | - |
 | `loan_product_code` | character varying(40) | no | `non-personal` | The product applied for. | - |
 | `loan_application_status_code` | character varying(40) | no | `non-personal` | Where the application is in the funnel. Approved and rejected are the decided statuses. | Approval rate, Q8 |
 | `risk_band_code` | character varying(40) | yes | `sensitive` | Risk band assigned at decision. Null until decided, and never restated to the customer's band today. | Approval rate, Q8 |
@@ -317,7 +317,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | Column | Type | Nullable | Classification | Description | Consumed by |
 |---|---|---|---|---|---|
 | `loan_installment_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
-| `loan_id` | bigint | no | `non-personal` | Foreign key to core.loans.loan_id. | - |
+| `loan_id` | bigint | no | `pseudonymous_key` | Foreign key to core.loans.loan_id, which resolves to the person who holds the loan. A pseudonymous key: retained unchanged, never tokenised. | - |
 | `installment_number` | smallint | no | `non-personal` | Position in the repayment schedule, starting at one. | - |
 | `due_date` | date | no | `non-personal` | Date the installment falls due. Days past due is measured from the oldest unpaid one. | Delinquency rule, Q7 |
 | `due_amount` | numeric(18,4) | no | `non-personal` | Amount contractually due. | Delinquency rule, Q7 |
@@ -332,10 +332,10 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 
 | Column | Type | Nullable | Classification | Description | Consumed by |
 |---|---|---|---|---|---|
-| `loan_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `loan_id` | bigint | no | `pseudonymous_key` | Surrogate primary key of a contract held by one person. A pseudonymous key: retained unchanged, never tokenised. | - |
 | `loan_reference` | character varying(40) | no | `non-personal` | Reference the loan is known by. | - |
-| `loan_application_id` | bigint | no | `non-personal` | Foreign key to core.loan_applications.loan_application_id. | - |
-| `customer_id` | bigint | no | `non-personal` | Foreign key to core.customers.customer_id. | - |
+| `loan_application_id` | bigint | no | `pseudonymous_key` | Foreign key to core.loan_applications.loan_application_id, which resolves to the person who applied. A pseudonymous key: retained unchanged, never tokenised. | - |
+| `customer_id` | bigint | no | `pseudonymous_key` | Foreign key to core.customers.customer_id, and therefore a reference to a person. A pseudonymous key: retained unchanged in every layer because it is the join path, and never tokenised, because tokenising the pseudonym would break every join without protecting anything the vault does not already protect. | - |
 | `loan_product_code` | character varying(40) | no | `non-personal` | The product the loan was written under. | - |
 | `loan_status_code` | character varying(40) | no | `non-personal` | Current loan status. | Default rule, Q8 |
 | `disbursed_date` | date | no | `non-personal` | Date the money left the bank. The origination vintage is the month of this date, and it never changes, including after restructuring. | Origination vintage, Q5, Q7 |
@@ -355,7 +355,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 |---|---|---|---|---|---|
 | `login_session_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
 | `session_reference` | character varying(40) | no | `non-personal` | Reference the session is known by. | - |
-| `customer_id` | bigint | no | `non-personal` | Foreign key to core.customers.customer_id. | - |
+| `customer_id` | bigint | no | `pseudonymous_key` | Foreign key to core.customers.customer_id, and therefore a reference to a person. A pseudonymous key: retained unchanged in every layer because it is the join path, and never tokenised, because tokenising the pseudonym would break every join without protecting anything the vault does not already protect. | - |
 | `channel_code` | character varying(40) | no | `non-personal` | The channel the login came through. | Unrecognised device, Q19 |
 | `login_outcome_code` | character varying(40) | no | `non-personal` | Whether the login succeeded, and how it failed if it did not. The unrecognised device rule looks only at successful sessions. | Unrecognised device, Q19 |
 | `started_at` | timestamp with time zone | no | `non-personal` | When the login attempt started. | Unrecognised device, Q19 |
@@ -386,7 +386,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 |---|---|---|---|---|---|
 | `payment_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
 | `payment_reference` | character varying(40) | no | `non-personal` | Reference the payment instruction is known by. | - |
-| `account_id` | bigint | no | `non-personal` | Foreign key to core.accounts.account_id. | - |
+| `account_id` | bigint | no | `pseudonymous_key` | Foreign key to core.accounts.account_id, which resolves to the people who hold the account. A pseudonymous key: retained unchanged, never tokenised. | - |
 | `payment_type_code` | character varying(40) | no | `non-personal` | What kind of payment instruction this is. | Customer-initiated rule, Q1, Q6 |
 | `payment_scheme_code` | character varying(40) | no | `non-personal` | The scheme the payment is sent over. | Cross-border rule, Q13 |
 | `payment_status_code` | character varying(40) | no | `non-personal` | Current status of the instruction. | Cross-border rule, Q13 |
@@ -409,8 +409,8 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 |---|---|---|---|---|---|
 | `transaction_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
 | `transaction_reference` | character varying(40) | no | `non-personal` | Reference the transaction is known by outside the platform. | - |
-| `account_id` | bigint | no | `non-personal` | Foreign key to core.accounts.account_id. | - |
-| `card_id` | bigint | yes | `non-personal` | The card used, where the transaction went through the card rails. Null otherwise. | - |
+| `account_id` | bigint | no | `pseudonymous_key` | Foreign key to core.accounts.account_id, which resolves to the people who hold the account. A pseudonymous key: retained unchanged, never tokenised. | - |
+| `card_id` | bigint | yes | `pseudonymous_key` | Foreign key to core.cards.card_id, which resolves through the account to a person. A pseudonymous key: retained unchanged, never tokenised. | - |
 | `merchant_id` | bigint | yes | `non-personal` | The merchant, where there is one. Null for cash and transfers. | - |
 | `agent_location_id` | bigint | yes | `non-personal` | The partner location, for a cash-in or cash-out. Null otherwise. | - |
 | `transaction_type_code` | character varying(40) | no | `non-personal` | What kind of transaction this is. The customer-initiated flag is derived from this through ref.transaction_types, not from a list held in code. | Customer-initiated rule, Q1, Q6, Q11 |
