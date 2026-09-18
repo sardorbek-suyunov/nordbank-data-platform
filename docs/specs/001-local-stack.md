@@ -363,3 +363,14 @@ scripts now read `.env` into a dictionary through `scripts/env_file.py` and neve
 `POSTGRES_*` becomes `POSTGRES_SOURCE_*` and `POSTGRES_AIRFLOW_*`, MinIO gains explicit port
 variables, and the Airflow block gains the admin name fields, the JWT secret and the connection
 strings. M0 had no services to consume the old names.
+
+### 2026-09-18 — `AIRFLOW_UID` is fixed at 50000
+
+Section 13 requires `AIRFLOW_UID` handling to be documented and enforced where possible. The
+handling is that it must not be changed. The usual advice to set it to `id -u` on Linux exists
+because the official compose file bind-mounts writable directories; here every writable path is
+a named volume initialised from the image and every bind mount is read-only, so there is nothing
+to own. Setting it to the runner uid made `airflow-init` fail immediately with
+`ModuleNotFoundError: No module named 'airflow'`, because Airflow is installed in user 50000's
+home. CI found this, and the value is now left alone in the workflow, the template and the
+runbook.

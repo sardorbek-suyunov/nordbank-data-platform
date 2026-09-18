@@ -38,7 +38,8 @@ jobs:
           cp .env.example .env
           # A trigger should not wait for a DAG folder scan on a runner that is billed by time.
           sed -i 's/^DAG_PROCESSOR_REFRESH_INTERVAL=.*/DAG_PROCESSOR_REFRESH_INTERVAL=5/' .env
-          echo "AIRFLOW_UID=$(id -u)" >> .env
+          # AIRFLOW_UID is deliberately left at 50000: every writable path is a named volume
+          # initialised from the image, and the Airflow install lives in that user's home.
 
       - name: Build the Airflow image
         uses: docker/build-push-action@v6

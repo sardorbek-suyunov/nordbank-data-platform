@@ -29,9 +29,15 @@ everything, then about 40 seconds from a `make nuke`, and about 35 seconds after
 working development Fernet key and JWT secret, so that a plain copy starts; both are published
 in this repository and protect nothing, so regenerate them for any environment that matters.
 
-The two settings most likely to need changing per machine are `AIRFLOW_UID`, which on Linux and
-WSL2 should be `id -u` so that volume files are owned by you, and the memory Docker Desktop is
-allowed to use.
+The setting most likely to need changing per machine is the memory Docker Desktop is allowed
+to use.
+
+`AIRFLOW_UID` is the one people are tempted to change and should not. The usual advice, to set
+it to `id -u` on Linux, applies to the official compose file because that one bind-mounts
+writable directories from the host. Here every writable path is a named volume initialised from
+the image, and every bind mount is read-only, so there is nothing to own. Changing the uid makes
+the container run as a user whose home is not where Airflow is installed, and the first command
+fails with `ModuleNotFoundError: No module named 'airflow'`. CI hit exactly this.
 
 ## Service endpoints
 
@@ -98,6 +104,7 @@ them, and the next `make up` rebuilds everything from configuration.
 | `make health` shows `lake-bucket fail`, or a DAG cannot find the bucket | A partial `nuke`, or MinIO started with an empty volume while `minio-init` did not re-run | `docker compose up -d minio-init` re-runs the idempotent provisioning; if that fails, `FORCE=1 make nuke && make up` |
 | `make health` shows `warehouse busy` | A task holds the DuckDB file; a writer excludes readers (ADR 0002) | Nothing. It is counted as a pass. `STRICT=1` turns it into a failure, which is what CI uses |
 | A task fails with a DuckDB lock conflict | Something outside Airflow held the file, or a task bypassed the pool | Every warehouse task must take the `warehouse_access` pool and go through `nordbank_ops.warehouse.connect`, which retries with backoff |
+| `ModuleNotFoundError: No module named 'airflow'` in a container | `AIRFLOW_UID` was changed; the image installs Airflow into user 50000's home | Set `AIRFLOW_UID=50000` in `.env` |
 | `import airflow` fails on Windows | Airflow does not support native Windows | Expected, not a defect. `make test-dags` runs those tests inside the project image and says so; `make test` never needs Airflow |
 | `make test-integration` fails with "service not running" | The stack is down | `make up` first; the smoke tests run inside `airflow-scheduler` |
 
@@ -127,10 +134,8 @@ processors=8
 Ten gigabytes leaves the stack its 7.5 GiB envelope plus room for the runtime, and keeps the VM
 from taking half the machine.
 
-Two more Windows notes. Keep the repository inside the WSL2 filesystem rather than on a mounted
-Windows drive if bind-mount I/O feels slow; DAG parsing and log writes are the first things to
-suffer. And `AIRFLOW_UID` only matters on Linux and WSL2, where it decides who owns the files in
-the mounted volumes; the default of 50000 is correct on Docker Desktop for Windows.
+One more Windows note. Keep the repository inside the WSL2 filesystem rather than on a mounted
+Windows drive if bind-mount I/O feels slow; DAG parsing is the first thing to suffer.
 
 ## Image pinning and registry risk
 
