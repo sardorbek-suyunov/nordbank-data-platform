@@ -168,3 +168,21 @@ No emoji anywhere in the repository, including commit messages.
 Commit messages and pull request descriptions carry no attribution trailers: no
 `Co-Authored-By` lines and no generated-with notices. This applies to every contributor and
 every tool.
+
+## Contributing
+
+From M2 onward, work happens on a branch and lands through a pull request. `main` is never
+written to directly.
+
+- Branch names are `feat/M<n>-<slug>`, for example `feat/M2-source-ddl`.
+- A pull request is required, and the `ci` and `stack` checks must pass before it can merge.
+- **Rebase merge only.** Squash merging and merge commits are disabled in the repository
+  settings. The commits in a branch are written to be individually reviewable, and squashing
+  them into one would throw that away; a merge commit would add a node that says nothing.
+- `main` is protected: both status checks required, a pull request required, force pushes
+  refused.
+
+A pull request description is an engineering summary, under the same prose rules as the
+documentation: what changed, why it changed, how it was verified, and what was deliberately
+left out. "Updates" is not a description. If the branch closes a milestone, link the
+specification and the checkpoint.
