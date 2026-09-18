@@ -19,6 +19,12 @@ create table if not exists core.transactions (
     value_date                  date         not null,
     transaction_amount          numeric(18,4) not null,
     transaction_currency_code   character(3) not null references ref.currencies (code),
+    -- An explicit decision per card transaction, not derived from the channel: a mobile wallet
+    -- tap at a terminal is card present, and an ecommerce purchase from the same handset is
+    -- not. Fraud concentrates in card not present, so Q10 and Q19 depend on this column being
+    -- real rather than inferred. Null exactly when the transaction did not go through the card
+    -- rails, which is what the check below holds it to.
+    is_card_present             boolean,
     -- A reversal points at the transaction it reverses. Self-referencing rather than a free
     -- text reference, so a reversal of a transaction that does not exist cannot be written.
     reversal_of_transaction_id  bigint       references core.transactions (transaction_id),
@@ -36,8 +42,31 @@ create table if not exists core.transactions (
     -- A card transaction has a card; an agent cash transaction has an agent location. Both
     -- cannot be true of one row.
     constraint transactions_single_counterparty_ck
-        check (num_nonnulls(card_id, agent_location_id) <= 1)
+        check (num_nonnulls(card_id, agent_location_id) <= 1),
+    -- Presentment is a property of a card authorisation and meaningless without one, so the
+    -- column is present exactly when the card is.
+    constraint transactions_card_present_ck
+        check ((card_id is null) = (is_card_present is null))
 );
+
+-- Re-appliable against a database created before the M2 data half (ADR 0009). The constraint
+-- is added after the column, and holds on an empty table or on one whose card transactions
+-- already carry a presentment decision.
+alter table core.transactions add column if not exists is_card_present boolean;
+
+do $$
+begin
+    if not exists (
+        select 1 from pg_constraint
+         where conname = 'transactions_card_present_ck'
+           and conrelid = 'core.transactions'::regclass
+    ) then
+        alter table core.transactions
+            add constraint transactions_card_present_ck
+            check ((card_id is null) = (is_card_present is null));
+    end if;
+end;
+$$;
 
 create table if not exists core.payments (
     payment_id               bigint generated always as identity primary key,

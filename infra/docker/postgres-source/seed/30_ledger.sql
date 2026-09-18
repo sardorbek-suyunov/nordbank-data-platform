@@ -55,3 +55,20 @@ on conflict (code) do update
          ref.gl_accounts.description, ref.gl_accounts.is_active)
         is distinct from (excluded.name, excluded.gl_account_type_code, excluded.description,
                           excluded.is_active);
+
+-- The business events that produce a posting batch, and the vocabulary half of the polymorphic
+-- reference on core.gl_transactions. Each code names the core table its source_entity_id points
+-- into, because a polymorphic reference that does not say where it points is unreadable.
+--
+-- An open vocabulary by design rule 7's second limb: the M3 mutation engine and later
+-- milestones add posting sources as seed rows rather than as schema migrations.
+insert into ref.gl_source_entities (code, name, description, is_active) values
+    ('transaction',       'Card or cash transaction', 'source_entity_id references core.transactions.transaction_id', true),
+    ('payment',           'Payment instruction',      'source_entity_id references core.payments.payment_id', true),
+    ('loan_disbursement', 'Loan disbursement',        'source_entity_id references core.loans.loan_id', true),
+    ('loan_installment',  'Loan installment payment', 'source_entity_id references core.loan_installments.loan_installment_id', true)
+on conflict (code) do update
+    set name = excluded.name, description = excluded.description, is_active = excluded.is_active
+  where (ref.gl_source_entities.name, ref.gl_source_entities.description,
+         ref.gl_source_entities.is_active)
+        is distinct from (excluded.name, excluded.description, excluded.is_active);

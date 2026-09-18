@@ -30,6 +30,21 @@ create table if not exists ref.gl_account_types (
     updated_at         timestamptz  not null default now()
 );
 
+-- The vocabulary of business events that produce a posting batch, and the code half of the
+-- polymorphic reference on core.gl_transactions. It earns a table on design rule 7's
+-- open-vocabulary limb: posting sources grow as the bank models more events, and under a check
+-- constraint every new one would be a schema migration. It carries no attribute beyond code,
+-- name and is_active, and none is invented for it.
+create table if not exists ref.gl_source_entities (
+    gl_source_entity_id bigint generated always as identity primary key,
+    code                varchar(40)  not null unique,
+    name                varchar(120) not null,
+    description         text,
+    is_active           boolean      not null default true,
+    created_at          timestamptz  not null default now(),
+    updated_at          timestamptz  not null default now()
+);
+
 create table if not exists ref.account_statuses (
     account_status_id bigint generated always as identity primary key,
     code              varchar(40)  not null unique,
@@ -58,11 +73,23 @@ create table if not exists ref.payment_statuses (
     name              varchar(120) not null,
     is_declined       boolean      not null,
     is_final          boolean      not null,
+    -- Whether the account has moved. The mirror of ref.transaction_statuses.is_posted, and the
+    -- payment half of the balance reconciliation in spec 003 invariant 4 and of the deposit
+    -- balance metric. Added at M2's data half: settling the rule in loader code instead would
+    -- have put it somewhere dbt cannot read it at M5.
+    is_posted         boolean      not null default false,
     description       text,
     is_active         boolean      not null default true,
     created_at        timestamptz  not null default now(),
     updated_at        timestamptz  not null default now()
 );
+
+-- Re-appliable against a database created before the M2 data half, where the table exists
+-- without the column (ADR 0009: every file here applies twice with no effect). The default is
+-- what makes the alter safe on seeded rows, and it points the safe way: a status whose posting
+-- behaviour nobody has stated does not move a balance.
+alter table ref.payment_statuses
+    add column if not exists is_posted boolean not null default false;
 
 create table if not exists ref.loan_statuses (
     loan_status_id  bigint generated always as identity primary key,

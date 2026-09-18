@@ -48,7 +48,7 @@ value lists below are free to be written for people.
 | `gl_entries` | `core` | Finance | One row per ledger line | Incremental on `updated_at` | Double-entry postings. Debits and credits must balance per batch and currency, which is the control in question 16. |
 | `fraud_alerts` | `core` | Fraud | One row per alert | Incremental on `updated_at`, disposition mutates | Detection rule, triggering transaction, analyst disposition. Disposition arrives days after the alert, which makes precision a moving measure. |
 | `login_sessions` | `core` | Digital | One row per session | Incremental on `updated_at`, high volume | Device fingerprint, IP country, channel and authentication outcome. Source of the unrecognised-device measure in question 19. |
-| 28 reference tables | `ref` | Reference | One row per code, or per rate key | Incremental on `updated_at`, deactivation not deletion | Listed below with the dimension that consumes each. |
+| 29 reference tables | `ref` | Reference | One row per code, or per rate key | Incremental on `updated_at`, deactivation not deletion | Listed below with the dimension that consumes each. |
 | `column_classifications` | `platform` | Platform metadata | One row per column in the source database | Generated from this file by `make schema-apply` | Read by the extraction layer at M4 to decide what to tokenise. |
 
 ### Entity decisions
@@ -107,6 +107,7 @@ becomes a conformed dimension in its own right, or is consumed as attributes of 
 | `payment_types` | Behavioural attributes `is_customer_initiated` and `direction` | Attributes of `fct_payments` |
 | `entry_sides` | Behavioural attribute `sign_multiplier` | Attributes of `fct_gl_entries` |
 | `gl_account_types` | Behavioural attribute `normal_side_code` | Attributes of `fct_gl_entries` |
+| `gl_source_entities` | Open vocabulary: the kinds of business event that produce a posting batch grow as the bank models more postings, and under a check constraint every new one would be a schema migration. It carries no attribute beyond code, name and is_active, and none is invented for it | Attributes of `fct_gl_entries` |
 | `decision_reasons` | Open vocabulary: underwriting reason codes grow as the generator models more decision paths, and under a check constraint every new reason would be a schema migration. It carries no attribute beyond code, name and is_active, and none is invented for it | Attributes of `fct_loan_applications` |
 
 ## Value lists enforced by a check constraint
@@ -132,9 +133,20 @@ table, and this is not a lookup of codes: it is a rate table keyed on the compos
 rather than on a code.
 
 **No foreign key is left unindexed.** Design rule 12 allows omissions to be listed here with a
-reason. There are none: all 66 foreign key constraints in the three schemas carry an index on
-their referencing columns, created by the catalogue loop in
-`infra/docker/postgres-source/schema/50_audit_and_indexes.sql`.
+reason. There are none: every foreign key constraint in the three schemas carries an index on
+its referencing columns, created by the catalogue loop in
+`infra/docker/postgres-source/schema/50_audit_and_indexes.sql`, or by a composite index whose
+leading columns are the constraint's, which the loop recognises and leaves alone.
+`core.gl_transactions.source_entity_code` is the one served that way, by
+`ix_gl_transactions_source`.
+
+**`core.gl_transactions.source_entity_id` carries no foreign key, and that is the one exception
+to design rule 8.** It is a polymorphic reference: the table it points into is named by
+`source_entity_code`, so no single constraint can express it. Four nullable foreign keys, one
+per possible target, would read as stricter while being unable to say that exactly one of them
+must be set, and would need a fifth the next time the bank posts from a new kind of event.
+Referential integrity at this join is therefore replaced by spec 003 invariant 6 and by a data
+quality test at M7, and the loss is stated here rather than discovered in the DDL.
 
 **`core.cards` character columns are narrower than elsewhere.** Every one is twelve characters
 or fewer, including the two code columns, so that no column on that table can hold a thirteen
@@ -288,6 +300,8 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | `gl_transaction_reference` | character varying(40) | no | `non-personal` | Reference the posting batch is known by. | - |
 | `posting_date` | date | no | `non-personal` | The ledger date the batch posts to. Authoritative: gl_entries carries the same date and a composite foreign key keeps the two equal. | GL integrity, Q16 |
 | `description` | character varying(200) | yes | `non-personal` | What the batch represents. | - |
+| `source_entity_code` | character varying(40) | yes | `non-personal` | Which kind of business event produced this batch, from ref.gl_source_entities. The vocabulary half of a polymorphic reference: it names the core table source_entity_id points into. | fct_gl_entries, Q16, spec 003 invariant 6 |
+| `source_entity_id` | bigint | yes | `pseudonymous_key` | The key of the event that produced this batch, in the table source_entity_code names. Polymorphic, so it carries no foreign key and referential integrity at this join is replaced by spec 003 invariant 6 and a dq test at M7. Classified as a pseudonymous key because it can reference core.loans, which is person-bearing; a column carries one classification and this one takes the more protective of the two it could hold. | fct_gl_entries, Q16, spec 003 invariant 6 |
 | `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
 | `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
 | `is_deleted` | boolean | no | `non-personal` | Soft delete flag. A deleted entity is removed from silver; the row itself stays. | - |
@@ -421,6 +435,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | `value_date` | date | no | `non-personal` | The date the transaction takes effect for interest, which can differ from the booking date. | - |
 | `transaction_amount` | numeric(18,4) | no | `non-personal` | Amount in the transaction currency, signed by direction. | fct_transactions, Q4, Q6, Q11 |
 | `transaction_currency_code` | character(3) | no | `non-personal` | Currency of transaction_amount. | fct_transactions, Q4, Q6, Q11 |
+| `is_card_present` | boolean | yes | `non-personal` | Whether the card was physically presented. Decided per card authorisation, not derived from the channel: a mobile wallet tap at a terminal is card present and an ecommerce purchase from the same handset is not. Null exactly when card_id is null, because presentment is meaningless without a card authorisation. | fct_transactions, Q10, Q19 |
 | `reversal_of_transaction_id` | bigint | yes | `non-personal` | The transaction this one reverses. Null unless this is a reversal, and never itself. | - |
 | `counterparty_reference` | character varying(140) | yes | `identifier` | Counterparty account or descriptor as the scheme sent it. Classified identifier because it can carry an IBAN. | - |
 | `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
@@ -612,6 +627,18 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
 | `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
 
+#### ref.gl_source_entities
+
+| Column | Type | Nullable | Classification | Description | Consumed by |
+|---|---|---|---|---|---|
+| `gl_source_entity_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `code` | character varying(40) | no | `non-personal` | Stable business code naming the kind of business event that produced a posting batch, and the vocabulary half of the polymorphic reference on core.gl_transactions. | fct_gl_entries, Q16, spec 003 invariant 6 |
+| `name` | character varying(120) | no | `non-personal` | Human readable name. | - |
+| `description` | text | yes | `non-personal` | Free text note on the row, where one is useful. Each row names the core table its source_entity_id points into, because a polymorphic reference that does not say where it points is unreadable. | - |
+| `is_active` | boolean | no | `non-personal` | Whether the code is currently in use. An inactive row is retained, because a dimension must still describe facts that reference a retired code. | - |
+| `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
+| `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
+
 #### ref.holder_roles
 
 | Column | Type | Nullable | Classification | Description | Consumed by |
@@ -747,6 +774,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | `name` | character varying(120) | no | `non-personal` | Human readable name. | - |
 | `is_declined` | boolean | no | `non-personal` | Whether the status means the payment was refused. The numerator of the decline rate. | mart_payments_cross_border, Q13 |
 | `is_final` | boolean | no | `non-personal` | Whether the status is terminal. | mart_payments_cross_border, Q13 |
+| `is_posted` | boolean | no | `non-personal` | Whether the payment's amount is reflected in the account balance. The mirror of ref.transaction_statuses.is_posted and the payment half of the balance reconciliation. A returned payment is posted: it did debit the account, and the return arrives as its own scheme_return row. | fct_account_balance_daily, Q3, spec 003 invariant 4 |
 | `description` | text | yes | `non-personal` | Free text note on the row, where one is useful. | - |
 | `is_active` | boolean | no | `non-personal` | Whether the code is currently in use. An inactive row is retained, because a dimension must still describe facts that reference a retired code. | - |
 | `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |

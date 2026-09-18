@@ -59,22 +59,30 @@ on conflict (code) do update
         is distinct from (excluded.name, excluded.is_customer_initiated, excluded.direction,
                           excluded.description, excluded.is_active);
 
-insert into ref.payment_statuses (code, name, is_declined, is_final, description, is_active) values
-    ('initiated', 'Initiated', false, false, null, true),
-    ('pending',   'Pending',   false, false, 'Awaiting scheme processing', true),
-    ('booked',    'Booked',    false, false, 'Debited from the account, not yet settled with the scheme', true),
-    ('settled',   'Settled',   false, true,  null, true),
-    ('rejected',  'Rejected',  true,  true,  'Refused by the scheme or the beneficiary bank', true),
-    ('returned',  'Returned',  true,  true,  'Settled and then returned', true),
-    ('cancelled', 'Cancelled', false, true,  'Withdrawn by the customer before settlement', true)
+-- is_posted is the payment half of the balance reconciliation, mirroring
+-- ref.transaction_statuses.is_posted. It says whether this payment's amount is reflected in
+-- core.accounts.current_balance_amount, which is what spec 003 invariant 4 sums.
+--
+-- 'returned' is posted. A settled payment that is later returned did debit the account, and
+-- the return arrives as its own row under the 'scheme_return' payment type in the credit
+-- direction. Netting it here instead would make one row mean two movements.
+insert into ref.payment_statuses (code, name, is_declined, is_final, is_posted, description, is_active) values
+    ('initiated', 'Initiated', false, false, false, 'Instruction accepted, account not yet debited', true),
+    ('pending',   'Pending',   false, false, false, 'Awaiting scheme processing', true),
+    ('booked',    'Booked',    false, false, true,  'Debited from the account, not yet settled with the scheme', true),
+    ('settled',   'Settled',   false, true,  true,  null, true),
+    ('rejected',  'Rejected',  true,  true,  false, 'Refused by the scheme or the beneficiary bank', true),
+    ('returned',  'Returned',  true,  true,  true,  'Settled and then returned; the return is a separate scheme_return payment', true),
+    ('cancelled', 'Cancelled', false, true,  false, 'Withdrawn by the customer before settlement', true)
 on conflict (code) do update
     set name = excluded.name, is_declined = excluded.is_declined, is_final = excluded.is_final,
+        is_posted = excluded.is_posted,
         description = excluded.description, is_active = excluded.is_active
   where (ref.payment_statuses.name, ref.payment_statuses.is_declined,
-         ref.payment_statuses.is_final, ref.payment_statuses.description,
-         ref.payment_statuses.is_active)
+         ref.payment_statuses.is_final, ref.payment_statuses.is_posted,
+         ref.payment_statuses.description, ref.payment_statuses.is_active)
         is distinct from (excluded.name, excluded.is_declined, excluded.is_final,
-                          excluded.description, excluded.is_active);
+                          excluded.is_posted, excluded.description, excluded.is_active);
 
 insert into ref.payment_types (code, name, is_customer_initiated, direction, description, is_active) values
     ('sepa_transfer_out',  'SEPA credit transfer, outgoing', true,  'debit',  null, true),

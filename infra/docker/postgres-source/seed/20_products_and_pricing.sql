@@ -163,10 +163,16 @@ select pc.code,
            else null
        end,
        date '2020-01-01',
+       -- Two different reasons for a null, and collapsing them into one sentence would hide
+       -- that only one of them is ever going to be resolved. See metric_definitions.md.
        case
            when r.code = 'eea' and pc.code like 'consumer%'
-               then 'Regulated cap, EU Interchange Fee Regulation 2015/751'
-           else 'Undecided: negotiated commercially, resolve before M6 per metric_definitions.md'
+               then 'Regulated cap, EU Interchange Fee Regulation 2015/751. Does not vary by presentment'
+           when pc.code like 'commercial%'
+               then 'Null: negotiated bilaterally with no published figure. An error at M6, never zero'
+           else 'Null: outbound inter-regional. Nordbank is an EEA issuer, so the 2019 Commission '
+                || 'commitments do not govern this corridor and no published figure exists. '
+                || 'An error at M6, never zero'
        end,
        true
   from ref.card_product_classes pc
