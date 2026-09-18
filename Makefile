@@ -13,6 +13,9 @@ install: ## Create the virtual environment and install the git hooks
 	uv sync
 	uv run pre-commit install
 
+init-env: ## Generate .env from the template, filling every generated secret
+	uv run python scripts/init_env.py
+
 lint: ## Check Python formatting and lint rules, and SQL when SQL exists
 	uv run ruff check .
 	uv run ruff format --check .
@@ -32,7 +35,7 @@ test-integration: ## Run the smoke tests inside the running stack
 	@echo "test-integration: running inside airflow-scheduler, where the volumes and network are"
 	docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow && pytest -q -m integration tests"
 
-up: ## Start the local stack and wait until every service is healthy
+up: ## Generate .env if absent, validate it, then start the stack and wait for health
 	uv run python scripts/stack_up.py
 
 down: ## Stop the local stack and keep the volumes

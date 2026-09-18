@@ -13,6 +13,9 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 LONG_RUNNING = (
     "postgres-source",
@@ -76,7 +79,22 @@ def report_failure(waiting: list[str]) -> None:
         print(logs.stdout or logs.stderr, file=sys.stderr)
 
 
+def environment_preflight() -> int:
+    """Generate .env when it is missing, then validate it. Both failures in M1 were here."""
+    if not ENV_FILE.exists():
+        print("stack: no .env found, generating one")
+        created = subprocess.run([sys.executable, "scripts/init_env.py"], check=False)
+        if created.returncode != 0:
+            return created.returncode
+
+    return subprocess.run([sys.executable, "scripts/check_env.py"], check=False).returncode
+
+
 def main() -> int:
+    environment = environment_preflight()
+    if environment != 0:
+        return environment
+
     preflight = subprocess.run([sys.executable, "scripts/docker_preflight.py"], check=False)
     if preflight.returncode != 0:
         return preflight.returncode
