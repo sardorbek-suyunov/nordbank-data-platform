@@ -830,3 +830,51 @@ that had not been implemented, so the file is replaced rather than amended.
   that the literal wording is unprovable.
 - Acceptance criterion 14 requires four checks, not two. The repository has four:
   `lint`, `dags`, `docs` and `stack`.
+
+## Amendments
+
+Appended after implementation, by the milestone that found the deviation. The scope text above
+is left as issued; the protocol is in `docs/specs/README.md`.
+
+### 2026-09-18 — Design rule 4 is refined: the loader sets `updated_at` on insert
+
+Design rule 4 says `updated_at` is maintained by `core.set_updated_at()` and "is never set by
+application code". That is correct for every `UPDATE` and wrong for an `INSERT`, and spec 003
+found the gap while specifying the historical load.
+
+The trigger is created `before update` only, in
+`infra/docker/postgres-source/schema/50_audit_and_indexes.sql`. An insert therefore never
+fires it, and a loader that stays silent falls through to the column default of `now()`. For
+the historical load that would stamp five years of simulated history with the wall-clock
+instant of the load, delivering the entire source to M4 inside one watermark window and
+leaving incremental extraction with nothing to demonstrate.
+
+The rule as refined by spec 003: no code path may set `updated_at` on an `UPDATE`, and every
+`INSERT` must set it to the row's true last-change time in simulated history. Watermark
+correctness, which is what design rule 4 exists to protect, is what requires the refinement
+rather than what argues against it.
+
+Design rule 6 is unchanged. Spec 003's identity probe established that `COPY` accepts explicit
+values into a `bigint generated always as identity` column while `INSERT` still refuses them,
+so the loader needs nothing relaxed.
+
+### 2026-09-18 — `ref.payment_statuses` gains `is_posted`, and `core.gl_transactions` gains a source reference
+
+Two columns are added to the schema this specification delivered, both by spec 003 and both
+because an invariant it defines had no way to read what it needed.
+
+`ref.payment_statuses.is_posted` mirrors `ref.transaction_statuses.is_posted`. Spec 003's
+invariant 4 reconciles `accounts.current_balance_amount` against posted transactions and
+payments, and the payment side had no reference flag saying whether the account moved. It
+passes design rule 7's limb one with that invariant and the deposit balance metric as named
+consumers.
+
+`core.gl_transactions.source_entity_code` and `.source_entity_id` carry a polymorphic
+reference to the business event that produced the posting batch, with
+`ref.gl_source_entities` as the vocabulary. Spec 003's invariant 6 requires every monetary
+event to have GL entries, and nothing in the ledger pointed back at the event. The reference
+sits on the batch rather than the line because a business event produces a batch and the
+entries are its lines. A polymorphic reference cannot carry a foreign key, so referential
+integrity at that join is replaced by invariant 6 and a data quality test at M7. Design rule 8
+is therefore not universal, and the exception is recorded here rather than left to be
+discovered in the DDL.
