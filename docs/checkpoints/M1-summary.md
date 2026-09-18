@@ -30,8 +30,11 @@ data, no pipeline logic.
   including the batch-id key property, and the warehouse in both directions.
 - Make targets: `up`, `down`, `nuke`, `health`, `logs`, `verify-dag`, `test`, `test-dags`,
   `test-integration`, each delegating to a script in `scripts/`.
-- Tests: 13 unit tests that need neither Airflow nor a stack, 6 DAG integrity tests, 8 smoke
+- Tests: 26 unit tests that need neither Airflow nor a stack, 6 DAG integrity tests, 8 smoke
   tests against a running stack.
+- `.env` is generated, never copied: the template holds sentinels rather than secrets,
+  `make init-env` fills them, and `make up` generates and then validates before it starts
+  anything.
 - CI: `ci.yml` gains compose validation, unit tests and a `dags` job; `stack.yml` builds the
   image with a layer cache, brings the stack up, runs the strict health probes, triggers and
   verifies the DAG, runs the smoke tests, and uploads compose logs on failure.
@@ -46,8 +49,8 @@ overlayfs.
 | First `make up` (image build and all pulls) | about 6 minutes |
 | `make up` from a `make nuke` | 38 to 39 seconds |
 | `make up` after `make down` | 33 to 34 seconds |
-| Memory limits, long-running services | 7680 MiB total, about 7.5 GiB |
-| Measured steady-state usage | about 1.4 GiB total |
+| Memory limits, long-running services | 5632 MiB total, 5.5 GiB, set from measurement |
+| Measured steady-state usage | 1302 MiB, 1.27 GiB, a 4.3x envelope |
 
 The stack is validated at the documented floor rather than at what this machine has: the limits
 are in force in `docker-compose.yml`, and the run above was made with them applied.
@@ -85,8 +88,7 @@ are in force in `docker-compose.yml`, and the run above was made with them appli
 From the repository root. On Windows, run these from Git Bash with GNU make on the PATH.
 
 ```bash
-cp .env.example .env     # a plain copy is enough; no manual step
-make up                  # preflight, build if needed, start, wait for health
+make up                  # generates .env if absent, validates it, builds, waits for health
 make health              # per-component table; STRICT=1 treats a busy warehouse as failure
 make verify-dag          # trigger ops_stack_healthcheck from the CLI and verify from records
 make test                # unit tests, no Airflow, no stack

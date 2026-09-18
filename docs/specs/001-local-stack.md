@@ -374,3 +374,47 @@ to own. Setting it to the runner uid made `airflow-init` fail immediately with
 `ModuleNotFoundError: No module named 'airflow'`, because Airflow is installed in user 50000's
 home. CI found this, and the value is now left alone in the workflow, the template and the
 runbook.
+
+### 2026-09-18 — Criterion 1 corrected: no working secret in the template
+
+Criterion 1 required `make up` to work from a plain copy of `.env.example` with no manual step.
+Airflow does not start without a valid Fernet key, so satisfying it literally meant committing
+a working key to a public repository, which contradicts M0 criterion 8. The criterion drove the
+mistake; this is the correction.
+
+Criterion 1 now reads: from a clean clone with no `.env` file at all, `make up` produces a fully
+healthy stack, and `.env.example` contains no working secret.
+
+The mechanism: every credential in the template is the sentinel `__GENERATE__`, or
+`__EXTERNAL__` for one somebody else issues. `make init-env` generates `.env`, replacing each
+sentinel with a fresh value, refusing to overwrite an existing file, and printing exactly which
+values it created. Generation is stdlib only, including the Fernet key, because Airflow does not
+import on every host this runs on. `make up` runs that generation itself when `.env` is missing.
+
+### 2026-09-18 — `.env` validation added to the preflight
+
+Both failures in this milestone were environment-variable failures: a value that carried its
+inline comment into a container, and a uid that looked reasonable and lost the Airflow install.
+`scripts/check_env.py` runs before anything starts and fails, naming the variable and never
+printing the value, when a key present in `.env.example` is missing from `.env`, a `__GENERATE__`
+sentinel survived, a value contains an inline comment, or the Fernet key does not decode to 32
+bytes. It is unit-tested, including the inline-comment case, which is the one that actually
+happened.
+
+### 2026-09-18 — Memory floor trimmed to measured numbers
+
+The first limits were guessed: 7680 MiB against 1.44 GiB of measured usage. They are now set
+from measurement: postgres 512 each, minio 512, api-server 1024, dag-processor 512, triggerer
+512, and the scheduler left at 2048 because LocalExecutor runs tasks inside it and dbt and
+pyarrow arrive at M4. Total 5632 MiB, and `make up` reaches full health at those limits.
+
+Standing rule, recorded in the runbook: the floor is re-measured at every milestone that adds
+runtime work, M4 and M6 next, so the number stays a fact rather than an assumption.
+
+### 2026-09-18 — `stack.yml` runs on every push and pull request
+
+Section 11 gives `stack.yml` path filters. From M2 the `stack` check is required for a merge,
+and a required check that does not run cannot be satisfied: a documentation-only pull request
+would wait forever. The filters are removed, and the workflow runs on every push and pull
+request, which costs about three minutes per run and buys a merge gate that always means
+something.

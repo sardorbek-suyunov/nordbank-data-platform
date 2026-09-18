@@ -10,24 +10,36 @@ On Windows, run make from Git Bash with make on the PATH; the Makefile sets `SHE
 First run, from a clean clone:
 
 ```bash
-cp .env.example .env
-make up            # preflight, build if needed, start, wait for every healthcheck
+make up            # generates .env if absent, validates it, builds if needed, waits for health
 make health        # per-component probe table
 make verify-dag    # trigger ops_stack_healthcheck from the CLI and verify it
 ```
 
-`make up` refuses to start when the Docker daemon is unreachable or reports less than 6 GB, and
-says which it is. Nothing else is required: the bucket, the database roles, the warehouse file,
-the admin user and the `warehouse_access` pool are all created by the one-shot init services.
+No `.env` step: `make up` generates one when it is missing and prints every value it created.
+`make init-env` does the same on demand and refuses to overwrite an existing file, because those
+credentials are the ones a running stack was built with.
+
+`make up` then validates `.env` against the template and refuses to start when a variable is
+missing, a `__GENERATE__` sentinel survived, a value carries an inline comment, or the Fernet
+key does not decode to 32 bytes. It also refuses when the Docker daemon is unreachable or
+reports less than 6 GB, and says which it is.
+
+Nothing else is required: the bucket, the database roles, the warehouse file, the admin user
+and the `warehouse_access` pool are all created by the one-shot init services.
 
 Expect roughly 6 minutes on the very first run, which builds the Airflow image and pulls
 everything, then about 40 seconds from a `make nuke`, and about 35 seconds after a `make down`.
 
 ### The environment file
 
-`.env` is gitignored and never committed. `.env.example` carries a comment per variable and a
-working development Fernet key and JWT secret, so that a plain copy starts; both are published
-in this repository and protect nothing, so regenerate them for any environment that matters.
+`.env` is gitignored and never committed. `.env.example` documents variables and contains no
+working secret: every credential is the sentinel `__GENERATE__`, which `make init-env` replaces
+with a freshly generated value, or `__EXTERNAL__` for a credential somebody else issues.
+Generation is stdlib only, including the Fernet key, which is 32 random bytes in urlsafe base64.
+
+The generated `.env` carries values without inline comments. Comments belong in the template: a
+value that carried its own explanation into a container is how M1 spent an afternoon on a
+signature mismatch.
 
 The setting most likely to need changing per machine is the memory Docker Desktop is allowed
 to use.
@@ -61,26 +73,32 @@ invisible in the UI and to `airflow connections list`; read them back with
 The stack is validated at a documented floor rather than at whatever a developer machine has.
 The limits are set in `docker-compose.yml`:
 
-| Service | `mem_limit` |
-|---|---|
-| postgres-source | 512 MiB |
-| postgres-airflow | 512 MiB |
-| minio | 1024 MiB |
-| airflow-apiserver | 1536 MiB |
-| airflow-scheduler | 2048 MiB |
-| airflow-dag-processor | 1024 MiB |
-| airflow-triggerer | 1024 MiB |
-| **Total, long-running** | **7680 MiB, about 7.5 GiB** |
+| Service | `mem_limit` | Measured | Headroom |
+|---|---|---|---|
+| postgres-source | 512 MiB | 30 MiB | 17x |
+| postgres-airflow | 512 MiB | 51 MiB | 10x |
+| minio | 512 MiB | 73 MiB | 7.0x |
+| airflow-apiserver | 1024 MiB | 253 MiB | 4.1x |
+| airflow-scheduler | 2048 MiB | 305 MiB | 6.7x |
+| airflow-dag-processor | 512 MiB | 286 MiB | 1.8x |
+| airflow-triggerer | 512 MiB | 304 MiB | 1.7x |
+| **Total, long-running** | **5632 MiB, 5.5 GiB** | **1302 MiB, 1.27 GiB** | **4.3x** |
+
+The scheduler keeps the largest share deliberately: under LocalExecutor tasks run inside that
+process, and dbt and pyarrow arrive at M4. The dag-processor and the triggerer are the tightest
+at about 1.7x, which is the pair to watch first when something new is added.
 
 The one-shot services are additional but transient: `minio-init` at 256 MiB and `airflow-init`
 at 1 GiB, both of which have exited before the Airflow services finish starting.
 
-Validated on 2026-09-18 against Docker 29.6.2, 32 CPUs, 31.2 GiB available to the daemon,
-storage driver overlayfs, with the limits above in force. Measured steady-state usage after a
-successful health-check run was about 1.4 GiB in total: apiserver 296 MiB, dag-processor
-304 MiB, scheduler 353 MiB, triggerer 321 MiB, minio 74 MiB, postgres-airflow 64 MiB,
-postgres-source 32 MiB. The headroom is deliberate: the limits are what a laptop should reserve,
-not what the stack uses when idle.
+Measured on 2026-09-18 against Docker 29.6.2, 32 CPUs, 31.2 GiB available to the daemon, storage
+driver overlayfs, with the limits above in force: `make up` reached full health in 36 seconds
+and every probe passed.
+
+**The floor is re-measured at every milestone that adds runtime work, and this table is
+updated with it.** The next two are M4, which adds dbt and pyarrow to the scheduler, and M6,
+which builds the marts. A number carried forward without being measured again is an assumption
+wearing a fact's clothes.
 
 ## Teardown
 
