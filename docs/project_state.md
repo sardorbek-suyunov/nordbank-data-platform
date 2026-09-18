@@ -175,15 +175,50 @@ Deferred work, with the milestone that owns it:
 | Power BI, Streamlit, the `exports/` snapshot task | M9 |
 | BigQuery target, Terraform | M10 |
 
-Open decisions, both of which block only the marts that consume them and must be resolved
-before M6:
+Open decisions, which block only the marts that consume them:
 
-- **Interchange rates** beyond the regulated intra-EEA consumer caps. Commercial and
-  inter-regional rates are negotiated and have no single public number; the decision depends on
-  which card products the generator issues at M2.
+- **Commercial card interchange** remains undecided and should stay that way. Commercial rates
+  are negotiated bilaterally and have no published figure, so any number the platform invented
+  would make Q4 look precise while being arbitrary. The seed leaves them null, and a null is an
+  error at M6 rather than a zero.
 - **The funding cost assumption** behind the net interest income proxy. It requires deciding a
   funding mix that the source system does not model yet. Until then question 5 reports gross
-  interest accrued and says that funding cost is excluded.
+  interest accrued and says that funding cost is excluded. Resolve before M6.
+
+**Inter-regional interchange is no longer undecided, and resolving it is M3 work rather than
+M6 work.** The current seed leaves 189 of 210 rates null, which makes Q4 mostly unanswerable,
+and the inter-regional half of that does not need to stay open: the figures are published.
+
+Verified against the primary source, European Commission press release IP/19/2311 of
+29 April 2019, which made commitments by Mastercard and Visa binding in cases AT.40049 and
+AT.39398. The caps on inter-regional interchange for consumer cards issued outside the EEA
+and used inside it are:
+
+| Presentment | Debit | Credit |
+|---|---|---|
+| Card present | 0.20% | 0.30% |
+| Card not present | 1.15% | 1.50% |
+
+One caveat has to travel with those numbers. The commitments were binding for **five years and
+six months** from April 2019, so the binding period ended around October 2024 and the press
+release cannot say what applies today. They are citable published figures and the right basis
+for a simulated bank, but the seed must describe them as the last published binding caps with
+their expiry, not as current regulation. Stating it the other way round would be the same kind
+of false precision the null rates exist to avoid.
+
+Three things follow, and they are carried into the M3 specification rather than done here,
+because the first is a schema change and this milestone's schema is merged:
+
+- **`ref.interchange_rates` needs a card-present dimension on its key.** The inter-regional
+  rates differ by presentment, and the current key of (card product class, merchant region, MCC
+  band, valid from) cannot express that. The rate for a card-not-present debit transaction is
+  nearly six times the card-present one, so collapsing the two is not a rounding difference.
+- **The generator must model card present against card not present anyway.** Card-not-present
+  is where fraud concentrates, and Q10 and Q19 are only meaningful if that is realistic. The
+  two changes belong in the same milestone: the dimension is worth nothing without a generator
+  that populates it, and the generator cannot be realistic without somewhere to record it.
+- **Only commercial card rates then remain null**, which is a defensible thing to leave
+  undecided and fail loudly on.
 
 Other known gaps:
 
@@ -199,9 +234,6 @@ Other known gaps:
   Their column definitions move to M4 with the contracts for those feeds.
 - The architecture diagram is a link to a directory rather than a diagram. The source schema
   now has one, in [diagrams/erd.md](diagrams/erd.md); the platform-level diagram does not.
-- The ADR protocol has no mechanism for adding a consequence to a record whose milestone has
-  closed. ADR 0005 gained one at M2, recorded through a second `Revised:` line, with the
-  decision that produced it written as its own record, ADR 0010.
 
 ## Next milestone
 
