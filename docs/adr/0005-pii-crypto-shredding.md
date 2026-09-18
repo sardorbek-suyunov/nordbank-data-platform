@@ -3,10 +3,11 @@
 Status: Accepted
 Date: 2026-09-17
 Revised: 2026-09-18, during the M0 review, to add the payload fidelity and quarantine
-consequences. Revised again 2026-09-18, at M2, to add the consequence that the vault is also
-the only path to a sanctions screen, and that erasure therefore also destroys the ability to
-re-screen a subject. The decision itself is unchanged in both cases; the screening decision
-that produced the second revision is its own record, ADR 0010.
+consequences. The decision itself is unchanged.
+Consequence added: 2026-09-18, discovered by ADR 0010, which decided that sanctions screening
+resolves tokens through the vault. The vault is therefore also the only path to a sanctions
+screen, and erasure also destroys the ability to re-screen a subject. The decision, its
+context and its alternatives are unchanged.
 
 ## Context
 
