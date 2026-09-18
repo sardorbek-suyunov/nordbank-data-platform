@@ -91,15 +91,59 @@ def test_every_column_is_classified_and_nothing_extra_is(documented, execute) ->
     assert not classified - live, f"classified but absent: {sorted(classified - live)}"
 
 
-def test_classifications_use_only_the_four_classes(execute) -> None:
+def test_classifications_use_only_the_five_classes(execute) -> None:
     rows = execute("select distinct classification from platform.column_classifications")
 
     assert {row[0] for row in rows} <= {
         "identifier",
         "quasi-identifier",
+        "pseudonymous_key",
         "sensitive",
         "non-personal",
     }
+
+
+def test_every_join_path_to_a_person_is_a_pseudonymous_key(execute) -> None:
+    """No key that resolves to a person may be classified non-personal.
+
+    The first pass classified all of them that way, which was wrong: an internal customer
+    number is pseudonymised personal data. It cannot be tokenised, because it is the pseudonym
+    rather than the identifier and tokenising it would break every join, so the class exists to
+    say that it is personal without asking for it to be transformed.
+    """
+    rows = execute(
+        """
+        with person_bearing (t) as (
+            values ('customers'), ('customer_addresses'), ('accounts'), ('account_holders'),
+                   ('cards'), ('loans'), ('loan_applications')
+        ),
+        keys as (
+            select c.relname as tbl, a.attname as col
+              from pg_constraint con
+              join pg_class c      on c.oid = con.conrelid
+              join pg_namespace n  on n.oid = c.relnamespace
+              join unnest(con.conkey) k(attnum) on true
+              join pg_attribute a  on a.attrelid = con.conrelid and a.attnum = k.attnum
+             where n.nspname = 'core'
+               and (
+                   (con.contype = 'p' and c.relname in (select t from person_bearing))
+                or (con.contype = 'f' and con.confrelid in (
+                        select fc.oid from pg_class fc
+                          join pg_namespace fn on fn.oid = fc.relnamespace
+                         where fn.nspname = 'core'
+                           and fc.relname in (select t from person_bearing)))
+               )
+        )
+        select 'core.' || k.tbl || '.' || k.col, cc.classification
+          from keys k
+          join platform.column_classifications cc
+            on cc.schema_name = 'core' and cc.table_name = k.tbl and cc.column_name = k.col
+         where cc.classification <> 'pseudonymous_key'
+         order by 1
+        """
+    )
+
+    assert rows == [], f"join paths to a person not classified as pseudonymous_key: {rows}"
 
 
 def test_every_table_carries_its_audit_columns(execute) -> None:

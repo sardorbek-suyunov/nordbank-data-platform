@@ -418,6 +418,32 @@ phone, national identifier, IBAN, device fingerprint, IP address and payment
 counterparty name are `identifier`. Address lines are `identifier`; city,
 postal code and country are `quasi-identifier`.
 
+**A fifth class, `pseudonymous_key`.** The four classes in
+`docs/pii_classification.md` had no home for a key that identifies a person only
+by reference, and the first pass classified all twenty-one of them
+`non-personal`, which says the opposite of what is true. An internal customer
+number is pseudonymised personal data: inside a platform holding the mapping,
+`customer_id = 4711` picks out exactly one person.
+
+It cannot be tokenised either. The key **is** the pseudonym, so hashing it would
+produce a different pseudonym of the same personal character while breaking
+every join in the platform. The class therefore says what the column is and asks
+for nothing to be done to it. What protects the subject is that the identifiers
+the key leads to are tokenised and resolvable only through the vault: delete the
+vault entries and the key still joins perfectly while resolving to nobody. That
+is precisely what makes crypto-shredding sufficient rather than merely
+convenient, and the class is how the schema records that the design depends on
+it.
+
+The line is drawn at keys to person-bearing entities — `customers`,
+`customer_addresses`, `accounts`, `account_holders`, `cards`, `loans`,
+`loan_applications` — and every foreign key pointing at one, twenty-one columns
+in total. An event key such as `transaction_id` is not one: it identifies an
+event, and the event row reaches a person through a column that is classified.
+A business key that leaves the platform, such as `customer_reference` or
+`account_number`, stays `identifier` and is tokenised, because the surrogate key
+carries the join in its place.
+
 `docs/pii_classification.md` currently files IP address and address as
 quasi-identifiers. This specification overrides both, and the amendment to that
 document is a deliverable of this milestone.
