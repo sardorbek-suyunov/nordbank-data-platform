@@ -9,7 +9,9 @@ made yet. They are listed with what the decision depends on, and they block the 
 consume them, not the layers below.
 
 All dates are UTC calendar dates. All amounts are EUR equivalents converted as-of, per the
-currency conversion rule in [architecture.md](architecture.md).
+currency conversion rule in [architecture.md](architecture.md), except where a rule states
+otherwise, as settlement reconciliation does. Every object named on this page has a row in
+[model_inventory.md](model_inventory.md).
 
 ## Active account
 
@@ -29,16 +31,46 @@ inside M can still be active.
 
 **Rule.** A customer is active in month M if they own at least one account that is active in M
 by the definition above. This is a customer-level count: a customer with three active accounts
-counts once. Joint accounts count for every owner.
+counts once.
+
+Ownership comes from the account holder bridge (`sl_account_holders` in silver,
+`bridge_account_holder` in gold), one row per account and holder, carrying a holder role and
+an ownership weighting factor that sums to one per account. A joint account
+counts once for each of its holders in customer counts, and is split by the weighting factor
+in monetary aggregates, so a joint balance of 1,000 EUR contributes 500 EUR to each of two
+holders rather than 1,000 EUR to both. Counting people and dividing money are different
+operations on the same bridge, and conflating them double counts every joint account.
 
 The distinction from active account is not cosmetic. Q1 measures product usage at account
 level and Q6 measures revenue per person, so the two denominators differ by design and are
 never interchangeable.
 
-**Source columns.** `dim_customer.customer_sk`, `dim_account.customer_sk`, plus the active
-account inputs.
+**Source columns.** `dim_customer.customer_sk`, `bridge_account_holder.account_sk`,
+`bridge_account_holder.customer_sk`, `bridge_account_holder.holder_role`,
+`bridge_account_holder.ownership_weight`, plus the active account inputs.
 
 **Used by.** Q6, and the denominator of any per-customer measure.
+
+## Customer-initiated transaction
+
+**Rule.** `is_customer_initiated` is true for a transaction the customer caused: card
+purchase, card refund, ATM or agent cash withdrawal, agent cash deposit, outgoing transfer,
+incoming transfer, standing order execution and direct debit collection.
+
+It is false for everything the bank causes on its own account: interest accrual and posting,
+maintenance and account fees, card issuance fees, FX markup postings, chargeback adjustments
+raised by the bank, write-offs, and internal reclassification entries between ledger accounts.
+
+The line is drawn by cause, not by sign or by amount. A direct debit is customer-initiated
+because the customer signed the mandate; a monthly account fee is not, because it would post
+whether the customer touched the account or not. The flag is derived once, in silver, from the
+source transaction type, and every downstream activity measure uses it rather than
+re-deriving its own list.
+
+**Source columns.** `sl_transactions.transaction_type`, `sl_transactions.initiator`,
+`sl_payments.payment_type`.
+
+**Used by.** Active account, and through it Q1 and Q6.
 
 ## Month-over-month growth basis
 
@@ -92,6 +124,11 @@ at M2.
 interest_accrued = outstanding_principal * nominal_annual_rate * days_in_month / 365
 nii_proxy        = interest_accrued - funding_cost
 ```
+
+The day-count convention is Actual/365 Fixed: the actual number of days in the month over a
+fixed 365-day year, so a leap year has 366 days of accrual over a 365-day denominator. It is
+named here because the alternatives, 30/360 and Actual/Actual, give different answers on the
+same loan book, and a proxy that does not say which one it used cannot be checked.
 
 Outstanding principal is the month-end balance after scheduled repayments. The rate is the
 contractual nominal rate in force during M, taken from the SCD2 product dimension as of the
@@ -228,19 +265,34 @@ payment is still cross-border.
 
 ## Settlement break and materiality
 
-**Rule.** For a settlement date and card network, a break is any absolute difference greater
-than EUR 0.01 between the file total and the internal ledger total for the same date and
-network, after converting both to EUR.
+**Rule.** Reconciliation compares the card network file total against the internal ledger
+total for the same settlement date, network and settlement currency, at source precision, in
+the settlement currency. Both sides are exact decimals, so the expected difference is exactly
+zero and any non-zero difference is a break. There is no detection tolerance.
 
-Materiality governs the response, not the detection: a break is reported whenever it exists.
-A break below EUR 100 and below 0.1 per cent of the file total is severity `warn`. A break at
-or above either threshold is severity `error`, fails the reconciliation gate, and escalates.
-The percentage term exists so that a large file is not waved through on an absolute number,
-and the absolute term so that a tiny file is not escalated over rounding.
+EUR conversion plays no part in detection. Converting first would introduce rounding that
+manufactures breaks in one direction and hides them in the other, and it would compare a
+number the network sent with a number the platform computed. The EUR equivalent is computed
+afterwards, for reporting the size of a break in a common currency and for ranking breaks
+across networks.
+
+Materiality governs the response, not the detection:
+
+| Condition, evaluated in the settlement currency | Severity |
+|---|---|
+| Difference is exactly zero | No break |
+| Difference is below 0.1 per cent of the file total and below 100 units of the settlement currency | `warn`, recorded and reviewed |
+| Difference is at or above either threshold | `error`, fails the reconciliation gate and escalates |
+
+The relative term keeps a large file from being waved through on an absolute number. The
+absolute term keeps a tiny file from escalating over a rounding difference. Both are expressed
+in the currency the comparison happened in, so the thresholds do not move with the exchange
+rate.
 
 **Source columns.** `sl_card_settlements.file_total_amount`,
-`sl_card_settlements.settlement_date`, `sl_card_settlements.network`,
-`fct_gl_entries.amount_eur`, `fct_gl_entries.posting_date`.
+`sl_card_settlements.settlement_currency`, `sl_card_settlements.settlement_date`,
+`sl_card_settlements.network`, `fct_gl_entries.amount`, `fct_gl_entries.currency_code`,
+`fct_gl_entries.posting_date`.
 
 **Used by.** Q15.
 
@@ -253,7 +305,7 @@ of days on which every expected batch for that source was fresh.
 | Source | Expected by | Window |
 |---|---|---|
 | Core banking | 06:00 UTC daily | 24 hours plus a 2 hour grace |
-| ECB FX rates | 17:00 UTC on ECB working days | Until 17:00 UTC the previous published rate is not stale |
+| ECB FX rates | Around 16:00 CET on ECB working days, which is 15:00 UTC in summer and 14:00 UTC in winter | 3 hours after the publication time in force on that date; the window is computed from CET and never from a fixed UTC hour |
 | Card settlement files | 08:00 UTC daily | 24 hours plus a 4 hour grace, because the file is produced by a third party |
 | Sanctions list | 09:00 UTC each Monday | 8 days |
 | FRED macro series | 09:00 UTC on the 15th of the month | 35 days |
