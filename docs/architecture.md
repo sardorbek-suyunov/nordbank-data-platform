@@ -117,6 +117,11 @@ no deduplication except on the exact replay of a batch. Bronze is append-only an
 once a partition is registered; a correction is a new batch, never an edit. Every row carries
 `_ingested_at`, `_source_file`, `_batch_id` and `_source_system`.
 
+Because a failed run can leave objects behind that no batch registration ever covered, every
+bronze model filters to batch ids registered as successful in `ops`. Reading the object store
+without that filter is a defect: the files are there, they look complete, and nothing about
+them says the run that wrote them died.
+
 *Schema drift.* An additive change is accepted: a new source column is loaded, and its
 appearance is recorded in `meta` with the batch that introduced it. A type change, a removed
 column, or a change to the primary key is not accepted: the whole batch is quarantined and
@@ -178,12 +183,19 @@ propagates visibly and an error blocks the gate.
 Raw extracts land in MinIO under the bucket `nordbank-lake`:
 
 ```
-bronze/<source>/<entity>/ingest_date=YYYY-MM-DD/part-*.parquet
+bronze/<source>/<entity>/ingest_date=YYYY-MM-DD/batch_id=<batch_id>/part-NNNN.parquet
 ```
 
 Partitioning is by ingest date rather than business date, so a partition is written once and
 never revisited. Business date filtering happens in silver, where late arrivals can be
 ordered correctly.
+
+The batch id in the key is what makes bronze immutable. Two writes cannot collide on a key,
+because the batch id differs, so an overwrite is not something the platform declines to do but
+something it cannot express (ADR 0008). The cost is more and smaller objects, which needs a
+compaction and retention story before the `full` profile is usable, and a rule that every
+bronze model filters to batches registered in `ops`, or it will read the output of runs that
+failed after writing.
 
 The warehouse is a single DuckDB file holding the `bronze`, `silver`, `gold`, `dq`, `ops` and
 `meta` schemas. Bronze tables read from the parquet files; from silver upward the data is
@@ -196,9 +208,11 @@ they land. Transformation DAGs consume those assets, so silver runs when its inp
 present rather than on a timer that hopes they are. Quality gates run after the layer they
 check and publish their results as assets in turn, which lets a mart wait on a passing gate.
 
-DuckDB allows a single writer. Every task that writes to the warehouse acquires the Airflow
-pool `warehouse_write`, which has one slot, and every reader opens a read-only connection.
-This is the reason the pool exists and it is recorded in ADR 0002.
+DuckDB allows one process to hold the warehouse file, and a writer excludes readers as well as
+other writers. Every task that touches the warehouse, reading or writing, therefore acquires
+the Airflow pool `warehouse_access`, which has one slot. Access from outside Airflow goes
+through a helper that retries with bounded backoff, since the pool governs only what Airflow
+schedules. The measured behaviour and its cost are recorded in ADR 0002.
 
 Pipeline state lives in the `ops` schema: a batch registry with one row per extraction batch,
 per-entity watermarks, run outcomes, and freshness measurements per source.
@@ -215,17 +229,29 @@ has ever appeared in the bucket.
 
 ## Consumption
 
+Neither consumer reads the live warehouse file. Both read a published snapshot: the gold
+models are exported to Parquet under `exports/` by a dedicated task at the end of a
+transformation run, and that snapshot is what reports and applications open.
+
+This is a consequence of the engine, not a preference. A DuckDB file can be held by one
+process at a time, so a report or an application holding the live file would block every
+transformation task for as long as it stayed connected, and would itself be blocked whenever a
+task held the file. A snapshot has no such contention, and it is also the only arrangement
+that works once the Streamlit application is deployed remotely, where the warehouse file is
+not reachable at all.
+
 Power BI holds the semantic model: relationships, DAX measures, and the executive reports. It
-reads gold and nothing below it. The connection is a folder source over Parquet: the gold
-models are exported to `exports/` by a dedicated task and Power BI reads that folder. DuckDB
-has no first-party Power BI connector, and a single-writer file is the wrong thing to point a
-refreshing report at. From M10, when the BigQuery target exists, Power BI connects to
-BigQuery natively and the export path becomes the local fallback rather than the primary
-route.
+reads the exported Parquet through a folder source. From M10, when the BigQuery target exists,
+Power BI connects to BigQuery natively and the export path becomes the local route rather than
+the primary one.
 
 The Streamlit application is the publicly deployable face of the project and the operational
-view: pipeline state, freshness, quality results, and a small number of analytical screens.
-It opens the DuckDB file read-only and never triggers a pipeline run.
+view: pipeline state, freshness, quality results, and a small number of analytical screens. It
+reads the same exported snapshot, and never triggers a pipeline run.
+
+The snapshot is therefore a published artifact with its own freshness: a report shows the
+state as of the last export, and the export timestamp is displayed alongside the numbers so
+that nobody reads a stale figure as a live one.
 
 Both read the same gold models. A measure that matters is defined in gold, not in a report,
 so the two tools cannot disagree.

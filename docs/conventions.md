@@ -13,7 +13,7 @@ not a pull request comment.
 | Python | 3.11, `uv`, pinned lockfile |
 | Orchestrator | Airflow 3.x, asset-driven scheduling |
 | Warehouse | DuckDB primary, BigQuery sandbox secondary |
-| Lake | MinIO bucket `nordbank-lake`; `bronze/<source>/<entity>/ingest_date=YYYY-MM-DD/part-*.parquet` |
+| Lake | MinIO bucket `nordbank-lake`; `bronze/<source>/<entity>/ingest_date=YYYY-MM-DD/batch_id=<batch_id>/part-NNNN.parquet`; the batch id in the key is what makes an overwrite impossible (ADR 0008) |
 | Source schemas | `core`, `ref` |
 | Warehouse schemas | `bronze`, `silver`, `gold`, `dq`, `ops`, `meta` |
 | Model naming | `br_<source>__<entity>`, `sl_<entity>`, `dim_<entity>`, `fct_<grain>`, `mart_<domain>_<subject>` |

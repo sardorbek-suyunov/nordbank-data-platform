@@ -502,3 +502,30 @@ stated as around 16:00 CET, which is 15:00 or 14:00 UTC depending on daylight sa
 freshness window for that source is derived from the CET time rather than a fixed UTC hour.
 The `full` profile carries a note that it cannot be seeded row by row and requires `COPY`-based
 bulk loading, as a constraint on the M2 and M3 generator design.
+
+### 2026-09-18 — DuckDB concurrency model corrected and the pool renamed
+
+Section 4 describes ADR 0002 as serialising warehouse writes through a pool named
+`warehouse_write`, with readers using read-only connections outside the pool. That is wrong,
+and it was measured: while one process holds a DuckDB file read-write, a second process cannot
+open it even read-only.
+
+Corrected: the pool is `warehouse_access` with one slot, and every task that touches the
+warehouse acquires it, reading or writing. Access from outside Airflow retries with bounded
+backoff. Consumers do not read the live file at all; Power BI and Streamlit read a snapshot
+exported to `exports/`, which is also the only arrangement that works for a remotely deployed
+application. ADR 0002 carries a `Corrected:` line and states the serialisation as the principal
+cost of the DuckDB choice.
+
+### 2026-09-18 — Lake key scheme carries the batch id
+
+The Lake row in section 5 specifies
+`bronze/<source>/<entity>/ingest_date=YYYY-MM-DD/part-*.parquet`. Amended to
+`bronze/<source>/<entity>/ingest_date=YYYY-MM-DD/batch_id=<batch_id>/part-NNNN.parquet`.
+
+Bronze immutability was going to be enforced by bucket versioning, which in MinIO requires the
+erasure-coded backend, four volumes and roughly double the storage at the `full` profile. The
+batch id in the key makes two writes unable to collide, so immutability is a property of the
+naming scheme instead of a vendor feature. Recorded as ADR 0008, with the consequences that
+follow: more and smaller objects, a compaction and retention story owed before the `full`
+profile, and a requirement that every bronze model filters to batches registered in `ops`.

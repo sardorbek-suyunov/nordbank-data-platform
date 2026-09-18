@@ -42,7 +42,7 @@ registry, watermarks and freshness, and `meta` for contracts, lineage and the PI
 | Source system | Postgres, synthetically generated | Mutation, soft deletes, late arrivals and schema drift are required to test ingestion (ADR 0003) |
 | Lake | MinIO, Parquet | S3 API locally, partitioned by ingest date |
 | Warehouse | DuckDB, BigQuery as a second dbt target | Runs on one machine with no account; the second target proves portability (ADR 0002) |
-| Orchestration | Airflow 3.x | Asset-driven scheduling; the `warehouse_write` pool serialises DuckDB writes |
+| Orchestration | Airflow 3.x | Asset-driven scheduling; the `warehouse_access` pool serialises every warehouse task, read or write |
 | Transformation | dbt | Model naming, tests and documentation as code (ADR 0001) |
 | Quality | dbt tests and explicit gates writing to `dq` | Results are data, not log lines |
 | Consumption | Power BI, Streamlit | Semantic model over exported Parquet, and a public deployment reading DuckDB read-only (ADR 0004) |
@@ -111,7 +111,8 @@ Every directory carries a README stating its purpose and its ownership boundary.
 - [Model inventory](docs/model_inventory.md) — every planned model, its grain, inputs and milestone
 - [PII classification](docs/pii_classification.md) — the four column classes and how each is handled
 - [Runbook](docs/runbook.md) — local setup, endpoints, failures, backfill, escalation
-- [Decision records](docs/adr/) — medallion layering, DuckDB, synthetic source, BI tooling, PII crypto-shredding
+- [Decision records](docs/adr/) — medallion layering, DuckDB, synthetic source, BI tooling,
+  PII crypto-shredding, LocalExecutor, declarative Airflow configuration, bronze immutability
 - [Specifications](docs/specs/) — numbered specs and the amendment protocol
 - [Checkpoints](docs/checkpoints/) — one report per completed milestone
 
