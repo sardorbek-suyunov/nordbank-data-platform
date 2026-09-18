@@ -11,30 +11,36 @@ gold layer.
 
 ## Current state
 
-**M0 and M1 are complete. M2 has not started.**
+**M0 and M1 are complete. M2 is in progress: the schema half is delivered, the data half is not.**
 
 What exists and runs today:
 
-- A local stack of nine services brought up by `make up`: a source Postgres with `core` and
-  `ref` schemas and two roles, an Airflow metadata Postgres, MinIO with the `nordbank-lake`
-  bucket, and Airflow 3.3.2 on LocalExecutor (init, api-server, scheduler, dag-processor,
-  triggerer).
+- A local stack of nine services brought up by `make up`: a source Postgres with `core`,
+  `ref` and `platform` schemas and two roles, an Airflow metadata Postgres, MinIO with the
+  `nordbank-lake` bucket, and Airflow 3.3.2 on LocalExecutor (init, api-server, scheduler,
+  dag-processor, triggerer).
+- The complete source schema, applied by `make schema-apply`: 16 `core` tables, 28 `ref`
+  tables and `platform.column_classifications`, with 66 foreign keys all indexed, an
+  `updated_at` index and trigger on every table, and a deferred constraint trigger that makes
+  an unbalanced ledger batch impossible to commit. Reference data is seeded idempotently;
+  there is no business data.
 - A DuckDB warehouse file on a named volume with six schemas (`bronze`, `silver`, `gold`, `dq`,
   `ops`, `meta`) and the `ops.stack_health_probe` table.
 - One DAG, `ops_stack_healthcheck`, which exercises every connection: the source database as
   the read-only role, the lake including the batch-id key property, and the warehouse in both
   directions through the `warehouse_access` pool.
 - `make` targets for the full lifecycle: `init-env`, `up`, `down`, `nuke`, `health`, `logs`,
-  `verify-dag`, `test`, `test-dags`, `test-integration`, `lint`, `format`, `clean`.
-- 26 unit tests, 6 DAG integrity tests, 8 smoke tests, and two CI workflows.
+  `verify-dag`, `schema-apply`, `schema-dump`, `schema-check`, `test`, `test-dags`,
+  `test-integration`, `lint`, `format`, `clean`.
+- 45 unit tests, 6 DAG integrity tests, 22 integration tests, and two CI workflows.
 - The documentation set: architecture, conventions, business questions, metric definitions,
   data dictionary, model inventory, PII classification, runbook, two specifications and eight
   decision records.
 
-What does not exist yet: any business table, any generated data, any ingestion, the dbt
-project, any bronze, silver or gold model, the data contracts, the quality framework, the
-governance work, Power BI, Streamlit, Terraform and the BigQuery target. The source database is
-empty by design; its DDL is M2.
+What does not exist yet: any generated business data, any ingestion, the dbt project, any
+bronze, silver or gold model, the data contracts, the quality framework, the governance work,
+Power BI, Streamlit, Terraform and the BigQuery target. The source tables exist and are empty
+apart from reference data; filling them is the M2 data half.
 
 ## Environment facts
 
@@ -94,7 +100,8 @@ its area.
 | [metric_definitions.md](metric_definitions.md) | The exact rule behind every term a model could compute two defensible ways |
 | [model_inventory.md](model_inventory.md) | Every planned model with its layer, grain, inputs, the questions it serves and the milestone that builds it |
 | [business_questions.md](business_questions.md) | The nineteen questions gold is measured against, and the coverage rule in both directions |
-| [data_dictionary.md](data_dictionary.md) | The nineteen source entities with domain, grain and load pattern |
+| [data_dictionary.md](data_dictionary.md) | Every column of every source table: type, nullability, classification, description and consumer. Generated from it: `platform.column_classifications` and the `make schema-check` comparison |
+| [traceability.md](traceability.md) | Every column named in the metric definitions and the model inventory, mapped to the source column that supplies it or the layer that derives it |
 
 ## Specifications and decision records
 
@@ -102,8 +109,7 @@ its area.
 |---|---|---|
 | [000](specs/000-repository-foundation.md) | Approved, implemented | Repository skeleton, tooling, conventions, architecture documentation and the requirements baseline |
 | [001](specs/001-local-stack.md) | Approved version 2, implemented | The local runtime: services, images, provisioning, the health-check DAG, make targets, tests and CI |
-
-Specification 002, which governs M2, has not been written.
+| [002](specs/002-source-system-schema.md) | Approved version 2, schema half implemented | The source schema: `core`, `ref` and `platform`, reference seeds, the column-level dictionary and classification, the ERD and the drift control |
 
 | Record | Status | Decision |
 |---|---|---|
@@ -115,6 +121,8 @@ Specification 002, which governs M2, has not been written.
 | [0006](adr/0006-local-executor.md) | Accepted | LocalExecutor over Celery for a single-machine deployment |
 | [0007](adr/0007-declarative-airflow-configuration.md) | Accepted | Connections and pools from configuration, never from the UI |
 | [0008](adr/0008-bronze-immutability-by-key-construction.md) | Accepted | The batch id in the object key rather than bucket versioning |
+| [0009](adr/0009-numbered-sql-migrations.md) | Accepted | Numbered idempotent SQL over Alembic or Flyway, with the measured cost of the deferred balance trigger and the partitioning decision |
+| [0010](adr/0010-sanctions-screening-through-the-vault.md) | Accepted | Sanctions screening resolves tokens through the vault rather than screening at ingest |
 
 Milestone checkpoints are in [checkpoints/](checkpoints/), one per completed milestone.
 
@@ -128,9 +136,11 @@ make install             # virtual environment and git hooks
 make up                  # generate .env, validate, build, start, wait for health
 make health              # per-component table; STRICT=1 also fails on a busy warehouse
 make verify-dag          # trigger ops_stack_healthcheck from the CLI, verify from task records
+make schema-apply        # source DDL, reference seeds and the column classifications
+make schema-check        # fail if the live schema and the data dictionary disagree
 make test                # unit tests, no Airflow and no stack needed
 make test-dags           # DAG integrity, natively or inside the project image
-make test-integration    # smoke tests inside the running stack
+make test-integration    # smoke tests and the drift check inside the running stack
 ```
 
 Expected timings and results:
@@ -142,9 +152,10 @@ Expected timings and results:
 | `make up` after `make down` | 33 to 34 seconds, and the warehouse contents survive |
 | `make health` | Five components, all `pass`, exit 0 |
 | `make verify-dag` | Four tasks succeed; both warehouse tasks report pool `warehouse_access` |
-| `make test` | 26 passed |
+| `make schema-apply` | 14 schema files, 5 seed files, 452 classifications; running it twice changes nothing |
+| `make test` | 45 passed |
 | `make test-dags` | 6 passed, with the execution path printed |
-| `make test-integration` | 8 passed |
+| `make test-integration` | 22 passed, then `schema-check` reports 452 columns agreeing |
 
 Steady-state memory after a successful run is about 1.3 GiB against 5.5 GiB of limits.
 
@@ -154,7 +165,7 @@ Deferred work, with the milestone that owns it:
 
 | Deferred | Owner |
 |---|---|
-| Source DDL, `core` and `ref` tables, initial historical load | M2 |
+| Initial historical load, written through `COPY` | M2, data half |
 | Daily mutation engine: updates, soft deletes, late arrivals, schema drift | M3 |
 | dbt project, bronze models, contracts, quarantine, identifier tokenisation | M4 |
 | Silver conformance, SCD2, quasi-identifier generalisation | M5 |
@@ -185,16 +196,24 @@ Other known gaps:
 - Compose limits memory but not CPU.
 - Two silver models named in the model inventory, `sl_card_settlements` and
   `sl_macro_indicators`, read from sources whose entities are not in the M0 entity inventory.
-- The architecture diagram is a link to a directory rather than a diagram.
+  Their column definitions move to M4 with the contracts for those feeds.
+- The architecture diagram is a link to a directory rather than a diagram. The source schema
+  now has one, in [diagrams/erd.md](diagrams/erd.md); the platform-level diagram does not.
+- The ADR protocol has no mechanism for adding a consequence to a record whose milestone has
+  closed. ADR 0005 gained one at M2, recorded through a second `Revised:` line, with the
+  decision that produced it written as its own record, ADR 0010.
 
 ## Next milestone
 
-**M2, the source system.** It creates the `core` and `ref` DDL, the column-level data
-dictionary deferred from specification 000, the PII classification on every column, and the
-initial historical load, writing through `COPY` rather than row by row so that the `full`
-profile stays usable.
+**The M2 data half.** The schema exists; what is missing is the data in it. The initial
+historical load writes through `COPY` from generated CSV or Parquet batches rather than row by
+row, so the `full` profile stays usable.
 
-It is governed by specification 002, which is not yet written. Its inputs are the entity
-inventory in [data_dictionary.md](data_dictionary.md), the conventions, and
-[pii_classification.md](pii_classification.md). Work happens on a `feat/M2-<slug>` branch and
-lands through a pull request with all four checks passing.
+Two constraints on it are already fixed and measured. GL postings commit in chunks of whole
+balanced batches, about 100,000 entry rows per transaction, because the deferred balance
+trigger queues one non-spillable event per row and a single-transaction load of tens of
+millions of rows exhausts the memory the container is limited to (ADR 0009). And no loader
+sets `updated_at`: the trigger owns it, and watermark extraction depends on that.
+
+M2 closes when the data half lands, with a checkpoint in [checkpoints/](checkpoints/) and this
+document updated to match.
