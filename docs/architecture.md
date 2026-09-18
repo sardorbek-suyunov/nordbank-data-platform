@@ -56,10 +56,15 @@ cadence, independent of the daily incremental load, and is implemented at M7 wit
 the reconciliation work.
 
 **ECB FX rates.** The API is queried for the date range between the last loaded rate date and
-the run date. The ECB publishes on working days only. Weekend and holiday gaps are filled by
-carrying the last published rate forward into a rate table with one row per currency per
-calendar date, because conversion must not fail on a Sunday transaction. Carried rows are
-flagged, so the fill is visible downstream.
+the run date. The ECB publishes on working days only, at around 16:00 CET, which is 15:00 UTC
+in summer and 14:00 UTC in winter. Nothing in the platform assumes a fixed UTC publication
+hour: the freshness window for this source is derived from the CET publication time and the
+daylight saving offset in force on the day, which is why the window is stated with a grace
+rather than as a deadline.
+
+Weekend and holiday gaps are filled by carrying the last published rate forward into a rate
+table with one row per currency per calendar date, because conversion must not fail on a
+Sunday transaction. Carried rows are flagged, so the fill is visible downstream.
 
 **Card network settlement files.** Files land under a bucket prefix and a sensor triggers the
 DAG on arrival rather than on a clock. A file names the settlement date it covers, which may
@@ -81,15 +86,31 @@ the silver history.
 already replaced by tokens (see Security and PII below).
 
 Fidelity and typing are reconciled as follows. For API and file sources, bronze stores the
-raw payload of the record, as received, in a `_raw_payload` column alongside the parsed and
-typed columns. The parsed columns are a convenience; the payload is the evidence. For the
-relational source, the row as extracted is the payload.
+record payload in a `_raw_payload` column alongside the parsed and typed columns. For the
+relational source, the row as extracted is the payload. The parsed columns are a convenience;
+the payload is the evidence.
+
+The payload is structurally faithful rather than byte-identical. Its shape, field names,
+nesting, ordering and every non-identifier value are exactly what the source sent; fields
+classified as identifiers carry their tokens in place of the cleartext values. The consequence
+is worth stating plainly: bronze is not a byte-for-byte copy of the source, and reconstructing
+an original record requires the vault. A payload that kept cleartext identifiers would put
+personal data outside the vault, where erasure cannot reach it, which would defeat
+crypto-shredding entirely (ADR 0005).
 
 Typing is applied against the contract in `contracts/`, and a value that fails its cast is
 never coerced to null and never silently dropped: the row is written to the quarantine table
-for that entity with the failing column, the raw value and the failure reason. The source row
-count is therefore always reconstructable as landed rows plus quarantined rows, for every
-batch.
+for that entity with the name of the failing column, the failure reason, and the offending
+value.
+
+For a column classified as an identifier in [pii_classification.md](pii_classification.md),
+the quarantine row stores the token, not the cleartext value. Quarantine is a mutable table
+that sits beside bronze rather than inside it, so a cleartext identifier written there would
+be personal data in a place the vault does not cover. Quarantine tables are inside the scope
+of the erasure workflow and are treated as warehouse data, not as a debugging scratch area.
+
+The source row count is therefore always reconstructable as landed rows plus quarantined rows,
+for every batch.
 
 Beyond typing, bronze applies nothing: no renaming past casing, no joins, no business rules,
 no deduplication except on the exact replay of a batch. Bronze is append-only and immutable
@@ -104,8 +125,14 @@ drift means a new contract version and an explicit rerun.
 
 **Silver guarantees** one row per business entity per version. It applies deduplication on the
 business key, resolves late arrivals by `updated_at`, applies soft deletes, converts amounts
-to `DECIMAL(18,4)` with an EUR equivalent, normalises timestamps to UTC, and resolves tokens
-to the coarse attributes reporting needs. Entities that mutate are SCD2 with `_valid_from`,
+to `DECIMAL(18,4)` with an EUR equivalent, and normalises timestamps to UTC.
+
+Identifiers stay tokenised: silver never resolves a token, and a keyed hash could not be
+resolved without the vault in any case. The attributes reporting needs are derived instead by
+generalising quasi-identifiers, which are retained in the clear precisely so that they can be:
+an age band from the date of birth, a country and region from the address, a tenure band from
+the signup date. Which columns are identifiers and which are quasi-identifiers is defined in
+[pii_classification.md](pii_classification.md). Entities that mutate are SCD2 with `_valid_from`,
 `_valid_to` and `_is_current`. Joins across sources are allowed. Aggregation to a reporting
 grain is not: silver stays at entity grain, so a mart can be rebuilt without re-ingesting.
 
@@ -139,6 +166,13 @@ Provenance is mandatory rather than optional: every converted fact carries `fx_r
 `fx_rate_date` and `fx_is_carried`, so a reader can see which rate was used, when it was
 published, and whether it was carried forward across a weekend or a holiday.
 
+When no rate exists at all for a currency with `rate_date <= transaction_date`, the conversion
+has no answer and does not invent one. `amount_eur` is null, `fx_is_missing` is set on the
+row, and a `dq` check of severity `error` fires for that currency and date. The converted
+amount is never zero and never silently the original amount in another currency: both are
+wrong numbers that add cleanly into a total and are invisible afterwards, whereas a null
+propagates visibly and an error blocks the gate.
+
 ## Storage layout
 
 Raw extracts land in MinIO under the bucket `nordbank-lake`:
@@ -167,8 +201,17 @@ pool `warehouse_write`, which has one slot, and every reader opens a read-only c
 This is the reason the pool exists and it is recorded in ADR 0002.
 
 Pipeline state lives in the `ops` schema: a batch registry with one row per extraction batch,
-per-entity watermarks, run outcomes, and freshness measurements per source. Reruns are keyed
-on the batch id, so a repeated run replaces its own output and nothing else.
+per-entity watermarks, run outcomes, and freshness measurements per source.
+
+Rerun semantics are precise about what immutability means. A task retry inside a batch that
+has not yet been registered overwrites its own partial output: nothing downstream can see an
+unregistered partition, so replacing it rewrites nothing that anyone has read. Once the batch
+is registered, that partition is final. A rerun after registration extracts again under a new
+batch id and writes a new partition; the earlier partition is not modified, and silver
+deduplicates the overlap on the business key and `updated_at`.
+
+Bronze immutability is therefore a property of registered partitions, not of every file that
+has ever appeared in the bucket.
 
 ## Consumption
 
@@ -221,8 +264,18 @@ The trade-offs are explicit:
   vault and the key being handled properly, which makes access to `meta` a separate and more
   restricted thing than access to the warehouse.
 
+Quarantine follows the same rule as bronze. A value that fails its cast in a column
+classified as an identifier is quarantined as its token, and quarantine tables are inside the
+scope of the erasure workflow. A mutable side table full of cleartext identifiers would be the
+obvious hole in this design, so it is closed explicitly rather than left to discipline.
+
+Which columns are identifiers, which are quasi-identifiers, which are sensitive and which are
+not personal at all is defined in [pii_classification.md](pii_classification.md). Every column
+in every contract carries a classification from M2 onward, and the classification is what the
+tokenisation, generalisation and erasure rules dispatch on.
+
 The token key is supplied by `PII_TOKEN_SALT` and is never committed. Gold exposes tokens and
-coarse attributes such as country and age band, never raw identifiers.
+generalised attributes such as country and age band, never cleartext identifiers.
 
 The erasure workflow itself is a governance DAG (`gov_erasure`), implemented at M8, which
 records each erasure in `meta` with its request, timestamp and the tokens affected, so the
@@ -247,3 +300,10 @@ Three profiles, selected by `NORDBANK_ENV`:
 The profiles differ only in generator parameters and dbt variables. No model, DAG or contract
 is conditional on the profile; if a transformation only works at small scale, that is a
 defect, not a configuration.
+
+The `full` profile cannot be seeded row by row. At tens of millions of rows, a generator that
+issues one INSERT per record turns the historical load into hours of work and makes the
+profile unusable in practice. The M2 historical load writes through `COPY` from generated CSV
+or Parquet batches, and the M3 mutation engine batches its writes the same way. This is a
+constraint on the generator design rather than a runtime switch, which is why it is recorded
+here and not in a configuration file.

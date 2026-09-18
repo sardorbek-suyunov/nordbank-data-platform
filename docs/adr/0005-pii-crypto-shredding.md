@@ -2,6 +2,8 @@
 
 Status: Accepted
 Date: 2026-09-17
+Revised: 2026-09-18, during the M0 review, to add the payload fidelity and quarantine
+consequences. The decision itself is unchanged.
 
 ## Context
 
@@ -49,6 +51,16 @@ disagree with themselves.
 The vault concentrates risk. Everything tokenisation protects now depends on one table and
 one key. Losing the key destroys the ability to resolve any token, including for legitimate
 operational use; leaking it undoes the protection for every subject at once.
+
+Bronze is structurally faithful rather than byte-identical. The payload kept for API and
+file sources preserves the shape, the field names and every non-identifier value the source
+sent, but identifier fields carry tokens, so reconstructing an original record requires the
+vault. A byte-identical copy was the alternative, and it would have put cleartext identifiers
+in a place erasure cannot reach, which is the whole failure this record exists to avoid.
+
+Quarantine is inside the erasure scope for the same reason. A row that fails its cast is
+quarantined with the token for identifier columns, never the cleartext value, because
+quarantine is a mutable side table that the vault would otherwise not cover.
 
 Debugging gets harder. An engineer reading bronze sees tokens, and reconciling a specific
 customer against the source system requires a deliberate, logged vault lookup rather than a
