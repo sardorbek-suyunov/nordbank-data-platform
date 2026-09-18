@@ -12,6 +12,13 @@ dev = [
     "sqlfluff>=4.3.0",
     "pytest>=9.1.1",
     "pre-commit>=4.6.2",
+    "duckdb==1.5.5",
+]
+# Airflow is a separate group: it does not import on every host this project is developed on,
+# so `uv sync` must not put a broken installation in the default environment. CI installs it
+# on Linux to run the DAG integrity tests.
+airflow = [
+    "apache-airflow==3.3.2",
 ]
 
 [tool.uv]
@@ -23,3 +30,10 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "PTH"]
+
+[tool.pytest.ini_options]
+testpaths = ["airflow/tests"]
+markers = [
+    "dags: needs an Airflow installation to import the DAG files",
+    "integration: needs a running stack",
+]
