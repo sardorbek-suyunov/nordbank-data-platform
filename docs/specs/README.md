@@ -18,3 +18,15 @@ The two mechanisms answer different questions. A changelog explains how the targ
 before anything was built against it; a long amendment list on an unbuilt specification only
 makes the target hard to read. Amendments exist to record where the delivered system departed
 from what was specified, so they start once implementation starts.
+
+One source per fact, and a mechanical check where two representations are unavoidable. A fact
+that appears in two places will eventually disagree in two places, and the disagreement is
+silent because both copies look authoritative. The first response is to delete one copy:
+`platform.column_classifications` is generated from `docs/data_dictionary.md` rather than
+seeded beside it, and the four dbt seeds that duplicated `ref` tables were dropped rather than
+kept in step. Where neither copy can go — because a document has to state a number for a
+reader to review it, and code has to read that number to act on it — the two are not left to
+discipline: a check asserts they agree and CI runs it. `make schema-check` is that check for
+the dictionary, and the realism document's contract bands are checked against
+`generator/profiles.yml` the same way. Neither the direction of generation nor the choice of
+which copy survives is the rule; the rule is that no fact is maintained twice by hand.
