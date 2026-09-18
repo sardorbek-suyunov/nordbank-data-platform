@@ -80,9 +80,37 @@ running nine services against a measured memory floor.
 `/docker-entrypoint-initdb.d` once, on an empty data volume, so the schema could only be
 changed by destroying the database. It would also make the schema invisible to anyone who did
 not know the entrypoint convention, and it would give no way to re-apply after an edit.
-`platform` is the one thing that needs an entrypoint change, and that is a single grant: the
-application role needs `CREATE` on the database to create and own a schema that did not exist
-at M1.
+
+## The privilege that made the platform schema possible
+
+`platform` did not exist at M1, and the application role could not create it: `CREATE` on a
+database is held by the database owner and not by `PUBLIC`, and the role owns two schemas
+rather than the database. One line in `infra/docker/postgres-source/init/10_privileges.sh`
+closes that:
+
+```sql
+grant create on database nordbank to nordbank_app;
+```
+
+This is a deliberate widening and is recorded as one rather than left incidental. It takes the
+application role from owning two named schemas to being able to create **any** schema in the
+database. That is acceptable for a role that already owns every object the platform writes,
+and whose credentials never leave the loader; extraction authenticates as `nordbank_reader`,
+which holds `SELECT` and nothing else and is refused `CREATE` in every schema. The grant does
+not widen what the extraction path can do, which is the boundary that matters.
+
+**The alternative, rejected.** Create `platform` in M1's superuser init script alongside `core`
+and `ref`. It needs no new privilege at all, which is the argument for it. It loses because it
+would put knowledge of a schema introduced at M2 into a milestone that predates it: a reader
+of spec 001 would find a schema that specification never mentions, and the M1 provisioning
+would have to be edited every time a later milestone adds a schema. Granting the owner role
+the privilege to own what it creates keeps each milestone's schemas in that milestone's DDL.
+
+**The negative consequence.** An init script runs once, on an empty data volume, so an existing
+database does not gain the grant and `make schema-apply` fails against it with `permission
+denied for database nordbank`. The recovery is `make nuke && make up`, which is the path
+acceptance criterion 1 specifies anyway, but it is a real trap for anyone applying this branch
+to a stack started before it.
 
 ## The deferred balance trigger, measured
 
