@@ -290,3 +290,76 @@ specification that had not been implemented.
 12. **`docker compose config --quiet` added to the fast CI job**, to catch YAML and
     interpolation errors without a daemon.
 13. Memory limits use `mem_limit` rather than `deploy.resources`, which is swarm-scoped.
+
+## Amendments
+
+Appended during implementation. The scope text above is left as issued; the protocol is in
+`docs/specs/README.md`.
+
+### 2026-09-18 — Anonymous access is asserted as `private` as well as `none`
+
+Section 4 requires `minio-init` to confirm anonymous access is denied. The pinned `mc` reports a
+bucket with no anonymous policy as `private`, not `none`, so the literal check failed on a
+correctly configured bucket. The check now fails on any policy mentioning public, download,
+upload or write, accepts `none` and `private`, and fails on anything it does not recognise
+rather than assuming the best.
+
+### 2026-09-18 — `pytest` is installed in the project image
+
+Section 2 lists the M1 dependency set. `pytest` is added, because section 9 requires
+`make test-dags` to run inside the project image on hosts where Airflow does not import, and
+the tests cannot run in an image without a test runner.
+
+### 2026-09-18 — Integration tests execute inside the stack
+
+Section 10 describes `test_stack_smoke.py` as skipped when the stack is not running. It runs
+inside `airflow-scheduler` rather than on the host, because the warehouse file is on a named
+volume and the service names only resolve on the compose network, so a host-side run could not
+reach two of the four things it checks. `make test-integration` prints where it runs. The
+individual tests still skip when a dependency or a service is unavailable.
+
+### 2026-09-18 — `SKIP_BUILD=1` for a caller that has already built the image
+
+Section 9 says `make up` builds if needed. CI builds the image through buildx with a layer
+cache, so compose must not rebuild it immediately afterwards. `SKIP_BUILD=1` omits `--build`,
+and `stack.yml` is the only caller that sets it.
+
+### 2026-09-18 — `.env.example` carries a working development Fernet key and JWT secret
+
+Acceptance criterion 1 requires `make up` to work from a plain copy of `.env.example` with no
+manual step. Airflow does not start with a placeholder Fernet key, so the template carries a
+real development key and JWT secret, labelled as published and protecting nothing, with the
+command to regenerate them. Every password in the template remains a placeholder.
+
+### 2026-09-18 — Airflow 3.3.2 API details in the DAG integrity tests
+
+`DagBag` lives at `airflow.dag_processing.dagbag` and no longer takes `include_examples`, and
+cycle checking is `dag.check_cycle()` rather than `airflow.utils.dag_cycle_tester`. Example DAGs
+are excluded by `AIRFLOW__CORE__LOAD_EXAMPLES` in compose instead of by a DagBag argument.
+
+### 2026-09-18 — DAG integrity runs in its own CI job
+
+Section 11 puts the DAG integrity tests in the `lint` job. They need the `airflow` dependency
+group, which is a heavy install, and the point of the fast job is to stay fast. They run in a
+separate `dags` job on the same trigger, so nothing is lost but the ordering.
+
+### 2026-09-18 — `verify-dag` target added
+
+Section 9 lists the required targets. `verify-dag` is added: it triggers
+`ops_stack_healthcheck` from the CLI, waits for it, and asserts from the `task_instance` records
+that every task succeeded and that both warehouse tasks ran in `warehouse_access`. It is the
+scriptable path `stack.yml` uses, and it keeps the UI out of the verification loop.
+
+### 2026-09-18 — Helper scripts read `.env` without exporting it
+
+The health and verify scripts need values from `.env`. Reading them into the process
+environment made `docker compose` prefer those values over the file, and one parsing mistake
+with an inline comment silently gave a container a different password than the server had. The
+scripts now read `.env` into a dictionary through `scripts/env_file.py` and never export.
+
+### 2026-09-18 — Environment variable names from M0 are superseded
+
+`.env.example` renames the M0 placeholders to match what the stack actually consumes:
+`POSTGRES_*` becomes `POSTGRES_SOURCE_*` and `POSTGRES_AIRFLOW_*`, MinIO gains explicit port
+variables, and the Airflow block gains the admin name fields, the JWT secret and the connection
+strings. M0 had no services to consume the old names.

@@ -50,22 +50,26 @@ registry, watermarks and freshness, and `meta` for contracts, lineage and the PI
 
 ## Quickstart
 
-Prerequisites: Python 3.11, [uv](https://docs.astral.sh/uv/), GNU make, and Git. On Windows,
-run make from Git Bash with make on the PATH; the Makefile sets `SHELL := bash`. Docker
-Desktop is required from M1 onward, when there is a stack to start.
+Prerequisites: Docker Desktop with at least 6 GB allocated, Python 3.11,
+[uv](https://docs.astral.sh/uv/), GNU make, and Git. On Windows, run make from Git Bash with
+make on the PATH; the Makefile sets `SHELL := bash`.
 
 ```bash
 git clone https://github.com/sardorbek-suyunov/nordbank-data-platform.git
 cd nordbank-data-platform
 cp .env.example .env
-make install
-make lint
-make
+make install       # virtual environment and git hooks
+make up            # build if needed, start, wait for every healthcheck
+make health        # per-component probe table
+make verify-dag    # trigger the health-check DAG from the CLI and verify it
 ```
 
-`make` with no target lists every target. At M0 the repository contains documentation,
-conventions and tooling only: the targets that need a running service report the milestone
-that implements them.
+The first `make up` takes about 6 minutes, most of it building the Airflow image and pulling
+images. After that it is about 40 seconds from a `make nuke` and about 35 seconds from a
+`make down`. Airflow is then at http://localhost:8080 and MinIO at http://localhost:9001.
+
+`make` with no target lists every target. Services the stack does not run yet report the
+milestone that implements them.
 
 ## Layout
 
@@ -90,7 +94,7 @@ Every directory carries a README stating its purpose and its ownership boundary.
 | ID | Milestone | Status |
 |---|---|---|
 | M0 | Repository foundation and conventions | done |
-| M1 | Local stack: Postgres, MinIO, Airflow | pending |
+| M1 | Local stack: Postgres, MinIO, Airflow | done |
 | M2 | Source system DDL and initial historical load | pending |
 | M3 | Mutation engine: daily change generation | pending |
 | M4 | Bronze ingestion, contracts and quarantine | pending |
@@ -110,7 +114,7 @@ Every directory carries a README stating its purpose and its ownership boundary.
 - [Data dictionary](docs/data_dictionary.md) — entity inventory, grain and load pattern
 - [Model inventory](docs/model_inventory.md) — every planned model, its grain, inputs and milestone
 - [PII classification](docs/pii_classification.md) — the four column classes and how each is handled
-- [Runbook](docs/runbook.md) — local setup, endpoints, failures, backfill, escalation
+- [Runbook](docs/runbook.md) — local setup, endpoints, resource envelope, failures, WSL2 notes
 - [Decision records](docs/adr/) — medallion layering, DuckDB, synthetic source, BI tooling,
   PII crypto-shredding, LocalExecutor, declarative Airflow configuration, bronze immutability
 - [Specifications](docs/specs/) — numbered specs and the amendment protocol
