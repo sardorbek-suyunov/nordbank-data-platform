@@ -27,6 +27,32 @@ jobs:
       - name: Lint SQL
         run: uv run python scripts/lint_sql.py
 
+      # Needs no daemon, and catches YAML and interpolation errors before the stack workflow
+      # spends minutes discovering them.
+      - name: Validate the compose file
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+      - name: Unit tests
+        run: make test
+
+  dags:
+    name: dags
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+
+      - name: Install the project with Airflow
+        run: uv sync --group airflow
+
+      - name: DAG integrity tests
+        run: make test-dags
+
   docs:
     name: docs
     runs-on: ubuntu-latest

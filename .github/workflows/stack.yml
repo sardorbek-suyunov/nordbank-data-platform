@@ -1,0 +1,81 @@
+name: stack
+
+on:
+  push:
+    paths:
+      - docker-compose.yml
+      - infra/docker/**
+      - airflow/**
+      - scripts/**
+      - Makefile
+      - .github/workflows/stack.yml
+  pull_request:
+    paths:
+      - docker-compose.yml
+      - infra/docker/**
+      - airflow/**
+      - scripts/**
+      - Makefile
+      - .github/workflows/stack.yml
+  workflow_dispatch:
+
+jobs:
+  stack:
+    name: stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Prepare the environment
+        run: |
+          cp .env.example .env
+          # A trigger should not wait for a DAG folder scan on a runner that is billed by time.
+          sed -i 's/^DAG_PROCESSOR_REFRESH_INTERVAL=.*/DAG_PROCESSOR_REFRESH_INTERVAL=5/' .env
+          echo "AIRFLOW_UID=$(id -u)" >> .env
+
+      - name: Build the Airflow image
+        uses: docker/build-push-action@v6
+        with:
+          context: infra/docker/airflow
+          tags: nordbank/airflow:3.3.2
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install the project
+        run: uv sync
+
+      - name: Start the stack
+        # The image was built in the previous step, with a cache; compose must not rebuild it.
+        run: SKIP_BUILD=1 make up
+
+      - name: Health probes
+        run: make health STRICT=1
+
+      - name: Trigger and verify the health-check DAG
+        run: make verify-dag
+
+      - name: Integration tests
+        run: make test-integration
+
+      - name: Collect compose logs
+        if: failure()
+        run: docker compose logs --no-color > compose-logs.txt
+
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs
+          path: compose-logs.txt
+
+      - name: Tear down
+        if: always()
+        run: FORCE=1 make nuke
