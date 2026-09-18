@@ -31,9 +31,10 @@ test: ## Run the unit tests, which need neither Airflow nor a running stack
 test-dags: ## Run the DAG integrity tests, natively or in the project image
 	uv run python scripts/run_dag_tests.py
 
-test-integration: ## Run the smoke tests inside the running stack
+test-integration: ## Run the smoke tests inside the running stack, then check for schema drift
 	@echo "test-integration: running inside airflow-scheduler, where the volumes and network are"
 	docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow && pytest -q -m integration tests"
+	$(MAKE) schema-check
 
 up: ## Generate .env if absent, validate it, then start the stack and wait for health
 	uv run python scripts/stack_up.py
@@ -53,8 +54,22 @@ logs: ## Follow the stack logs (SERVICE=<name> to filter)
 verify-dag: ## Trigger the health-check DAG from the CLI and verify it from the task records
 	uv run python scripts/stack_verify_dag.py
 
+schema-apply: ## Apply the source DDL, the reference seeds and the column classifications
+	uv run python scripts/schema_apply.py
+
+schema-dump: ## Print the normalised live schema (OUT=<path> writes it to a file instead)
+ifdef OUT
+	uv run python scripts/dump_schema.py > $(OUT)
+	@echo "schema-dump: wrote $(OUT)"
+else
+	uv run python scripts/dump_schema.py
+endif
+
+schema-check: ## Fail if the live schema and the committed data dictionary disagree
+	uv run python scripts/schema_check.py
+
 seed: ## Load the initial historical dataset into the source database
-	@echo "not implemented until M2"
+	@echo "not implemented until the M2 data half"
 
 tick: ## Generate one business day of source mutations
 	@echo "not implemented until M3"
