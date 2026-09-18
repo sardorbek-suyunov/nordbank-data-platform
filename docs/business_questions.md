@@ -59,13 +59,18 @@ tests. Every term below that could be computed more than one defensible way is p
 
 ## Coverage
 
-Two rules, checked when a milestone closes rather than argued about per model.
+Checked in both directions when a milestone closes, rather than argued about per model.
 
-Every source entity in [data_dictionary.md](data_dictionary.md) feeds at least one silver
-model. Every silver model either feeds a gold model or is documented in its schema file as
-reference-only, with the reason it exists.
+**Nothing unconsumed.** Every source entity in [data_dictionary.md](data_dictionary.md) feeds
+at least one silver model. Every silver model either feeds a gold model or is documented in
+its schema file as reference-only, with the reason it exists. An entity that reaches the
+warehouse and is consumed by nothing is a design defect: either a question is missing, or the
+entity should not be ingested. Question 19 exists because `login_sessions` was such an entity,
+and the correct response was to state the question it answers rather than to quietly keep
+loading it.
 
-An entity that reaches the warehouse and is consumed by nothing is a design defect: either a
-question is missing, or the entity should not be ingested. Question 19 exists because
-`login_sessions` was such an entity, and the correct response was to state the question it
-answers rather than to quietly keep loading it.
+**Nothing homeless.** Every object named in [metric_definitions.md](metric_definitions.md) or
+in a mart specification appears in [model_inventory.md](model_inventory.md) with a layer, a
+grain and the milestone that builds it. A metric that reads from a table nobody has planned is
+a rule that cannot be implemented, and it is a defect in the same way that an unconsumed
+entity is.
