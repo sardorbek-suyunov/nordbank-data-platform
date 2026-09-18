@@ -401,3 +401,104 @@ Section 7 listed `branches`. A licensed neobank has no branch network, so the en
 something the business does not have. Replaced with `agent_locations`, the cash-in and
 cash-out partner network, which gives cash transactions a geography and supports the
 structuring analysis in question 11. The entity count in acceptance criterion 6 stays at 18.
+
+### 2026-09-18 — Exclusion of agent configuration moves out of the tracked ignore file (item G1)
+
+The previous amendment added four agent and editor patterns to `.gitignore`, which made
+`.gitignore` the one tracked file naming a specific tool. Reverted: those patterns are removed
+from `.gitignore`, which keeps `.notes/`, and live instead in `.git/info/exclude` for this
+repository and in the global `core.excludesfile` for every repository. Both are untracked. The
+repository names no tool in any tracked file, and the mechanism that achieves it is an
+untracked exclude file.
+
+### 2026-09-18 — Remote repository recreated to drop unreachable objects (item G2)
+
+A force-push does not remove anything from GitHub. The pre-rewrite commit and the file it
+contained were still served by SHA through the API, the raw endpoint and the blob URL after
+the rewrite. Rewriting history is therefore only half of a removal on a hosted repository; the
+other half is deleting and recreating the remote. Recorded so that the next removal starts
+from the correct assumption.
+
+### 2026-09-18 — Quarantine stores tokens for identifier columns (item G4)
+
+The bronze contract sent the raw failing value to quarantine, which placed cleartext
+identifiers in a mutable table outside the vault, where erasure could not reach them. Amended:
+for a column classified as an identifier, quarantine stores the token, the failing column name
+and the failure reason. Quarantine tables are inside the scope of the erasure workflow.
+
+### 2026-09-18 — Bronze payload is structurally faithful, not byte-identical (item G5)
+
+`_raw_payload` was defined as the record as received, which preserved cleartext identifiers
+and defeated crypto-shredding for every API and file source. Amended: the payload keeps the
+shape, field names, ordering and every non-identifier value exactly as sent, with identifier
+fields carrying their tokens. The consequence is stated in the architecture and added to ADR
+0005: bronze is structurally faithful rather than byte-identical, and reconstructing an
+original record requires the vault.
+
+### 2026-09-18 — Silver generalises quasi-identifiers rather than resolving tokens (item G6)
+
+The silver contract said silver resolves tokens to the coarse attributes reporting needs,
+which a keyed hash cannot do. Amended: identifiers stay tokenised and are never resolved in
+silver; the attributes reporting needs are derived by generalising quasi-identifiers, such as
+an age band from the date of birth and a country from the address.
+
+### 2026-09-18 — PII classification taxonomy added (item G7)
+
+Added `docs/pii_classification.md` with four classes and their handling rules: `identifier`,
+`quasi-identifier`, `sensitive` and `non-personal`. Every column in every contract carries a
+classification from M2 onward. Referenced from `architecture.md` and `conventions.md`. Date of
+birth is documented as the case that proves the distinction, since tokenising it would make
+age banding impossible while protecting almost nothing.
+
+### 2026-09-18 — Missing exchange rate defined (item G8)
+
+The conversion rule did not say what happens when no rate exists at or before the transaction
+date. Amended: `amount_eur` is null, `fx_is_missing` flags the row, and a `dq` check of
+severity `error` fires. The value is never zero and never the unconverted amount.
+
+### 2026-09-18 — Rerun semantics made precise (item G9)
+
+Bronze immutability was stated without saying when a partition becomes immutable. Amended: a
+task retry inside an unregistered batch overwrites its own partial output; after registration
+the partition is final, and a rerun creates a new batch id and a new partition, with silver
+deduplicating the overlap. Immutability is a property of registered partitions.
+
+### 2026-09-18 — `account_holders` bridge entity added (item G10)
+
+The metric definitions relied on an account-to-holder relationship that no entity provided.
+Added `account_holders`: one row per account and holder, with a holder role and an ownership
+weighting factor summing to one per account. Per-customer monetary measures split by the
+weighting factor while customer counts count each holder once. The entity inventory moves from
+18 entities to 19, and acceptance criterion 6 changes from 18 to 19.
+
+### 2026-09-18 — Model inventory added and the coverage rule made bidirectional (item G11)
+
+Added `docs/model_inventory.md`: every planned seed, silver model, dimension, bridge, fact,
+mart, platform table and derived flag, with its grain, upstream inputs, the questions it serves
+and the milestone that builds it. `is_customer_initiated` gains its own entry in the metric
+definitions, naming exactly which transaction types are customer-initiated. The coverage rule
+now runs in both directions: no source entity without a consumer, and no referenced object
+without a home.
+
+### 2026-09-18 — Settlement reconciliation compares at source precision (item G12)
+
+The break rule converted both sides to EUR before comparing, which manufactures breaks through
+rounding and compares a number the network sent with one the platform computed. Amended:
+comparison is per settlement date, network and settlement currency, at source precision, with
+zero detection tolerance. EUR conversion is used only to report the size of a break. The
+materiality thresholds, 0.1 per cent of the file total and 100 units, are expressed in the
+settlement currency.
+
+### 2026-09-18 — `info` severity defined in the conventions (item G13)
+
+The metric definitions used an `info` severity that the conventions did not define. Amended:
+the conventions now carry all three levels, `error`, `warn` and `info`, with the same meanings
+the metric definitions use.
+
+### 2026-09-18 — Three precision fixes (item G14)
+
+The interest day-count convention is named as Actual/365 Fixed. The ECB publication time is
+stated as around 16:00 CET, which is 15:00 or 14:00 UTC depending on daylight saving, and the
+freshness window for that source is derived from the CET time rather than a fixed UTC hour.
+The `full` profile carries a note that it cannot be seeded row by row and requires `COPY`-based
+bulk loading, as a constraint on the M2 and M3 generator design.
