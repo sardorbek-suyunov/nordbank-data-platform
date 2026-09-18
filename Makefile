@@ -2,11 +2,12 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint format test up down health logs seed tick dbt-build dbt-docs dq clean
+.PHONY: help install lint format test test-dags test-integration up down nuke health logs \
+	verify-dag seed tick dbt-build dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %-11s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 install: ## Create the virtual environment and install the git hooks
 	uv sync
@@ -21,22 +22,33 @@ format: ## Apply ruff formatting and the safe lint fixes
 	uv run ruff format .
 	uv run ruff check --fix .
 
-# Exit code 5 is pytest reporting that it collected no tests. Drop the tolerance at M2,
-# which adds the first tests.
-test: ## Run the test suite
-	uv run pytest -q || [ $$? -eq 5 ]
+test: ## Run the unit tests, which need neither Airflow nor a running stack
+	uv run pytest -q -m "not dags and not integration"
 
-up: ## Start the local stack
-	@echo "not implemented until M1"
+test-dags: ## Run the DAG integrity tests, natively or in the project image
+	uv run python scripts/run_dag_tests.py
+
+test-integration: ## Run the smoke tests inside the running stack
+	@echo "test-integration: running inside airflow-scheduler, where the volumes and network are"
+	docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow && pytest -q -m integration tests"
+
+up: ## Start the local stack and wait until every service is healthy
+	uv run python scripts/stack_up.py
 
 down: ## Stop the local stack and keep the volumes
-	@echo "not implemented until M1"
+	docker compose down
 
-health: ## Report the health of every service in the local stack
-	@echo "not implemented until M1"
+nuke: ## Stop the stack and delete every volume (FORCE=1 skips the prompt)
+	uv run python scripts/stack_nuke.py
 
-logs: ## Follow the logs of the local stack
-	@echo "not implemented until M1"
+health: ## Probe every component (STRICT=1 treats a busy warehouse as a failure)
+	uv run python scripts/stack_health.py
+
+logs: ## Follow the stack logs (SERVICE=<name> to filter)
+	docker compose logs --follow $(SERVICE)
+
+verify-dag: ## Trigger the health-check DAG from the CLI and verify it from the task records
+	uv run python scripts/stack_verify_dag.py
 
 seed: ## Load the initial historical dataset into the source database
 	@echo "not implemented until M2"
