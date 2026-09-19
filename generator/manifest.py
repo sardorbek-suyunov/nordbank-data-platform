@@ -27,7 +27,7 @@ from pathlib import Path
 
 from . import GENERATOR_VERSION
 from .config import RunConfig
-from .tables import LOAD_ORDER
+from .tables import LOAD_ORDER, TABLE_COLUMNS
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT / "scripts") not in sys.path:
@@ -82,6 +82,36 @@ class Manifest:
         return json.loads(self.to_json(with_runtime=False))
 
 
+# Field separator and null marker inside a row's digest input. Unit separator and record
+# separator: neither can appear in a value, so no combination of values can be confused with
+# another by their concatenation.
+FIELD = "chr(31)"
+NULL_MARKER = "chr(30)"
+
+
+def _row_expression(table: str) -> str:
+    """The text a row is digested from: its documented columns, in documented order.
+
+    Explicitly rather than `row::text`, which renders columns in *physical* order. The two
+    differ whenever a column was added by `ALTER TABLE` rather than being present when the
+    table was created, because an added column goes on the end. A database built by applying
+    the DDL to an existing stack and one built from scratch then hold the same data in a
+    different physical order, and a digest over `row::text` reports them as different.
+
+    That is not hypothetical: it is what the committed manifest caught between a developer
+    machine that had evolved through the M2 schema changes and a CI runner starting clean, on
+    `core.transactions` and `core.gl_transactions` — the two tables that gained columns. The
+    row counts matched and every value matched; only the order they were rendered in did not.
+
+    `coalesce` to a marker rather than letting a NULL swallow the field, so that (a, NULL, b)
+    and (a, b, NULL) cannot digest alike.
+    """
+    fields = ", ".join(
+        f"coalesce({column}::text, {NULL_MARKER})" for column in TABLE_COLUMNS[table]
+    )
+    return f"md5(concat_ws({FIELD}, {fields}))"
+
+
 def _digest_sql() -> str:
     parts = []
     for table in LOAD_ORDER:
@@ -89,10 +119,9 @@ def _digest_sql() -> str:
         parts.append(
             f"""
             select count(*)::text || ':' ||
-                   coalesce(sum(('x' || substr(md5(t.*::text), 1, 8))::bit(32)::bigint), 0)::text
-                   || ':' ||
-                   coalesce(sum(('x' || substr(md5(t.*::text), 9, 8))::bit(32)::bigint), 0)::text
-              from core.{table} t;
+                   coalesce(sum(('x' || substr(h, 1, 8))::bit(32)::bigint), 0)::text || ':' ||
+                   coalesce(sum(('x' || substr(h, 9, 8))::bit(32)::bigint), 0)::text
+              from (select {_row_expression(table)} as h from core.{table}) s;
             """  # noqa: S608
         )
     return SESSION_SETTINGS + "\n".join(parts) + "\n"
