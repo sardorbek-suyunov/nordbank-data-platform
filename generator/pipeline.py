@@ -67,7 +67,15 @@ def generate(config: RunConfig, ref: RefData, spool: Spool) -> RunResult:
     )
 
     stats = movements.generate(
-        config, ref, streams, spool, customers, accounts, cards, merchants, agents,
+        config,
+        ref,
+        streams,
+        spool,
+        customers,
+        accounts,
+        cards,
+        merchants,
+        agents,
         loans.cash_events,
     )
 

@@ -105,9 +105,11 @@ def generate(
 
     for customer_id in range(1, customer_count + 1):
         rng = streams.stream("accounts", customer_id)
-        count = int(weighted_choice(
-            rng, {str(k): float(v) for k, v in accounts_params["count_weights"].items()}
-        ))
+        count = int(
+            weighted_choice(
+                rng, {str(k): float(v) for k, v in accounts_params["count_weights"].items()}
+            )
+        )
         country = customer_country[customer_id - 1]
         signup = customer_signup[customer_id - 1]
 
@@ -185,9 +187,9 @@ def generate(
                             math.exp(
                                 rng.gauss(
                                     float(
-                                        txn_params[
-                                            "regular_credit_mu_by_product_class"
-                                        ][product_class]
+                                        txn_params["regular_credit_mu_by_product_class"][
+                                            product_class
+                                        ]
                                     ),
                                     float(txn_params["regular_credit_sigma"]),
                                 )
@@ -219,27 +221,35 @@ def generate(
             primary_weight = (Decimal(1) - allocated).quantize(Decimal("0.00000001"))
 
             holder_id += 1
-            holder_rows.write((
-                holder_id, account_id, customer_id, "primary", primary_weight,
-                created_at, created_at, False,
-            ))
-            for other_id, weight in secondary_weights:
-                holder_id += 1
-                holder_rows.write((
+            holder_rows.write(
+                (
                     holder_id,
                     account_id,
-                    other_id,
-                    "authorised_signatory" if weight is None else "joint",
-                    weight,
+                    customer_id,
+                    "primary",
+                    primary_weight,
                     created_at,
                     created_at,
                     False,
-                ))
+                )
+            )
+            for other_id, weight in secondary_weights:
+                holder_id += 1
+                holder_rows.write(
+                    (
+                        holder_id,
+                        account_id,
+                        other_id,
+                        "authorised_signatory" if weight is None else "joint",
+                        weight,
+                        created_at,
+                        created_at,
+                        False,
+                    )
+                )
 
             # Cards, on current accounts almost always and on savings almost never.
-            card_share = float(
-                cards_params["share_by_product_class"].get(product_class, 0.0)
-            )
+            card_share = float(cards_params["share_by_product_class"].get(product_class, 0.0))
             if bernoulli(rng, card_share):
                 card_id = len(cards) + 1
                 product_code = weighted_choice(rng, cards_params["product_mix"])
@@ -263,20 +273,22 @@ def generate(
                 cards.status_code.append(status)
                 accounts.card_ids[-1].append(card_id)
 
-                card_rows.write((
-                    card_id,
-                    f"NB{card_id:010d}",
-                    account_id,
-                    product_code,
-                    f"{400000 + (card_id % 99999):06d}",
-                    f"{card_id % 10000:04d}",
-                    status,
-                    issued,
-                    expiry,
-                    card_created,
-                    card_created,
-                    False,
-                ))
+                card_rows.write(
+                    (
+                        card_id,
+                        f"NB{card_id:010d}",
+                        account_id,
+                        product_code,
+                        f"{400000 + (card_id % 99999):06d}",
+                        f"{card_id % 10000:04d}",
+                        status,
+                        issued,
+                        expiry,
+                        card_created,
+                        card_created,
+                        False,
+                    )
+                )
 
     return accounts, cards
 
@@ -285,19 +297,21 @@ def write_accounts(accounts: AccountBook, spool: Spool) -> None:
     """Write the account rows, after the movement pass has folded the balances."""
     rows = spool.table("accounts")
     for index in range(len(accounts)):
-        rows.write((
-            index + 1,
-            accounts.account_number[index],
-            accounts.iban[index],
-            accounts.account_type_code[index],
-            accounts.currency_code[index],
-            accounts.country_code[index],
-            accounts.status_code[index],
-            accounts.opened_date[index],
-            accounts.closed_date[index],
-            accounts.overdraft_limit[index],
-            accounts.balance[index],
-            accounts.created_at[index],
-            accounts.updated_at[index],
-            False,
-        ))
+        rows.write(
+            (
+                index + 1,
+                accounts.account_number[index],
+                accounts.iban[index],
+                accounts.account_type_code[index],
+                accounts.currency_code[index],
+                accounts.country_code[index],
+                accounts.status_code[index],
+                accounts.opened_date[index],
+                accounts.closed_date[index],
+                accounts.overdraft_limit[index],
+                accounts.balance[index],
+                accounts.created_at[index],
+                accounts.updated_at[index],
+                False,
+            )
+        )

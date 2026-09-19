@@ -79,17 +79,19 @@ class LedgerWriter:
 
         self._batch_id += 1
         batch_id = self._batch_id
-        self._batch_rows.write((
-            batch_id,
-            f"GLT{batch_id:012d}",
-            posting_date,
-            description[:200],
-            source_entity_code,
-            source_entity_id,
-            stamp,
-            stamp,
-            False,
-        ))
+        self._batch_rows.write(
+            (
+                batch_id,
+                f"GLT{batch_id:012d}",
+                posting_date,
+                description[:200],
+                source_entity_code,
+                source_entity_id,
+                stamp,
+                stamp,
+                False,
+            )
+        )
 
         for gl_account_code, amount, account_id in legs:
             if amount == 0:
@@ -97,19 +99,21 @@ class LedgerWriter:
                 # information anyway.
                 continue
             self._entry_id += 1
-            self._entry_rows.write((
-                self._entry_id,
-                batch_id,
-                posting_date,
-                gl_account_code,
-                DEBIT if amount > 0 else CREDIT,
-                amount,
-                currency_code,
-                account_id,
-                stamp,
-                stamp,
-                False,
-            ))
+            self._entry_rows.write(
+                (
+                    self._entry_id,
+                    batch_id,
+                    posting_date,
+                    gl_account_code,
+                    DEBIT if amount > 0 else CREDIT,
+                    amount,
+                    currency_code,
+                    account_id,
+                    stamp,
+                    stamp,
+                    False,
+                )
+            )
         return batch_id
 
     def post_customer_debit(
