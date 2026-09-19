@@ -23,13 +23,14 @@ loader, fourteen coherence invariants and a run manifest. `make seed`, `make see
 
 ## Measured
 
-| Profile | Customers | History | Transactions | Total `core` rows | Generate | Load | Total |
-|---|---|---|---|---|---|---|---|
-| `ci` | 500 | 6 months | 41,393 | 209,190 | 3.4 s | 8.2 s | 11.5 s |
-| `dev` | 5,000 | 3 years | 2,321,273 | 11,468,955 | 167.6 s | 154.6 s | 327.6 s |
+| Profile | Customers | History | Transactions | Total `core` rows | Total | Source database |
+|---|---|---|---|---|---|---|
+| `ci` | 500 | 6 months | 41,393 | 209,190 | 11.5 s | 67 MB |
+| `dev` | 5,000 | 3 years | 2,321,273 | 11,468,955 | 327.6 s | 2,819 MB |
 
-Both measured on a freshly nuked and schema-applied stack. The source database is 67 MB at `ci`
-and 2,819 MB at `dev`.
+Both measured on a freshly nuked and schema-applied stack. The split between generating and
+loading, taken on the run immediately before the nuke and on identical data, is 3.4 s and 8.2 s
+at `ci` and 167.6 s and 154.6 s at `dev`.
 
 `ci` is inside its twenty second budget with room. `dev` is 28 seconds over its five minute
 target, which is reported rather than tuned away.
