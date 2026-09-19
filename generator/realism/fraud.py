@@ -57,8 +57,9 @@ def night_hour_prevalence(fraud: dict[str, Any], hour_weights: Sequence[float]) 
     return night / total if total else 0.0
 
 
-def calibrate(fraud: dict[str, Any], hour_weights: Sequence[float],
-              card_not_present_share: float) -> float:
+def calibrate(
+    fraud: dict[str, Any], hour_weights: Sequence[float], card_not_present_share: float
+) -> float:
     """The base probability that makes the mean propensity equal the target fraud rate.
 
     Computed analytically from the contexts' prevalences, treating them as independent. They
@@ -97,8 +98,9 @@ def propensity(fraud: dict[str, Any], context: FraudContext, base: float) -> flo
     return min(1.0, value)
 
 
-def is_fraudulent(rng: random.Random, fraud: dict[str, Any], context: FraudContext,
-                  base: float) -> bool:
+def is_fraudulent(
+    rng: random.Random, fraud: dict[str, Any], context: FraudContext, base: float
+) -> bool:
     return bernoulli(rng, propensity(fraud, context, base))
 
 

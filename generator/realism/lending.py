@@ -62,16 +62,15 @@ def draw_requested_amount(rng: random.Random, lending: dict[str, Any]) -> Decima
     import math
 
     raw = math.exp(rng.gauss(lending["requested_amount_mu"], lending["requested_amount_sigma"]))
-    bounded = min(float(lending["requested_amount_max"]),
-                  max(float(lending["requested_amount_min"]), raw))
+    bounded = min(
+        float(lending["requested_amount_max"]), max(float(lending["requested_amount_min"]), raw)
+    )
     # Loan applications are for round sums. Nobody asks for 8,431.77 euros.
     return cents(int(round(bounded / 100.0)) * 100)
 
 
 def draw_term_months(rng: random.Random, lending: dict[str, Any]) -> int:
-    return int(
-        weighted_pick(rng, lending["term_months_choices"], lending["term_months_weights"])
-    )
+    return int(weighted_pick(rng, lending["term_months_choices"], lending["term_months_weights"]))
 
 
 def approved_amount(rng: random.Random, lending: dict[str, Any], requested: Decimal) -> Decimal:
@@ -195,8 +194,14 @@ def decision_reason(
         reason
         for reason in reasons
         if reason
-        in ("affordability", "credit_history", "existing_arrears", "fraud_suspicion",
-            "documentation", "policy_exclusion")
+        in (
+            "affordability",
+            "credit_history",
+            "existing_arrears",
+            "fraud_suspicion",
+            "documentation",
+            "policy_exclusion",
+        )
     ]
     if not candidates:
         return reasons[0]

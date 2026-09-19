@@ -59,9 +59,7 @@ def cash_amount(
         float(band_params["min"]),
         float(band_params["max"]),
     )
-    multiple = int(
-        weighted_pick(rng, amounts["cash_multiples"], amounts["cash_multiple_weights"])
-    )
+    multiple = int(weighted_pick(rng, amounts["cash_multiples"], amounts["cash_multiple_weights"]))
     units = max(1, int(round(raw / multiple)))
     return cents(units * multiple)
 
@@ -75,9 +73,7 @@ def transfer_amount(rng: random.Random, amounts: dict[str, Any]) -> Decimal:
 
 def payment_amount(rng: random.Random, payments: dict[str, Any]) -> Decimal:
     return cents(
-        bounded_lognormal(
-            rng, payments["amount_mu"], payments["amount_sigma"], 1.0, 500_000.0
-        )
+        bounded_lognormal(rng, payments["amount_mu"], payments["amount_sigma"], 1.0, 500_000.0)
     )
 
 

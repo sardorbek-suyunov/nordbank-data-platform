@@ -99,16 +99,18 @@ def generate_merchants(
         book.band_code.append(band)
         book.country_code.append(country)
 
-        rows.write((
-            merchant_id,
-            f"MER{merchant_id:010d}",
-            name[:200],
-            mcc,
-            country,
-            created_at,
-            created_at,
-            False,
-        ))
+        rows.write(
+            (
+                merchant_id,
+                f"MER{merchant_id:010d}",
+                name[:200],
+                mcc,
+                country,
+                created_at,
+                created_at,
+                False,
+            )
+        )
 
     return book
 
@@ -141,19 +143,21 @@ def generate_agents(
         book.country_code.append(country)
         book.active_from.append(active_from)
 
-        rows.write((
-            agent_id,
-            f"AGT{agent_id:010d}",
-            f"{partner} {city}",
-            vocab.street_address(rng.randrange(64), rng.randrange(8), rng.randrange(1, 240)),
-            city,
-            str(rng.randrange(10 ** (digits - 1), 10**digits)),
-            country,
-            active_from,
-            None,
-            created_at,
-            created_at,
-            False,
-        ))
+        rows.write(
+            (
+                agent_id,
+                f"AGT{agent_id:010d}",
+                f"{partner} {city}",
+                vocab.street_address(rng.randrange(64), rng.randrange(8), rng.randrange(1, 240)),
+                city,
+                str(rng.randrange(10 ** (digits - 1), 10**digits)),
+                country,
+                active_from,
+                None,
+                created_at,
+                created_at,
+                False,
+            )
+        )
 
     return book

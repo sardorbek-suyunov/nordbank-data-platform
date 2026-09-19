@@ -109,9 +109,7 @@ def generate(
     pay_rows = spool.table("payments")
     ledger = LedgerWriter(spool, params["ledger"]["accounts"])
     alerts = AlertWriter(spool)
-    sessions = SessionWriter(
-        spool, streams.seed, sorted(params["customers"]["country_mix"])
-    )
+    sessions = SessionWriter(spool, streams.seed, sorted(params["customers"]["country_mix"]))
 
     gl = params["ledger"]["accounts"]
     hour_weights = txn_params["hour_weights"]
@@ -183,12 +181,29 @@ def generate(
         still_active: list[int] = []
         opened_this_month = set(opening_buckets.get(month_index, ()))
 
+        # Attrition is decided before the month's movements, not after, so that an account
+        # closing mid-month does not first acquire transactions dated after it closed. That is
+        # what invariant 1 checks, and generating first would fail it on every closure.
+        _month_attrition(
+            streams=streams,
+            accounts=accounts,
+            active=active,
+            month_index=month_index,
+            window_first=window_first,
+            window_last=window_last,
+            attrition_params=attrition_params,
+        )
+
         for account_id in active:
             index = account_id - 1
-            if accounts.closed_date[index] is not None:
+            closed = accounts.closed_date[index]
+            if closed is not None and closed < window_first:
                 continue
-            still_active.append(account_id)
-            if accounts.opened_date[index] > window_last:
+            if closed is None:
+                still_active.append(account_id)
+            account_last = min(window_last, closed) if closed is not None else window_last
+            account_first = max(window_first, accounts.opened_date[index])
+            if account_first > account_last:
                 continue
 
             _account_month(
@@ -204,8 +219,8 @@ def generate(
                 account_id=account_id,
                 month_index=month_index,
                 is_first_month=account_id in opened_this_month,
-                window_first=max(window_first, accounts.opened_date[index]),
-                window_last=window_last,
+                window_first=account_first,
+                window_last=account_last,
                 hour_weights=hour_weights,
                 month_weights=month_weights,
                 weekend_factor=weekend_factor,
@@ -227,20 +242,32 @@ def generate(
         while loan_cursor < loan_count and loan_cash[loan_cursor].when.date() <= window_last:
             event = loan_cash[loan_cursor]
             incoming = event.amount > 0
-            events.append((
-                event.when,
-                event.account_id,
-                0,
-                TRANSACTION,
+            events.append(
                 (
-                    "transfer_in" if incoming else "direct_debit",
-                    "api", None, None, None,
-                    event.amount if incoming else -event.amount,
-                    None, "posted", None, event.when.date(), event.currency_code, True,
-                    fraud_model.FraudContext(False, False, False, False, False),
-                    False, "standard", event.principal_component,
-                ),
-            ))
+                    event.when,
+                    event.account_id,
+                    0,
+                    TRANSACTION,
+                    (
+                        "transfer_in" if incoming else "direct_debit",
+                        "api",
+                        None,
+                        None,
+                        None,
+                        event.amount if incoming else -event.amount,
+                        None,
+                        "posted",
+                        None,
+                        event.when.date(),
+                        event.currency_code,
+                        True,
+                        fraud_model.FraudContext(False, False, False, False, False),
+                        False,
+                        "standard",
+                        event.principal_component,
+                    ),
+                )
+            )
             loan_cursor += 1
 
         events.sort(key=lambda item: (item[0], item[1], item[2]))
@@ -288,10 +315,8 @@ def generate(
                     anchor_end=anchor_end,
                 )
 
-
-        # Background login sessions, and the month's attrition and dormancy decisions.
-        _month_lifecycle(
-            config=config,
+        # Background login sessions: the customer opening the app without transacting.
+        _month_sessions(
             streams=streams,
             params=params,
             accounts=accounts,
@@ -302,7 +327,6 @@ def generate(
             window_first=window_first,
             window_last=window_last,
             anchor_end=anchor_end,
-            attrition_params=attrition_params,
             digital_params=digital_params,
         )
 
@@ -358,9 +382,7 @@ def _account_month(**kw) -> None:
     seasonal = day_weight(kw["month_weights"], 1.0, window_first)
     growth = growth_multiplier(float(params["acquisition"]["monthly_growth_rate"]), month_index)
     expected = base_rate * seasonal * growth
-    count = overdispersed_poisson(
-        rng, expected, float(txn_params["per_account_month_dispersion"])
-    )
+    count = overdispersed_poisson(rng, expected, float(txn_params["per_account_month_dispersion"]))
 
     card_ids = accounts.card_ids[index]
     has_card = bool(card_ids)
@@ -379,11 +401,13 @@ def _account_month(**kw) -> None:
     mandates: list[tuple[int, Decimal, int]] = []
     if has_card and bernoulli(rng, float(amount_params["recurring_share"]) * 4):
         for _ in range(rng.randrange(1, 4)):
-            mandates.append((
-                rng.randrange(1, 29),
-                amount_model.recurring_amount(rng, amount_params),
-                familiar[rng.randrange(len(familiar))] if familiar else 1,
-            ))
+            mandates.append(
+                (
+                    rng.randrange(1, 29),
+                    amount_model.recurring_amount(rng, amount_params),
+                    familiar[rng.randrange(len(familiar))] if familiar else 1,
+                )
+            )
 
     weekend_factors = txn_params["weekend_band_factors"]
     new_device_month = bernoulli(
@@ -399,19 +423,32 @@ def _account_month(**kw) -> None:
     if kw["is_first_month"] and accounts.opening_balance[index] > 0:
         seq += 1
         opened = accounts.opened_date[index]
-        events.append((
-            at_time(opened, 9, rng.randrange(60), 0),
-            account_id,
-            seq,
-            TRANSACTION,
+        events.append(
             (
-                "transfer_in", "api", None, None, None,
-                accounts.opening_balance[index], None, "posted", None, opened,
-                currency, True,
-                fraud_model.FraudContext(False, False, False, False, False),
-                False, "standard", None,
-            ),
-        ))
+                at_time(opened, 9, rng.randrange(60), 0),
+                account_id,
+                seq,
+                TRANSACTION,
+                (
+                    "transfer_in",
+                    "api",
+                    None,
+                    None,
+                    None,
+                    accounts.opening_balance[index],
+                    None,
+                    "posted",
+                    None,
+                    opened,
+                    currency,
+                    True,
+                    fraud_model.FraudContext(False, False, False, False, False),
+                    False,
+                    "standard",
+                    None,
+                ),
+            )
+        )
 
     for _ in range(count):
         day = window_first + dt.timedelta(days=rng.randrange(span_days))
@@ -505,17 +542,32 @@ def _account_month(**kw) -> None:
             if value_date > config.anchor:
                 value_date = config.anchor
 
-        events.append((
-            booked_at,
-            account_id,
-            seq,
-            TRANSACTION,
+        events.append(
             (
-                type_code, channel_code, card_id, merchant_id, agent_id, magnitude,
-                is_card_present, status_code, auth_outcome, value_date, currency,
-                is_recurring, context, fraudulent, band, None,
-            ),
-        ))
+                booked_at,
+                account_id,
+                seq,
+                TRANSACTION,
+                (
+                    type_code,
+                    channel_code,
+                    card_id,
+                    merchant_id,
+                    agent_id,
+                    magnitude,
+                    is_card_present,
+                    status_code,
+                    auth_outcome,
+                    value_date,
+                    currency,
+                    is_recurring,
+                    context,
+                    fraudulent,
+                    band,
+                    None,
+                ),
+            )
+        )
 
     # The regular incoming credit, on its own day at its own amount. It is a transfer_in
     # through the internal channel, which is what a salary or pension arrives as.
@@ -524,19 +576,32 @@ def _account_month(**kw) -> None:
         pay_day = clamp_day_of_month(window_first.year, window_first.month, salary_day)
         if window_first <= pay_day <= window_last:
             seq += 1
-            events.append((
-                at_time(pay_day, 5, rng.randrange(60), 0),
-                account_id,
-                seq,
-                TRANSACTION,
+            events.append(
                 (
-                    "transfer_in", "api", None, None, None,
-                    accounts.salary_amount[index], None, "posted", None, pay_day,
-                    currency, True,
-                    fraud_model.FraudContext(False, False, False, False, False),
-                    False, "standard", None,
-                ),
-            ))
+                    at_time(pay_day, 5, rng.randrange(60), 0),
+                    account_id,
+                    seq,
+                    TRANSACTION,
+                    (
+                        "transfer_in",
+                        "api",
+                        None,
+                        None,
+                        None,
+                        accounts.salary_amount[index],
+                        None,
+                        "posted",
+                        None,
+                        pay_day,
+                        currency,
+                        True,
+                        fraud_model.FraudContext(False, False, False, False, False),
+                        False,
+                        "standard",
+                        None,
+                    ),
+                )
+            )
 
     # Recurring mandates fire once per month on their own day, at the same amount.
     for day_of_month, amount, merchant_id in mandates:
@@ -551,14 +616,32 @@ def _account_month(**kw) -> None:
         seq += 1
         booked_at = at_time(day, rng.randrange(2, 6), rng.randrange(60), 0)
         context = fraud_model.FraudContext(False, False, False, False, False)
-        events.append((
-            booked_at, account_id, seq, TRANSACTION,
+        events.append(
             (
-                "card_purchase", "ecommerce", card_id, merchant_id, None, amount,
-                False, "posted", "approved", day, currency, True, context, False,
-                "standard", None,
-            ),
-        ))
+                booked_at,
+                account_id,
+                seq,
+                TRANSACTION,
+                (
+                    "card_purchase",
+                    "ecommerce",
+                    card_id,
+                    merchant_id,
+                    None,
+                    amount,
+                    False,
+                    "posted",
+                    "approved",
+                    day,
+                    currency,
+                    True,
+                    context,
+                    False,
+                    "standard",
+                    None,
+                ),
+            )
+        )
 
     # A velocity burst: several card transactions inside a short window, which is the context
     # the velocity_card detection rule exists for.
@@ -581,8 +664,11 @@ def _account_month(**kw) -> None:
                 )
                 booked_at = start + dt.timedelta(minutes=step * rng.randrange(2, 8))
                 is_card_present = presentment.decide(
-                    rng, txn_params, "ecommerce",
-                    progress(config.history_start, config.anchor, day), kw["baseline_present"],
+                    rng,
+                    txn_params,
+                    "ecommerce",
+                    progress(config.history_start, config.anchor, day),
+                    kw["baseline_present"],
                 )
                 context = fraud_model.FraudContext(
                     card_not_present=is_card_present is False,
@@ -591,39 +677,68 @@ def _account_month(**kw) -> None:
                     velocity_burst=True,
                     new_device=new_device_month,
                 )
-                events.append((
-                    booked_at, account_id, seq, TRANSACTION,
+                events.append(
                     (
-                        "card_purchase", "ecommerce", card_id, merchant_id, None,
-                        amount_model.purchase_amount(rng, band_params), is_card_present,
-                        "posted", "approved", day, currency, False, context,
-                        fraud_model.is_fraudulent(
-                            rng, fraud_params, context, kw["fraud_base"]
+                        booked_at,
+                        account_id,
+                        seq,
+                        TRANSACTION,
+                        (
+                            "card_purchase",
+                            "ecommerce",
+                            card_id,
+                            merchant_id,
+                            None,
+                            amount_model.purchase_amount(rng, band_params),
+                            is_card_present,
+                            "posted",
+                            "approved",
+                            day,
+                            currency,
+                            False,
+                            context,
+                            fraud_model.is_fraudulent(rng, fraud_params, context, kw["fraud_base"]),
+                            band,
+                            None,
                         ),
-                        band, None,
-                    ),
-                ))
+                    )
+                )
 
     # Bank-initiated postings, which arrive whether the customer transacted or not.
     bank_channel = txn_params["bank_initiated_channel"]
-    for type_code, monthly_rate in sorted(
-        txn_params["bank_initiated_per_account_month"].items()
-    ):
+    for type_code, monthly_rate in sorted(txn_params["bank_initiated_per_account_month"].items()):
         if not bernoulli(rng, min(1.0, float(monthly_rate))):
             continue
         day = window_first + dt.timedelta(days=rng.randrange(span_days))
         seq += 1
         booked_at = at_time(day, 2, rng.randrange(60), 0)
         amount = amount_model.fee_amount(rng, amount_params)
-        events.append((
-            booked_at, account_id, seq, TRANSACTION,
+        events.append(
             (
-                type_code, bank_channel, None, None, None, amount, None, "posted", None,
-                day, currency, False,
-                fraud_model.FraudContext(False, False, False, False, False),
-                False, "standard", None,
-            ),
-        ))
+                booked_at,
+                account_id,
+                seq,
+                TRANSACTION,
+                (
+                    type_code,
+                    bank_channel,
+                    None,
+                    None,
+                    None,
+                    amount,
+                    None,
+                    "posted",
+                    None,
+                    day,
+                    currency,
+                    False,
+                    fraud_model.FraudContext(False, False, False, False, False),
+                    False,
+                    "standard",
+                    None,
+                ),
+            )
+        )
 
     # Payment instructions.
     payment_count = overdispersed_poisson(
@@ -645,9 +760,7 @@ def _account_month(**kw) -> None:
             weighted_choice(rng, pay_params["corridor_mix"]) if cross_border else account_country
         )
         name = None
-        if kw["screening_names"] and bernoulli(
-            rng, float(pay_params["screening_positive_share"])
-        ):
+        if kw["screening_names"] and bernoulli(rng, float(pay_params["screening_positive_share"])):
             name = kw["screening_names"][rng.randrange(len(kw["screening_names"]))]
         elif bernoulli(rng, 0.94):
             from . import vocabulary as vocab
@@ -657,15 +770,26 @@ def _account_month(**kw) -> None:
                 f"{vocab.FAMILY_NAMES[rng.randrange(len(vocab.FAMILY_NAMES))]}"
             )
 
-        events.append((
-            initiated_at, account_id, seq, PAYMENT,
+        events.append(
             (
-                type_code, scheme, status, amount, counterparty_country, name, currency,
-                bernoulli(rng, float(pay_params["remittance_reference_share"])),
-                rng.randrange(0, int(pay_params["settlement_lag_days_max"]) + 1),
-                rng.randrange(10, 99),
-            ),
-        ))
+                initiated_at,
+                account_id,
+                seq,
+                PAYMENT,
+                (
+                    type_code,
+                    scheme,
+                    status,
+                    amount,
+                    counterparty_country,
+                    name,
+                    currency,
+                    bernoulli(rng, float(pay_params["remittance_reference_share"])),
+                    rng.randrange(0, int(pay_params["settlement_lag_days_max"]) + 1),
+                    rng.randrange(10, 99),
+                ),
+            )
+        )
 
 
 def _emit_transaction(**kw) -> None:
@@ -678,9 +802,24 @@ def _emit_transaction(**kw) -> None:
     transaction_id: int = kw["transaction_id"]
     index = account_id - 1
 
-    (type_code, channel_code, card_id, merchant_id, agent_id, magnitude, is_card_present,
-     status_code, auth_outcome, value_date, currency, is_recurring, context, fraudulent,
-     _band, loan_principal) = kw["payload"]
+    (
+        type_code,
+        channel_code,
+        card_id,
+        merchant_id,
+        agent_id,
+        magnitude,
+        is_card_present,
+        status_code,
+        auth_outcome,
+        value_date,
+        currency,
+        is_recurring,
+        context,
+        fraudulent,
+        _band,
+        loan_principal,
+    ) = kw["payload"]
 
     direction = kw["direction_of_type"][type_code]
     posted = kw["posted_status"].get(status_code, False)
@@ -703,28 +842,30 @@ def _emit_transaction(**kw) -> None:
         accounts.balance[index] = cents(accounts.balance[index] + signed)
     accounts.updated_at[index] = max(accounts.updated_at[index], booked_at)
 
-    kw["txn_rows"].write((
-        transaction_id,
-        f"TXN{transaction_id:013d}",
-        account_id,
-        card_id,
-        merchant_id,
-        agent_id,
-        type_code,
-        channel_code,
-        status_code,
-        auth_outcome,
-        booked_at,
-        value_date,
-        signed,
-        currency,
-        is_card_present,
-        None,
-        None,
-        booked_at,
-        booked_at,
-        False,
-    ))
+    kw["txn_rows"].write(
+        (
+            transaction_id,
+            f"TXN{transaction_id:013d}",
+            account_id,
+            card_id,
+            merchant_id,
+            agent_id,
+            type_code,
+            channel_code,
+            status_code,
+            auth_outcome,
+            booked_at,
+            value_date,
+            signed,
+            currency,
+            is_card_present,
+            None,
+            None,
+            booked_at,
+            booked_at,
+            False,
+        )
+    )
 
     if card_id is not None:
         stats.card_transactions += 1
@@ -756,20 +897,39 @@ def _emit_transaction(**kw) -> None:
                     (gl["customer_deposits"], -magnitude, account_id),
                 ]
             ledger.post(
-                booked_at.date(), type_code, "transaction", transaction_id, currency,
-                legs, booked_at,
+                booked_at.date(),
+                type_code,
+                "transaction",
+                transaction_id,
+                currency,
+                legs,
+                booked_at,
             )
         else:
             contra = _contra_account(gl, type_code, direction)
             if direction == "debit":
                 ledger.post_customer_debit(
-                    booked_at.date(), type_code, "transaction", transaction_id, currency,
-                    magnitude, account_id, contra, booked_at,
+                    booked_at.date(),
+                    type_code,
+                    "transaction",
+                    transaction_id,
+                    currency,
+                    magnitude,
+                    account_id,
+                    contra,
+                    booked_at,
                 )
             else:
                 ledger.post_customer_credit(
-                    booked_at.date(), type_code, "transaction", transaction_id, currency,
-                    magnitude, account_id, contra, booked_at,
+                    booked_at.date(),
+                    type_code,
+                    "transaction",
+                    transaction_id,
+                    currency,
+                    magnitude,
+                    account_id,
+                    contra,
+                    booked_at,
                 )
 
     if card_id is not None:
@@ -787,7 +947,10 @@ def _emit_transaction(**kw) -> None:
     # Spec 003 invariant 13, as replaced: a share of customer-initiated digital-channel
     # transactions is preceded by a login within 24 hours. Card-present and recurring
     # transactions are excluded, because neither implies a login.
-    digital = channel_code in ("mobile_app", "web", "ecommerce", "api")
+    # The api channel is machine to machine — standing orders, direct debits, salary credits
+    # and loan movements — and implies no customer login, so it is not part of the population
+    # the coverage share is measured over. The invariant uses the same definition.
+    digital = channel_code in ("mobile_app", "web", "ecommerce")
     if (
         digital
         and kw["customer_initiated"].get(type_code, False)
@@ -796,13 +959,9 @@ def _emit_transaction(**kw) -> None:
     ):
         stats.digital_customer_initiated += 1
         session_rng = kw["streams"].stream("linked_sessions", transaction_id)
-        if bernoulli(
-            session_rng, float(kw["digital_params"]["login_precedes_transaction_share"])
-        ):
+        if bernoulli(session_rng, float(kw["digital_params"]["login_precedes_transaction_share"])):
             stats.digital_with_preceding_login += 1
-            started = booked_at - dt.timedelta(
-                minutes=session_rng.randrange(2, 23 * 60)
-            )
+            started = booked_at - dt.timedelta(minutes=session_rng.randrange(2, 23 * 60))
             customer_id = accounts.customer_id[index]
             kw["sessions"].write(
                 session_rng,
@@ -842,8 +1001,18 @@ def _emit_payment(**kw) -> None:
     payment_id: int = kw["payment_id"]
     initiated_at: dt.datetime = kw["booked_at"]
 
-    (type_code, scheme, status, amount, counterparty_country, name, currency, has_remittance,
-     settle_lag, iban_check) = kw["payload"]
+    (
+        type_code,
+        scheme,
+        status,
+        amount,
+        counterparty_country,
+        name,
+        currency,
+        has_remittance,
+        settle_lag,
+        iban_check,
+    ) = kw["payload"]
 
     direction = kw["payment_direction"][type_code]
     posted = kw["payment_posted"].get(status, False)
@@ -882,54 +1051,107 @@ def _emit_payment(**kw) -> None:
     accounts.updated_at[index] = max(accounts.updated_at[index], booked_at or initiated_at)
 
     counterparty_iban = (
-        f"{counterparty_country}{iban_check:02d}{payment_id:016d}"
-        if counterparty_country
-        else None
+        f"{counterparty_country}{iban_check:02d}{payment_id:016d}" if counterparty_country else None
     )
 
-    kw["pay_rows"].write((
-        payment_id,
-        f"PAY{payment_id:013d}",
-        account_id,
-        type_code,
-        scheme,
-        status,
-        initiated_at,
-        booked_at,
-        settled_at,
-        amount,
-        currency,
-        counterparty_iban,
-        name,
-        counterparty_country,
-        f"INV-{payment_id:09d}" if has_remittance else None,
-        initiated_at,
-        settled_at or booked_at or initiated_at,
-        False,
-    ))
+    kw["pay_rows"].write(
+        (
+            payment_id,
+            f"PAY{payment_id:013d}",
+            account_id,
+            type_code,
+            scheme,
+            status,
+            initiated_at,
+            booked_at,
+            settled_at,
+            amount,
+            currency,
+            counterparty_iban,
+            name,
+            counterparty_country,
+            f"INV-{payment_id:09d}" if has_remittance else None,
+            initiated_at,
+            settled_at or booked_at or initiated_at,
+            False,
+        )
+    )
 
     if posted:
         when = booked_at or initiated_at
         if direction == "debit":
             ledger.post_customer_debit(
-                when.date(), type_code, "payment", payment_id, currency, amount,
-                account_id, gl["cash"], when,
+                when.date(),
+                type_code,
+                "payment",
+                payment_id,
+                currency,
+                amount,
+                account_id,
+                gl["cash"],
+                when,
             )
         else:
             ledger.post_customer_credit(
-                when.date(), type_code, "payment", payment_id, currency, amount,
-                account_id, gl["cash"], when,
+                when.date(),
+                type_code,
+                "payment",
+                payment_id,
+                currency,
+                amount,
+                account_id,
+                gl["cash"],
+                when,
             )
 
 
-def _month_lifecycle(**kw) -> None:
-    """Background sessions, dormancy, reactivation and closure for the month."""
+def _month_attrition(**kw) -> None:
+    """Dormancy, reactivation and closure for the month, decided before any movement."""
+    streams: SubStreams = kw["streams"]
+    accounts: AccountBook = kw["accounts"]
+    attrition_params = kw["attrition_params"]
+    month_index: int = kw["month_index"]
+    window_first: dt.date = kw["window_first"]
+    window_last: dt.date = kw["window_last"]
+    span = (window_last - window_first).days + 1
+    if span <= 0:
+        return
+
+    for account_id in kw["active"]:
+        index = account_id - 1
+        if accounts.closed_date[index] is not None:
+            continue
+        rng = streams.stream("lifecycle", account_id, month_index)
+        status = accounts.status_code[index]
+
+        if status == "active" and lifecycle.becomes_dormant(rng, attrition_params):
+            accounts.status_code[index] = "dormant"
+        elif status == "dormant" and lifecycle.reactivates(rng, attrition_params):
+            accounts.status_code[index] = "active"
+        elif status == "active" and bernoulli(rng, float(attrition_params["frozen_share"])):
+            accounts.status_code[index] = "frozen"
+
+        if lifecycle.closes_this_month(rng, attrition_params, month_index):
+            close_day = window_first + dt.timedelta(days=rng.randrange(span))
+            # An account does not close inside its first month. Cards are issued up to ten days
+            # after opening, so a closure days after opening leaves a card issued onto a closed
+            # account, which invariant 1 rightly refuses. A cooling-off floor is also what real
+            # accounts have, so this is the realistic fix rather than a clamp on the card date.
+            if close_day >= accounts.opened_date[index] + dt.timedelta(days=30):
+                accounts.closed_date[index] = close_day
+                accounts.status_code[index] = "closed"
+                accounts.updated_at[index] = max(
+                    accounts.updated_at[index], at_time(close_day, 16, 0, 0)
+                )
+
+
+def _month_sessions(**kw) -> None:
+    """Background login sessions for every customer with an open account this month."""
     streams: SubStreams = kw["streams"]
     accounts: AccountBook = kw["accounts"]
     customers: CustomerBook = kw["customers"]
     sessions: SessionWriter = kw["sessions"]
     digital_params = kw["digital_params"]
-    attrition_params = kw["attrition_params"]
     month_index: int = kw["month_index"]
     window_first: dt.date = kw["window_first"]
     window_last: dt.date = kw["window_last"]
@@ -941,26 +1163,6 @@ def _month_lifecycle(**kw) -> None:
 
     for account_id in kw["active"]:
         index = account_id - 1
-        rng = streams.stream("lifecycle", account_id, month_index)
-        status = accounts.status_code[index]
-
-        months_open = month_index
-        if status == "active" and lifecycle.becomes_dormant(rng, attrition_params):
-            accounts.status_code[index] = "dormant"
-        elif status == "dormant" and lifecycle.reactivates(rng, attrition_params):
-            accounts.status_code[index] = "active"
-        elif status == "active" and bernoulli(rng, float(attrition_params["frozen_share"])):
-            accounts.status_code[index] = "frozen"
-
-        if lifecycle.closes_this_month(rng, attrition_params, months_open):
-            close_day = window_first + dt.timedelta(days=rng.randrange(span))
-            if close_day >= accounts.opened_date[index]:
-                accounts.closed_date[index] = close_day
-                accounts.status_code[index] = "closed"
-                accounts.updated_at[index] = max(
-                    accounts.updated_at[index], at_time(close_day, 16, 0, 0)
-                )
-
         customer_id = accounts.customer_id[index]
         if customer_id in seen_customers:
             continue

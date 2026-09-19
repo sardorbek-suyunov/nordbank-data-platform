@@ -57,8 +57,10 @@ class LoanBook:
 
 
 def _first_current_account(
-    accounts_customer: list[int], product_class: list[str], customer_id: int,
-    index_by_customer: dict[int, list[int]]
+    accounts_customer: list[int],
+    product_class: list[str],
+    customer_id: int,
+    index_by_customer: dict[int, list[int]],
 ) -> int | None:
     for account_id in index_by_customer.get(customer_id, ()):
         if product_class[account_id - 1] == "current":
@@ -135,9 +137,7 @@ def generate(
 
             if roll < undecided:
                 status = (
-                    "referred"
-                    if bernoulli(rng, float(lending["referred_share"]))
-                    else "scoring"
+                    "referred" if bernoulli(rng, float(lending["referred_share"])) else "scoring"
                 )
             elif roll < withdrawn:
                 status = "withdrawn"
@@ -165,23 +165,25 @@ def generate(
                         book.approved += 1
                         approved_amount = model.approved_amount(rng, lending, requested)
 
-            application_rows.write((
-                application_id,
-                f"APP{application_id:010d}",
-                customer_id,
-                product_code,
-                status,
-                risk_band if decided_at is not None else None,
-                reason,
-                applied_at,
-                decided_at,
-                requested,
-                approved_amount,
-                currency,
-                applied_at,
-                decided_at or applied_at,
-                False,
-            ))
+            application_rows.write(
+                (
+                    application_id,
+                    f"APP{application_id:010d}",
+                    customer_id,
+                    product_code,
+                    status,
+                    risk_band if decided_at is not None else None,
+                    reason,
+                    applied_at,
+                    decided_at,
+                    requested,
+                    approved_amount,
+                    currency,
+                    applied_at,
+                    decided_at or applied_at,
+                    False,
+                )
+            )
 
             if status != "approved" or approved_amount is None or approved_amount <= 0:
                 continue
@@ -249,19 +251,21 @@ def generate(
                         last_paid_number = installment.number
 
                 created = at_time(disbursed_day, 3, 0, 0)
-                installment_rows.write((
-                    installment_id,
-                    loan_id,
-                    installment.number,
-                    due_date,
-                    installment.due_amount,
-                    paid_amount,
-                    paid_at,
-                    currency,
-                    created,
-                    paid_at or created,
-                    False,
-                ))
+                installment_rows.write(
+                    (
+                        installment_id,
+                        loan_id,
+                        installment.number,
+                        due_date,
+                        installment.due_amount,
+                        paid_amount,
+                        paid_at,
+                        currency,
+                        created,
+                        paid_at or created,
+                        False,
+                    )
+                )
 
                 if paid_at is not None:
                     book.cash_events.append(
@@ -297,24 +301,26 @@ def generate(
             elif bernoulli(rng, float(lending["restructured_share"])):
                 status_code = "restructured"
 
-            loan_rows.write((
-                loan_id,
-                f"LN{loan_id:012d}",
-                application_id,
-                customer_id,
-                product_code,
-                status_code,
-                disbursed_day,
-                maturity,
-                written_off,
-                principal,
-                currency,
-                rate,
-                term_months,
-                disbursed_at,
-                at_time(written_off, 2, 0, 0) if written_off else disbursed_at,
-                False,
-            ))
+            loan_rows.write(
+                (
+                    loan_id,
+                    f"LN{loan_id:012d}",
+                    application_id,
+                    customer_id,
+                    product_code,
+                    status_code,
+                    disbursed_day,
+                    maturity,
+                    written_off,
+                    principal,
+                    currency,
+                    rate,
+                    term_months,
+                    disbursed_at,
+                    at_time(written_off, 2, 0, 0) if written_off else disbursed_at,
+                    False,
+                )
+            )
 
             book.cash_events.append(
                 CashEvent(

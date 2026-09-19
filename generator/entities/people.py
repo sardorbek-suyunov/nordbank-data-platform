@@ -156,22 +156,24 @@ def generate(config: RunConfig, ref: RefData, streams: SubStreams, spool: Spool)
         book.kyc_status_code.append(kyc_status)
         book.device_count.append(lifecycle.device_count(rng, digital))
 
-        customer_rows.write((
-            customer_id,
-            f"CUS{customer_id:010d}",
-            full_name,
-            email,
-            phone,
-            national_identifier,
-            date_of_birth,
-            kyc_status,
-            risk_band,
-            signup,
-            country,
-            created_at,
-            created_at,
-            False,
-        ))
+        customer_rows.write(
+            (
+                customer_id,
+                f"CUS{customer_id:010d}",
+                full_name,
+                email,
+                phone,
+                national_identifier,
+                date_of_birth,
+                kyc_status,
+                risk_band,
+                signup,
+                country,
+                created_at,
+                created_at,
+                False,
+            )
+        )
 
         cities = vocab.cities_for(country)
         digits = vocab.postcode_digits(country)
@@ -179,40 +181,46 @@ def generate(config: RunConfig, ref: RefData, streams: SubStreams, spool: Spool)
         postal_code = str(rng.randrange(10 ** (digits - 1), 10**digits))
 
         address_id += 1
-        address_rows.write((
-            address_id,
-            customer_id,
-            "residential",
-            vocab.street_address(rng.randrange(64), rng.randrange(8), rng.randrange(1, 240)),
-            None,
-            city,
-            postal_code,
-            country,
-            signup,
-            None,
-            created_at,
-            created_at,
-            False,
-        ))
-
-        if bernoulli(rng, float(customers["correspondence_address_share"])):
-            other_city = cities[rng.randrange(len(cities))]
-            address_id += 1
-            address_rows.write((
+        address_rows.write(
+            (
                 address_id,
                 customer_id,
-                "correspondence",
+                "residential",
                 vocab.street_address(rng.randrange(64), rng.randrange(8), rng.randrange(1, 240)),
-                f"Flat {rng.randrange(1, 40)}" if bernoulli(rng, 0.4) else None,
-                other_city,
-                str(rng.randrange(10 ** (digits - 1), 10**digits)),
+                None,
+                city,
+                postal_code,
                 country,
                 signup,
                 None,
                 created_at,
                 created_at,
                 False,
-            ))
+            )
+        )
+
+        if bernoulli(rng, float(customers["correspondence_address_share"])):
+            other_city = cities[rng.randrange(len(cities))]
+            address_id += 1
+            address_rows.write(
+                (
+                    address_id,
+                    customer_id,
+                    "correspondence",
+                    vocab.street_address(
+                        rng.randrange(64), rng.randrange(8), rng.randrange(1, 240)
+                    ),
+                    f"Flat {rng.randrange(1, 40)}" if bernoulli(rng, 0.4) else None,
+                    other_city,
+                    str(rng.randrange(10 ** (digits - 1), 10**digits)),
+                    country,
+                    signup,
+                    None,
+                    created_at,
+                    created_at,
+                    False,
+                )
+            )
 
     return book
 

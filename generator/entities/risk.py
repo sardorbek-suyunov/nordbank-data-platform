@@ -77,21 +77,23 @@ class AlertWriter:
             else None
         )
 
-        self._rows.write((
-            alert_id,
-            f"ALR{alert_id:010d}",
-            transaction_id,
-            customer_id,
-            fraud_model.rule_for(rng, fraud_params, context),
-            disposition,
-            alerted_at,
-            dispositioned_at,
-            round(fraud_model.alert_score(rng, fraud_params, fraudulent), 8),
-            analyst,
-            alerted_at,
-            dispositioned_at or alerted_at,
-            False,
-        ))
+        self._rows.write(
+            (
+                alert_id,
+                f"ALR{alert_id:010d}",
+                transaction_id,
+                customer_id,
+                fraud_model.rule_for(rng, fraud_params, context),
+                disposition,
+                alerted_at,
+                dispositioned_at,
+                round(fraud_model.alert_score(rng, fraud_params, fraudulent), 8),
+                analyst,
+                alerted_at,
+                dispositioned_at or alerted_at,
+                False,
+            )
+        )
 
 
 class SessionWriter:
@@ -128,9 +130,13 @@ class SessionWriter:
 
         minutes = min(
             600.0,
-            max(0.5, 2.718281828 ** rng.gauss(
-                float(digital["session_minutes_mu"]), float(digital["session_minutes_sigma"])
-            )),
+            max(
+                0.5,
+                2.718281828
+                ** rng.gauss(
+                    float(digital["session_minutes_mu"]), float(digital["session_minutes_sigma"])
+                ),
+            ),
         )
         ended_at: dt.datetime | None = started_at + dt.timedelta(minutes=minutes)
         if bernoulli(rng, float(digital["unclosed_share"])) or ended_at > anchor_end:
@@ -145,18 +151,20 @@ class SessionWriter:
         else:
             ip_country = self._countries[rng.randrange(len(self._countries))]
 
-        self._rows.write((
-            session_id,
-            f"SES{session_id:012d}",
-            customer_id,
-            lifecycle.session_channel(rng, digital),
-            lifecycle.session_outcome(rng, digital),
-            started_at,
-            ended_at,
-            lifecycle.device_fingerprint(self._seed, customer_id, device_index),
-            lifecycle.ip_address(self._seed, customer_id, session_id),
-            ip_country,
-            started_at,
-            ended_at or started_at,
-            False,
-        ))
+        self._rows.write(
+            (
+                session_id,
+                f"SES{session_id:012d}",
+                customer_id,
+                lifecycle.session_channel(rng, digital),
+                lifecycle.session_outcome(rng, digital),
+                started_at,
+                ended_at,
+                lifecycle.device_fingerprint(self._seed, customer_id, device_index),
+                lifecycle.ip_address(self._seed, customer_id, session_id),
+                ip_country,
+                started_at,
+                ended_at or started_at,
+                False,
+            )
+        )

@@ -175,7 +175,7 @@ def _read_all_through_psql() -> dict[str, list[tuple[str, ...]]]:
     current: str | None = None
     for line in completed.stdout.splitlines():
         if line.startswith(TABLE_MARKER):
-            current = line[len(TABLE_MARKER):].strip()
+            current = line[len(TABLE_MARKER) :].strip()
             out[current] = []
         elif current is not None and line.strip():
             out[current].append(tuple(line.split(db.FIELD_SEPARATOR)))
@@ -199,9 +199,7 @@ def load(executor: Any = None) -> RefData:
         by_code: dict[str, dict[str, Any]] = {}
         for raw in raw_rows.get(table, []):
             if len(raw) != len(columns):
-                raise RefDataError(
-                    f"ref.{table}: expected {len(columns)} columns, got {len(raw)}"
-                )
+                raise RefDataError(f"ref.{table}: expected {len(columns)} columns, got {len(raw)}")
             row = {
                 column: convert(value)
                 for column, convert, value in zip(columns, converters, raw, strict=True)

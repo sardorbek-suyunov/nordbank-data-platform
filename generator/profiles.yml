@@ -6,8 +6,11 @@
 #
 # docs/generator_realism.md justifies each number and states what is deliberately unrealistic.
 # The values under `bands` are contracts that spec 003 invariants and acceptance criteria are
-# written against, so they also appear in that document for a reader to review; `make
-# docs-check` asserts the two agree rather than trusting that they do.
+# written against, so they also appear in that document for a reader to review. A document that
+# stated no bands could not be reviewed for whether its bands are sensible, which is its whole
+# purpose, so the duplication is unavoidable — and scripts/check_docs.py, which the `docs` CI
+# job runs, fails if the two disagree. One source per fact, and a mechanical check where two
+# representations are unavoidable (docs/specs/README.md).
 
 version: 1
 
@@ -608,6 +611,9 @@ defaults:
   # Contract bands. These are what spec 003's invariants and acceptance criteria assert, and
   # they are restated in docs/generator_realism.md for review. `make docs-check` fails if the
   # two disagree, so neither is maintained by hand against the other.
+  #
+  # Every entry here is restated in the table under "Contract bands" in
+  # docs/generator_realism.md, and check_docs.py compares the two.
   bands:
     fraud_rate: {min: 0.0005, max: 0.0015}
     alert_precision: {min: 0.42, max: 0.78}

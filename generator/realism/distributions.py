@@ -154,8 +154,7 @@ def benford_mad(counts: Sequence[int]) -> float:
     if total == 0:
         return float("inf")
     return math.fsum(
-        abs(observed / total - share)
-        for observed, share in zip(counts, BENFORD, strict=True)
+        abs(observed / total - share) for observed, share in zip(counts, BENFORD, strict=True)
     ) / len(BENFORD)
 
 
