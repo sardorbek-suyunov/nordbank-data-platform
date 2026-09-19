@@ -58,7 +58,34 @@ jobs:
           make schema-dump OUT=/tmp/schema-after.txt
           diff /tmp/schema-before.txt /tmp/schema-after.txt
 
+      # Spec 003 section 11. The anchor is pinned rather than defaulted to the run date,
+      # because the committed manifest is compared against this regeneration and an anchor that
+      # moved every midnight would fail the comparison daily for a reason that is not a change.
+      - name: Seed the ci profile
+        env:
+          NORDBANK_ENV: ci
+          NORDBANK_SEED: "42"
+          NORDBANK_ANCHOR_DATE: "2026-09-18"
+        run: make seed
+
+      - name: Verify the coherence invariants
+        env:
+          NORDBANK_ENV: ci
+          NORDBANK_ANCHOR_DATE: "2026-09-18"
+        run: make seed-verify
+
+      - name: Prove the load is deterministic against the committed manifest
+        env:
+          NORDBANK_ENV: ci
+          NORDBANK_SEED: "42"
+          NORDBANK_ANCHOR_DATE: "2026-09-18"
+        run: make seed-manifest CHECK=1
+
       - name: Integration tests
+        env:
+          NORDBANK_ENV: ci
+          NORDBANK_SEED: "42"
+          NORDBANK_ANCHOR_DATE: "2026-09-18"
         run: make test-integration
 
       - name: Collect compose logs
