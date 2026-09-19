@@ -23,37 +23,65 @@ from .tables import TABLE_COLUMNS
 
 # Written and read by psql, which is UTF-8 in this stack.
 ENCODING = "utf-8"
+
+# One mebibyte rather than the default eight kibibytes. The full profile writes gigabytes
+# a row at a time, and on this platform the syscall per buffer flush dominated generation:
+# the dev profile ran at about 8,000 rows a second against 62,000 for the ci profile, whose
+# whole output fits in the page cache. The buffer is the difference.
+WRITE_BUFFER_BYTES = 1 << 20
 NEEDS_QUOTING = ('"', ",", "\n", "\r")
 
 
 def format_value(value: Any) -> str:
-    """One CSV field for `COPY ... WITH (FORMAT CSV)`."""
+    """One CSV field for `COPY ... WITH (FORMAT CSV)`.
+
+    Written for speed, because it is the hot path: a profile of the ci run put this function and
+    the two generator expressions that fed it at about half of total generation time, ahead of
+    every random draw in the program. The shape it is written in follows from that.
+
+    Dispatch is on `value.__class__` rather than `isinstance`, which is an exact match and skips
+    the subclass walk; the order is by how often each type actually appears in a row. `bool` is
+    checked before `int` even though it is a subclass of one, because an exact class match on
+    `int` never sees a bool and the audit columns make booleans common. The quoting test is four
+    literal `in` tests rather than `any()` over a tuple, which keeps it in C. The `isinstance`
+    tail catches anything the exact checks missed, so behaviour is unchanged for subclasses.
+    """
     if value is None:
         return ""
-    if value is True:
-        return "t"
-    if value is False:
-        return "f"
-    if isinstance(value, Decimal | int):
+
+    cls = value.__class__
+    if cls is str:
+        if '"' in value or "," in value or "\n" in value or "\r" in value:
+            return '"' + value.replace('"', '""') + '"'
+        # An empty string that is genuinely a value, not an absent one. COPY reads an unquoted
+        # empty field as NULL, so this is the difference between the two.
+        return value if value else '""'
+    if cls is Decimal or cls is int:
         return str(value)
-    if isinstance(value, dt.datetime):
+    if cls is bool:
+        return "t" if value else "f"
+    if cls is dt.datetime:
         # Always aware and always UTC: conventions.md prohibits naive datetimes, and the column
         # is timestamptz.
         return value.isoformat(sep=" ")
+    if cls is dt.date:
+        return value.isoformat()
+
+    if isinstance(value, bool):
+        return "t" if value else "f"
+    if isinstance(value, Decimal | int):
+        return str(value)
+    if isinstance(value, dt.datetime):
+        return value.isoformat(sep=" ")
     if isinstance(value, dt.date):
         return value.isoformat()
-    text = str(value)
-    if any(character in text for character in NEEDS_QUOTING):
-        escaped = text.replace('"', '""')
-        return f'"{escaped}"'
-    if text == "":
-        # An empty string that is genuinely a value, not an absent one.
-        return '""'
-    return text
+    return format_value(str(value))
 
 
 def format_row(values: Sequence[Any]) -> str:
-    return ",".join(format_value(value) for value in values) + "\n"
+    # A list comprehension rather than a generator expression: join has to materialise the
+    # sequence either way, and building the list directly is measurably faster.
+    return ",".join([format_value(value) for value in values]) + "\n"
 
 
 class TableSpool:
@@ -66,13 +94,13 @@ class TableSpool:
         self.path = path
         self.columns = TABLE_COLUMNS[table]
         self.rows = 0
-        self._handle = path.open("w", encoding=ENCODING, newline="")
+        self._handle = path.open(
+            "w", encoding=ENCODING, newline="", buffering=WRITE_BUFFER_BYTES
+        )
 
     def write(self, values: Sequence[Any]) -> None:
         if len(values) != len(self.columns):
-            raise ValueError(
-                f"{self.table}: {len(values)} values for {len(self.columns)} columns"
-            )
+            raise ValueError(f"{self.table}: {len(values)} values for {len(self.columns)} columns")
         self._handle.write(format_row(values))
         self.rows += 1
 

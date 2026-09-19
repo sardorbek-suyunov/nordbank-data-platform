@@ -30,6 +30,8 @@ second execution environment.
 
 from __future__ import annotations
 
+import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -51,6 +53,23 @@ import source_db_exec as db  # noqa: E402
 LEDGER_ENTRIES = "gl_entries"
 LEDGER_BATCHES = "gl_transactions"
 
+# Block size for handing a spool file to psql, matching the spool's own write buffer.
+COPY_BLOCK_BYTES = 1 << 20
+
+# How often the ledger load re-analyses. The first one is load-bearing; the rest keep the
+# statistics from going stale as the table grows through the chunks.
+ANALYZE_EVERY = 12
+
+# Where the dropped foreign key definitions are parked for the duration of a load.
+#
+# The load drops them and restores them in a `finally`, which covers an exception. It
+# does not cover the process being killed, and a killed loader leaves `core` with no
+# foreign keys at all: `make schema-apply` will not put them back, because the tables
+# already exist and `create table if not exists` does nothing. Invariant 12 is what
+# notices, and this journal is what repairs it — the next load restores from it before
+# doing anything else.
+JOURNAL = ROOT / "data" / "generator" / "dropped-constraints.json"
+
 
 class LoadError(Exception):
     """Raised when the database refused something. The load stops rather than continuing."""
@@ -63,6 +82,7 @@ class LoadReport:
     total_seconds: float = 0.0
     ledger_chunks: int = 0
     foreign_keys_restored: int = 0
+    foreign_keys_repaired: int = 0
 
     @property
     def rows(self) -> int:
@@ -116,8 +136,13 @@ def _stream_session(
             for table, lines in blocks:
                 columns = ", ".join(TABLE_COLUMNS[table])
                 write(f"copy core.{table} ({columns}) from stdin with (format csv);\n")
-                for line in lines:
-                    write(line)
+                if hasattr(lines, "read"):
+                    # A spool file: hand it over in large blocks. Writing a line at a
+                    # time costs one pipe write per row, which at the full profile is
+                    # tens of millions of syscalls for no reason.
+                    shutil.copyfileobj(lines, process.stdin, COPY_BLOCK_BYTES)
+                else:
+                    write("".join(lines))
                 write("\\.\n")
             if postamble:
                 write(postamble)
@@ -165,6 +190,96 @@ def _batched_entry_chunks(path: Path, chunk_rows: int) -> Iterator[list[str]]:
         yield chunk
 
 
+def _write_journal(constraints: list[tuple[str, str, str]]) -> None:
+    JOURNAL.parent.mkdir(parents=True, exist_ok=True)
+    JOURNAL.write_text(json.dumps(constraints, indent=2), encoding="utf-8")
+
+
+def _clear_journal() -> None:
+    JOURNAL.unlink(missing_ok=True)
+
+
+def restore_dropped_constraints() -> int:
+    """Put back any foreign key a previous load dropped and never restored.
+
+    Returns the number restored. Safe to call when there is nothing to do, and safe to
+    call twice: a constraint that is already present is skipped rather than re-added.
+    """
+    if not JOURNAL.exists():
+        return 0
+    journalled = [tuple(entry) for entry in json.loads(JOURNAL.read_text(encoding="utf-8"))]
+    present = {name for _, name, _ in _foreign_keys()}
+    missing = [entry for entry in journalled if entry[1] not in present]
+    if missing:
+        _run_psql(
+            "".join(
+                f"alter table core.{table} add constraint {name} {definition};\n"
+                for table, name, definition in missing
+            )
+        )
+    _clear_journal()
+    return len(missing)
+
+
+def _load_ledger_entries(path: Path, chunk_rows: int) -> tuple[int, int]:
+    """Load the ledger entries as chunks of whole batches, all through one psql session.
+
+    Each chunk is its own transaction, because the deferred balance trigger queues one event per
+    row and the queue is backend memory that does not spill to disk. They share a session
+    because they do not need separate ones: a process launch inside a container costs about
+    0.6 s, and forty-eight of them is a minute spent on nothing.
+
+    `ANALYZE` runs on the first chunk and then every `ANALYZE_EVERY` chunks. The first one is
+    what matters and is not optional — on a freshly truncated table the planner has no
+    statistics, the trigger function's cached plan scans the whole table once per row, and the
+    commit becomes quadratic (ADR 0011 measured 18 s at 20,000 rows and 300 s at 80,000). It
+    commits, so later chunks in later sessions plan against real statistics. The periodic repeat
+    keeps them from going stale as the table grows, which costs a second and removes the
+    question.
+    """
+    chunks = rows = 0
+    columns = ", ".join(TABLE_COLUMNS[LEDGER_ENTRIES])
+    command = db._psql_command(False, [])
+
+    with (
+        tempfile.TemporaryFile(mode="w+", encoding="utf-8") as out,
+        tempfile.TemporaryFile(mode="w+", encoding="utf-8") as err,
+    ):
+        process = subprocess.Popen(  # noqa: S603
+            command,
+            stdin=subprocess.PIPE,
+            stdout=out,
+            stderr=err,
+            text=True,
+            encoding="utf-8",
+            cwd=ROOT,
+        )
+        assert process.stdin is not None
+        write = process.stdin.write
+        try:
+            # Chunks are written as they are read. Building the whole script first would hold
+            # the entire ledger in memory, which is the thing the spool exists to avoid.
+            for chunk in _batched_entry_chunks(path, chunk_rows):
+                chunks += 1
+                rows += len(chunk)
+                write("begin;\n")
+                write(f"copy core.{LEDGER_ENTRIES} ({columns}) from stdin with (format csv);\n")
+                write("".join(chunk))
+                write("\\.\n")
+                if chunks == 1 or chunks % ANALYZE_EVERY == 0:
+                    write(f"analyze core.{LEDGER_ENTRIES};\n")
+                write("commit;\n")
+        finally:
+            process.stdin.close()
+        if process.wait() != 0:
+            out.seek(0)
+            err.seek(0)
+            raise LoadError(
+                f"ledger load failed across {chunks} chunk(s):\n{out.read()}\n{err.read()}"[:2000]
+            )
+    return chunks, rows
+
+
 def truncate_core() -> None:
     """Empty every `core` table. `ref` and `platform` are seeded and are not touched."""
     tables = ", ".join(f"core.{table}" for table in LOAD_ORDER)
@@ -180,14 +295,22 @@ def load(config: RunConfig, spool: Spool) -> LoadReport:
 
     db.require_stack()
 
+    # A previous load that was killed rather than raised leaves its constraints off. Put
+    # them back before reading the catalogue, or this load would journal an already
+    # incomplete set and make the gap permanent.
+    repaired = restore_dropped_constraints()
+    if repaired:
+        report.foreign_keys_repaired = repaired
+
     # One session: empty the core tables and take the foreign keys off.
     constraints = _foreign_keys() if drop_fks else []
+    if constraints:
+        _write_journal(constraints)
     tables = ", ".join(f"core.{table}" for table in LOAD_ORDER)
     _run_psql(
         f"truncate table {tables} restart identity;\n"
         + "".join(
-            f"alter table core.{table} drop constraint {name};\n"
-            for table, name, _ in constraints
+            f"alter table core.{table} drop constraint {name};\n" for table, name, _ in constraints
         )
     )
 
@@ -217,16 +340,7 @@ def load(config: RunConfig, spool: Spool) -> LoadReport:
         entries_path = spool.path(LEDGER_ENTRIES)
         if entries_path.exists():
             ledger_started = time.perf_counter()
-            chunks = rows = 0
-            for chunk in _batched_entry_chunks(entries_path, chunk_rows):
-                chunks += 1
-                rows += len(chunk)
-                _stream_session(
-                    [(LEDGER_ENTRIES, iter(chunk))],
-                    preamble="begin;\n",
-                    postamble="analyze core.gl_entries;\ncommit;\n",
-                    label=f"ledger chunk {chunks}",
-                )
+            chunks, rows = _load_ledger_entries(entries_path, chunk_rows)
             report.ledger_chunks = chunks
             report.counts[LEDGER_ENTRIES] = rows
             report.seconds_by_table[LEDGER_ENTRIES] = time.perf_counter() - ledger_started
@@ -241,6 +355,7 @@ def load(config: RunConfig, spool: Spool) -> LoadReport:
         )
         _run_psql(restore + sequence_sync_sql())
         report.foreign_keys_restored = len(constraints)
+        _clear_journal()
 
     # The sequences were synchronised in the same session that restored the constraints.
     report.counts.update(count_rows())
