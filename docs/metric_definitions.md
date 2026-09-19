@@ -244,6 +244,27 @@ underwriting decisions go wrong.
 
 **Used by.** Q8.
 
+### The default rate must be conditioned on a vintage and a horizon
+
+An overall default rate — defaulted loans over all loans — is not a stable measure and should
+not be the one Q7 and Q8 publish. Its denominator changes composition every month as new loans
+are written, and a loan that has existed for two months has had almost no opportunity to
+default. A book that is growing therefore shows a *falling* default rate with no change in
+underwriting at all, and a book that stops lending shows a rising one.
+
+**The measure to use is a fixed-horizon rate on seasoned vintages: the twelve-month default
+rate, over loans originated at least twelve months before the reporting date.** Every loan in
+that denominator has had the same opportunity to default, so two vintages are comparable to each
+other and a change in the rate is a change in credit quality rather than in the growth rate.
+The horizon is twelve months because that is where the seasoning curve has delivered most of its
+hazard; a longer horizon is more complete and excludes more recent vintages, which is the
+trade-off to state if it is ever changed.
+
+The overall rate is kept as a loose sanity check on the generated book — it appears as the
+`default_rate_overall` band in `docs/generator_realism.md` — and is explicitly not the measure
+the marts report. This is a forward note: **Q7 and Q8 implement the vintage-conditioned measure
+at M6**, and `mart_credit_delinquency` and `mart_credit_underwriting` declare it.
+
 ## Approval rate
 
 **Rule.** `approved applications / decided applications`, where decided is approved plus
@@ -272,6 +293,19 @@ Alerts still open at the end of M are excluded and counted separately as a pendi
 Attributing by disposition month is deliberate: dispositions arrive days after the alert, and
 attributing by alert date would force last month's published precision to change every time
 an analyst closes an old case.
+
+**Recall is not reported, and that is a property of the domain rather than a limitation of the
+platform.** Precision and the false positive rate are computable because their denominator is
+the set of alerts, which the bank has. Recall's denominator is *all fraud*, which no bank has:
+it includes fraud that was never detected, never reported by the customer, and never
+distinguished from a legitimate transaction. A recall figure could only be produced by assuming
+the answer to the question it claims to measure.
+
+This is why Q10 measures precision and the false positive rate and makes no claim about recall.
+It also means the synthetic source cannot be used to smuggle the number back in: the generator
+knows which transactions it made fraudulent, but that label is never written to the database —
+only the alert and its disposition are — so what a model or a mart sees is exactly what a bank
+sees. Any future measure that needs a fraud denominator has to say what it is assuming.
 
 **Source columns.** `sl_fraud_alerts.rule_id`, `sl_fraud_alerts.disposition`,
 `sl_fraud_alerts.dispositioned_at`, `sl_fraud_alerts.alerted_at`. The alert instant is

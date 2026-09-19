@@ -28,17 +28,34 @@ loader, fourteen coherence invariants and a run manifest. `make seed`, `make see
 | `ci` | 500 | 6 months | 41,393 | 209,190 | 11.5 s | 67 MB |
 | `dev` | 5,000 | 3 years | 2,321,273 | 11,468,955 | 327.6 s | 2,819 MB |
 
-Both measured on a freshly nuked and schema-applied stack. The split between generating and
-loading, taken on the run immediately before the nuke and on identical data, is 3.4 s and 8.2 s
-at `ci` and 167.6 s and 154.6 s at `dev`.
+Both measured on a freshly nuked and schema-applied stack.
 
-`ci` is inside its twenty second budget with room. `dev` is 28 seconds over its five minute
-target, which is reported rather than tuned away.
+`ci` is inside its twenty second budget with room. `dev` sits between 301 s and 328 s depending
+on what else the machine is doing, against a target that spec 003 now sets at six minutes. The
+target moved because it was set by measurement rather than by an estimate made before anything
+was built, and because two optimisation passes had already taken `dev` from about 23 minutes to
+5.5. Where the remaining time goes, measured phase by phase on a quiet machine:
 
-`full` was not run to completion and nothing here claims it was. Projected from the `dev`
-measurement it is about eighty times the work: roughly 900 million rows and several hours. That
-projection is also what shows the specification's three profile targets to be mutually
-inconsistent, which is recorded as an open decision in [project_state.md](../project_state.md).
+| Phase | | Rows |
+|---|---|---|
+| Generate | 144.9 s | 11,468,955 |
+| `COPY`, the fourteen ordinary tables | 70.6 s | 6,553,988 |
+| `COPY`, the ledger in 50 chunks | 68.9 s | 4,914,967 |
+| Revalidate 59 foreign keys | 11.9 s | |
+| Truncate, drop constraints, `setval`, count | 4.9 s | |
+| **Total** | **301.2 s** | |
+
+Generation is 48 percent and `COPY` is 46 percent: Python building rows and PostgreSQL ingesting
+them. Foreign key revalidation, the thing the loader turns off to buy speed, is 4 percent, and
+every remaining piece of orchestration is 2 percent between them. There is no overhead left to
+remove — reducing this further means a different generation strategy or a different transport,
+and neither is worth 27 seconds.
+
+`full` was not run and nothing here claims it was. Its customer count was set by this
+measurement rather than the other way round: 250,000 customers at the validated per-customer
+intensity projects to roughly 190 million transactions, so the profile is 30,000 customers,
+projecting to about 23 million transactions and 115 million rows. Measuring it is an outstanding
+follow-up in [project_state.md](../project_state.md).
 
 ## What the measurements changed
 
@@ -63,12 +80,17 @@ chunk figure survives, for a different reason than it was chosen for.
 the loader drops the first and keeps the second. Both were measured rather than assumed, and the
 8 percent is the more useful number: it is the optimisation that looked obvious and did not pay.
 
-**Chi-square is the wrong test for Benford conformity here.** It measures significance rather
-than effect size and its power grows with the sample, so a fixed critical value is stricter at a
-larger profile — the opposite of the scale-invariance it was chosen for. The same distribution
-measures 68.6 at `ci` and 4,185.7 at `dev` while its mean absolute deviation barely moves,
-0.00546 against 0.00551, both inside Nigrini's 0.006 threshold for close conformity. Invariant 14
-asserts the deviation and reports the chi-square.
+**A significance test is the wrong instrument for a quality gate.** Its power grows with the
+sample, so a fixed critical value gets stricter as the data grows and converges on always-fail
+at scale. The same first-digit distribution measures a chi-square of 68.6 at `ci` and 4,251.1 at
+`dev` — sixty-two times larger — while its mean absolute deviation moves from 0.00546 to
+0.00549, both inside Nigrini's 0.006 threshold for close conformity. Invariant 14 asserts the
+deviation and reports the chi-square beside it.
+
+The principle generalises and is written into `generator_realism.md` as a general one, because
+it governs every threshold the data quality framework sets at M7: gate on the size of the
+departure that matters, report the confidence that a departure exists, and never use the second
+as the first.
 
 **Process launches and buffer sizes dominated both halves.** Reaching the database means
 launching a process inside a container, at 0.589 s each: one session per reference table, per
@@ -118,6 +140,15 @@ Recorded as amendments on [spec 003](../specs/003-historical-load.md), each with
 - Invariant 14 asserts Benford on card purchases only, by mean absolute deviation.
 - Invariant 13 was replaced by a login-to-transaction coverage share, because the original
   required an unrealism to satisfy.
+- Invariant 14 gates on effect size rather than on a significance statistic.
+- Section 2's sub-stream independence claim is corrected: the random streams stay independent
+  and every entity not causally downstream of lending is byte-identical, but the stronger claim
+  in the approved wording cannot hold, because invariant 4 forces a loan disbursement to be a
+  transaction or a payment.
+- Alert recall is removed from acceptance criterion 8. Its denominator is all fraud, which no
+  bank has, so it is unobservable in principle rather than unmeasured in practice.
+- The `full` profile is 30,000 customers rather than 250,000, and the `dev` runtime target is
+  six minutes rather than five. Both are set by measurement.
 
 Spec 002 carries two amendments of its own: design rule 4 is refined, because the trigger is
 `before update` only and a silent loader would stamp five years of history with the load

@@ -181,22 +181,33 @@ source has no `is_recurring` flag and inventing one would put a generator detail
 schema. The rule excludes a few genuinely one-off purchases that happen to cost 9.99, which is
 conservative in the direction that matters.
 
-### Why conformity is measured by deviation rather than by chi-square
+### Gate on effect size, report significance beside it
 
-The approved ruling asked for a chi-square critical value at 8 degrees of freedom. That was
-implemented, measured, and replaced, and the reason is a property of the test rather than of the
-data.
+This is a principle rather than a local choice about Benford, and it will apply to every
+threshold the data quality framework sets at M7.
 
-**Chi-square measures significance, not effect size, and its power grows with the sample.** A
-fixed critical value is therefore *stricter* at a larger profile — the opposite of the
-scale-invariance it was chosen for. The same distribution that passes at `ci` fails at `dev` for
-no reason but the row count. Measured on the `ci` profile: a mean absolute deviation of 0.00546
-across 22,673 card purchase amounts, which is inside Nigrini's 0.006 threshold for *close
-conformity*, against a chi-square of 68.6 on a critical value of 26.1. At `dev` the same
-distribution produces a chi-square roughly sixty times larger.
+**A significance test is the wrong instrument for a quality gate.** Its power grows with the
+sample, so a fixed critical value gets stricter as the data grows and converges on always-fail
+at scale. The question a gate asks is "is this far enough from expected to act on", which is a
+question about effect size. The question a significance test answers is "is this difference
+distinguishable from noise", and at ten million rows every difference is.
 
-Invariant 14 therefore asserts the mean absolute deviation, which is the conformity measure
-Benford analysis actually uses, and reports the chi-square statistic beside it.
+So: **gate on a measure of effect size, and report the significance statistic alongside it.**
+The effect size says whether to act; the statistic says how confident the measurement is, which
+is worth recording and worth nothing as a threshold.
+
+Invariant 14 is the first application. The approved wording asked for a chi-square critical
+value at 8 degrees of freedom; it was implemented, measured, and replaced. The same distribution
+measures a chi-square of **68.6 at `ci` and 4,251.1 at `dev`** — sixty-two times larger — while
+its mean absolute deviation moves from 0.00546 to 0.00549. The deviation is the thing that has
+not changed, because the distribution has not changed; only the sample has. Invariant 14
+therefore asserts the mean absolute deviation, which is the conformity measure Benford analysis
+actually uses, with Nigrini's 0.006 threshold for *close conformity*, and reports the chi-square
+statistic beside it.
+
+The same shape of reasoning applies to a freshness threshold, a row count drift check, a null
+rate check and every other gate M7 will define: choose the threshold on the size of the
+departure that matters, not on the confidence that a departure exists.
 
 ## Card presentment
 
@@ -432,7 +443,6 @@ These are what spec 003's invariants and acceptance criteria assert. They are re
 |---|---|---|
 | `fraud_rate` | 0.0005 | 0.0015 |
 | `alert_precision` | 0.42 | 0.78 |
-| `alert_recall` | 0.50 | 0.74 |
 | `confirmed_fraud_rate_among_alerts` | 0.42 | 0.78 |
 | `approval_rate_overall` | 0.55 | 0.78 |
 | `default_rate_overall` | 0.004 | 0.075 |
