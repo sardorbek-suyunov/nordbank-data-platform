@@ -34,7 +34,7 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "PTH"]
 
 [tool.pytest.ini_options]
-testpaths = ["airflow/tests"]
+testpaths = ["airflow/tests", "generator/tests"]
 markers = [
     "dags: needs an Airflow installation to import the DAG files",
     "integration: needs a running stack",
