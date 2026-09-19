@@ -437,6 +437,11 @@ defaults:
     # Detection is imperfect in both directions, which is the whole point: a detector that
     # fires on exactly the fraudulent transactions makes Q10 report 100 percent precision and
     # measure nothing.
+    # Recall is configured here and asserted by unit test, and it is deliberately not a
+    # contract band. It cannot be measured from the loaded database, because its
+    # denominator is all fraud — including fraud nobody ever detected or reported — and
+    # the database stores only alerts and their dispositions, which is what a bank has.
+    # See the alert performance entry in docs/metric_definitions.md.
     detection_recall: 0.62
     false_alert_rate: 0.00042
     # Alert scores. Confirmed fraud scores higher on average but the distributions overlap,
@@ -617,7 +622,6 @@ defaults:
   bands:
     fraud_rate: {min: 0.0005, max: 0.0015}
     alert_precision: {min: 0.42, max: 0.78}
-    alert_recall: {min: 0.50, max: 0.74}
     confirmed_fraud_rate_among_alerts: {min: 0.42, max: 0.78}
     approval_rate_overall: {min: 0.55, max: 0.78}
     # Observed default at the anchor, not lifetime default. They are different numbers and
@@ -662,7 +666,16 @@ profiles:
     history_months: 36
     assert_statistical_bands: true
 
+  # full exists to prove that incremental beats full refresh and to exercise the
+  # single-writer constraint under load. Thirty thousand customers over five years
+  # demonstrates both as well as a quarter of a million would, and lands on the tens of
+  # millions of transactions the specification asks for.
+  #
+  # The customer count is what moves, not the per-customer intensity. Intensity is a
+  # validated realism parameter: lowering it to hit a row count would make the full
+  # profile a less realistic bank than the dev profile, which is the opposite of what a
+  # larger profile is for.
   full:
-    customers: 250000
+    customers: 30000
     history_months: 60
     assert_statistical_bands: true

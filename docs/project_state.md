@@ -187,30 +187,34 @@ Deferred work, with the milestone that owns it:
 | Power BI, Streamlit, the `exports/` snapshot task | M9 |
 | BigQuery target, Terraform | M10 |
 
-**The three profile targets in spec 003 section 1 are not mutually consistent, and the
-resolution is open.** The specification asks for tens of thousands of transactions at `ci`, two
-to four million at `dev`, and tens of millions at `full`. The first two are met and measured.
-The third cannot be at any single per-account activity rate: the step from `dev` to `full` is
-about eighty times in account-months, fifty times the customers and one and two-thirds the
-history, and eighty times a `dev` figure that already sits in its stated band is hundreds of
-millions rather than tens.
+## Follow-ups outstanding from M2
 
-The generator was not adjusted to protect either number, per spec 003 section 1. `full` was not
-run to completion and nothing claims it was; projected from the `dev` measurement it is roughly
-900 million rows and several hours. Three ways out, none taken here:
+M2 is complete and merged. Two things it identified are deliberately not done, and neither
+blocks M3.
 
-- Accept `full` as hundreds of millions and correct the specification's figure. It is the
-  profile with no runtime target, and a source system that large is the point of having it.
-- Lower the per-account activity rate, which would take `dev` below its stated band. The `dev`
-  band is the precise one, so this trades a stated number for a vague one.
-- Shorten the `full` history or reduce its customer count, which changes what the profile is
-  for rather than what it contains.
+**1. The `full` profile has not been run.** Its customer count was reset from 250,000 to 30,000
+by measurement: 250,000 at the per-customer intensity the `dev` profile validates projects to
+roughly 190 million transactions, which is hundreds of millions of rows rather than the tens of
+millions the specification targets. What moved is the customer count, not the intensity —
+intensity is a validated realism parameter, and lowering it would make `full` a less realistic
+bank than `dev`, which is the opposite of what a larger profile is for.
 
-The first is the honest reading of "do not adjust the generator to protect a number in a
-document", but it is a change to an approved specification and is left for a decision rather
-than made here.
+At 30,000 customers over five years the projection is about 23 million transactions, 115 million
+rows and 28 GB of source database, arithmetic on the `dev` measurement rather than a
+measurement. Running it and recording the real figures is the follow-up. Spec 003 carries the
+change as an amendment and `architecture.md` marks every `full` figure as projected.
 
-Open decisions, which block only the marts that consume them:
+**2. Q7 and Q8 need a vintage-conditioned default rate at M6.** An overall default rate is not a
+stable measure: its denominator's seasoning changes every month, so a growing book shows a
+falling default rate with no change in underwriting at all. `metric_definitions.md` now specifies
+the measure the marts implement — the twelve-month default rate over vintages originated at
+least twelve months before the reporting date — and keeps the overall rate as a loose sanity
+check on the generated book rather than as a published figure. `mart_credit_delinquency` and
+`mart_credit_underwriting` declare it when they are built.
+
+## Open decisions
+
+These block only the marts that consume them:
 
 - **Commercial card interchange** remains undecided and should stay that way. Commercial rates
   are negotiated bilaterally and have no published figure, so any number the platform invented

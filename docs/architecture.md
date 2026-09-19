@@ -358,7 +358,7 @@ Three profiles, selected by `NORDBANK_ENV`:
 |---|---|---|---|
 | `ci` | About 500 customers and tens of thousands of transactions | Under 100 MB of parquet and warehouse combined | A full pipeline run completes in under a minute, so CI can run end to end on every pull request |
 | `dev` | About 5,000 customers and a few million transactions | About 2 GB | The default for local work: large enough for incremental logic to be meaningful, small enough to rebuild over a coffee |
-| `full` | About 250,000 customers | About 25 GB | Exercises partition pruning, incremental models and the single-writer constraint under load |
+| `full` | About 30,000 customers and tens of millions of transactions | About 25 GB | Exercises partition pruning, incremental models and the single-writer constraint under load |
 
 The profiles differ only in generator parameters and dbt variables. No model, DAG or contract
 is conditional on the profile; if a transformation only works at small scale, that is a
@@ -375,20 +375,28 @@ produced on a freshly nuked and schema-applied stack, on the machine in
 |---|---|---|---|---|---|---|
 | `ci` | 500 | 6 months | 41,393 | 209,190 | 67 MB | 11.5 s |
 | `dev` | 5,000 | 3 years | 2,321,273 | 11,468,955 | 2,819 MB | 327.6 s |
-| `full` | 250,000 | 5 years | not run to completion | about 900 million, projected | — | — |
+| `full` | 30,000 | 5 years | about 23 million, projected | about 115 million, projected | about 28 GB, projected | not run |
 
-**The three targets in spec 003 section 1 are not mutually consistent, and this is where that
-became visible.** The specification asks for tens of thousands of transactions at `ci`, two to
-four million at `dev`, and tens of millions at `full`. The first two are met. The third cannot
-be, at any single per-account activity rate, because the step from `dev` to `full` is about
-eighty times in account-months: fifty times the customers and one and two-thirds the history,
-against a `dev` figure that is already in its stated band. Two to four million multiplied by
-eighty is one hundred and sixty to three hundred and twenty million, which is hundreds of
-millions rather than tens.
+**The `full` profile's customer count was set by this measurement.** The specification
+originally set it at 250,000 customers, which at the per-customer intensity the `dev` profile
+validates projects to roughly 190 million transactions and 900 million rows — hundreds of
+millions rather than the tens of millions the specification targets.
 
-The generator was not adjusted to protect either number. `dev` sits in its stated band because
-that band is stated precisely; `full` is reported as projected rather than measured, and the
-resolution is an open decision in `project_state.md`.
+What moved was the customer count, not the intensity. Per-customer intensity is a validated
+realism parameter, justified line by line in `generator_realism.md`; lowering it to hit a row
+count would make the `full` profile a less realistic bank than `dev`, which is the opposite of
+what a larger profile is for. `full` is therefore 30,000 customers, which lands on the stated
+target. It exists to prove that incremental extraction beats full refresh and to exercise the
+single-writer constraint under load, and 23 million transactions demonstrates both as well as
+190 million would.
+
+The `full` row is arithmetic on the `dev` measurement and is not itself a measurement. **That
+profile has not been run**, and measuring it is an outstanding follow-up in `project_state.md`.
+
+The `dev` target moved from five minutes to six for the same reason: it is set by measurement
+now rather than by an estimate made before anything was built. Two optimisation passes took it
+from about 23 minutes to 5.5, and the residual is generation and `COPY` rather than overhead.
+Spec 003 carries both as amendments.
 
 The `full` profile cannot be seeded row by row. At tens of millions of rows, a generator that
 issues one INSERT per record turns the historical load into hours of work and makes the

@@ -149,6 +149,8 @@ def test_bands_are_readable_and_ordered():
         "confirmed_fraud_rate_among_alerts",
         "login_precedes_transaction_share",
     ):
+        # alert_recall is deliberately absent: it is unobservable in the loaded database,
+        # so a band on it could never be checked against anything.
         low, high = profile.band(name)
         assert low <= high
     assert profile.limit("benford_mad_max") > 0

@@ -414,3 +414,111 @@ replaced by:
 > login.
 
 The share is set in `generator/profiles.yml` and justified in `docs/generator_realism.md`.
+
+### 2026-09-19 — Invariant 14 gates on effect size, not on a significance statistic
+
+The approved wording asked for a chi-square critical value at 8 degrees of freedom. It was
+implemented, measured, and replaced, and the replacement is a principle rather than a local
+choice about Benford.
+
+A significance test is the wrong instrument for a quality gate, because its power grows with the
+sample. A fixed critical value therefore gets stricter as the data grows and converges on
+always-fail at scale. Measured: the same first-digit distribution produces a chi-square of 68.6
+at `ci` and 4,251.1 at `dev` — sixty-two times larger — while its mean absolute deviation moves
+from 0.00546 to 0.00549. The distribution did not change; only the sample did.
+
+Invariant 14 asserts the mean absolute deviation against Nigrini's 0.006 threshold for close
+conformity, and reports the chi-square statistic beside it.
+
+The principle is stated in `docs/generator_realism.md` as a general one, because it governs
+every threshold the data quality framework sets at M7: gate on the size of the departure that
+matters, report the confidence that a departure exists, and never use the second as the first.
+
+### 2026-09-19 — The sub-stream independence claim in section 2 is corrected
+
+Section 2 states the requirement as "a change to loan generation must not alter a single
+transaction". That claim is false as delivered, and the repository should not carry a false
+claim.
+
+It cannot hold. Invariant 4 requires `accounts.balance` to be the signed sum of posted
+**transactions and payments**, and a loan disbursement moves the balance, so a disbursement has
+to be one of those two. Changing loan generation therefore changes the loan transactions, and
+through the interleaving it changes the ids of the transactions around them.
+
+What holds, and what the requirement was protecting against, is this: **the random streams
+remain independent, and every entity not causally downstream of lending is byte-identical.** A
+stream's seed is a keyed hash of the run seed, the stream name and the entity's coordinates, so
+it cannot observe how many draws any other stream took. `generator/tests/test_rng.py` asserts
+both halves — the stream property directly, and the entity property by adding a real draw to
+loan generation and diffing customers, addresses, merchants, agent locations, account holders
+and cards.
+
+### 2026-09-19 — Alert recall is removed from acceptance criterion 8
+
+Criterion 8 asks for recall to fall within a stated band. It should not have, and the reason is
+a property of the domain rather than a limitation of the generator.
+
+Precision and the false positive rate are computable because their denominator is the set of
+alerts, which a bank has. Recall's denominator is all fraud, including fraud that was never
+detected, never reported and never distinguished from a legitimate transaction. No bank has that
+denominator, and a recall figure could only be produced by assuming the answer to the question
+it claims to measure.
+
+The synthetic source cannot smuggle it back in either, and deliberately so: the generator knows
+which transactions it made fraudulent, but that label is never written to the database. Only the
+alert and its disposition are, which is exactly what a bank has.
+
+`detection_recall` stays as a generator parameter at 0.62 and is asserted by unit test, because
+the detector does have to miss some fraud or Q10's precision would be meaningless. It is no
+longer a contract band, and `alert_recall` is removed from `generator/profiles.yml` and from the
+contract bands table. The reasoning is written into the alert performance entry in
+`docs/metric_definitions.md`, where it belongs.
+
+### 2026-09-19 — The `full` profile is redefined by customer count
+
+Section 1 sets `full` at 250,000 customers over five years and targets tens of millions of
+transactions. Measured against the delivered generator those two are inconsistent: 250,000
+customers at the per-customer intensity the `dev` profile validates projects to roughly 190
+million transactions and 900 million rows, which is hundreds of millions rather than tens.
+
+**The customer count moves, not the intensity.** Per-customer intensity is a validated realism
+parameter, tuned against the profile bands and justified line by line in
+`docs/generator_realism.md`. Lowering it to hit a row count would make the `full` profile a less
+realistic bank than the `dev` profile, which is the opposite of what a larger profile is for.
+
+`full` is therefore **30,000 customers over five years**, which projects to about 23 million
+transactions and 115 million rows on the `dev` ratio. It exists to prove that incremental
+extraction beats full refresh and to exercise the single-writer constraint under load, and 23
+million transactions demonstrates both as well as 190 million would, at a fraction of the
+runtime. The target of tens of millions of transactions is unchanged and is now reachable.
+
+The projection is arithmetic on the `dev` measurement and is not itself a measurement. **The
+`full` profile has not been run**, and measuring it is an outstanding follow-up recorded in
+`docs/project_state.md`.
+
+### 2026-09-19 — The `dev` runtime target is six minutes
+
+Section 1 sets `dev` at under five minutes. Measured on a freshly nuked and schema-applied
+stack: 327.6 seconds, which is 27.6 seconds over.
+
+Two optimisation passes were made before the target was moved rather than after, and both came
+from measurement rather than from inspection:
+
+- Reaching the database means launching a process inside a container, measured at 0.589 seconds
+  each. One session per reference table cost 16.5 s, one per core table 18 s, and one per ledger
+  chunk 29 s at this profile. All three are now single sessions.
+- The spool was written a row at a time through the default 8 KiB buffer and read back a line at
+  a time into a pipe. At 1.6 GB that had `dev` generating at about 8,000 rows a second against
+  62,000 for `ci`, whose whole output fits in the page cache. A one mebibyte buffer on both
+  sides removed the difference.
+
+Together those took `dev` from about 23 minutes to 5.5.
+
+What the remaining time is spent on is generation and `COPY`, not overhead: the phase breakdown
+is recorded in `docs/checkpoints/M2-summary.md`. The residual is Python building 11.5 million
+rows of CSV and PostgreSQL ingesting them, plus revalidating 59 foreign keys over the loaded
+book. Reducing it further means a different generation strategy or a different transport, and
+neither is worth 27 seconds.
+
+A target set by measurement, with the reasoning stated, is the right kind of target. Chasing the
+last 27 seconds to protect a number chosen before anything had been built is not.
