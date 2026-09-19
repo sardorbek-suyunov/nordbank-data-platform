@@ -25,10 +25,13 @@ loader, fourteen coherence invariants and a run manifest. `make seed`, `make see
 
 | Profile | Customers | History | Transactions | Total `core` rows | Generate | Load | Total |
 |---|---|---|---|---|---|---|---|
-| `ci` | 500 | 6 months | 41,393 | 209,190 | 3.2 s | 7.4 s | 10.6 s |
-| `dev` | 5,000 | 3 years | 2,279,943 | 11,274,907 | 160.5 s | 153.0 s | 313.5 s |
+| `ci` | 500 | 6 months | 41,393 | 209,190 | 3.4 s | 8.2 s | 11.5 s |
+| `dev` | 5,000 | 3 years | 2,321,273 | 11,468,955 | 167.6 s | 154.6 s | 327.6 s |
 
-`ci` is inside its twenty second budget with room. `dev` is 13 seconds over its five minute
+Both measured on a freshly nuked and schema-applied stack. The source database is 67 MB at `ci`
+and 2,819 MB at `dev`.
+
+`ci` is inside its twenty second budget with room. `dev` is 28 seconds over its five minute
 target, which is reported rather than tuned away.
 
 `full` was not run to completion and nothing here claims it was. Projected from the `dev`
@@ -71,6 +74,15 @@ launching a process inside a container, at 0.589 s each: one session per referen
 core table and per ledger chunk cost 16.5 s, 18 s and 29 s respectively. Writing 1.6 GB of spool
 a row at a time through an 8 KiB buffer had `dev` generating at 8,000 rows a second against
 62,000 for `ci`. Fixing both took `dev` from about 23 minutes to 5.
+
+**A digest over `row::text` depends on physical column order.** The committed manifest disagreed
+with CI on `core.transactions` and `core.gl_transactions` — the two tables this milestone added
+columns to — with identical row counts and, as it turned out, identical data. A column added by
+`ALTER TABLE` goes on the end, so a database that evolved through the schema changes renders a
+row differently from one built from scratch. The generator was ruled out first by generating the
+`ci` profile on Windows and inside a Linux container from the same reference snapshot: all
+sixteen spool files were byte-identical. The digest now names the documented columns in
+documented order, which is a better thing to digest anyway.
 
 ## What the invariants caught
 
