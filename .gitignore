@@ -37,6 +37,12 @@ service-account*.json
 data/
 exports/
 
+# Generator run manifests. The ci manifest is committed, because CI regenerates it and fails on
+# any difference, which is what makes determinism an enforced invariant rather than a claim.
+# The dev and full manifests are machine-local.
+generator/manifests/*.json
+!generator/manifests/ci.json
+
 # IDE and OS
 .idea/
 .vscode/

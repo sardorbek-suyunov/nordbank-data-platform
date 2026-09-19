@@ -3,7 +3,7 @@ SHELL := bash
 .DEFAULT_GOAL := help
 
 .PHONY: help install lint format test test-dags test-integration up down nuke health logs \
-	verify-dag seed tick dbt-build dbt-docs dq clean
+	verify-dag seed seed-verify seed-manifest tick dbt-build dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -35,6 +35,9 @@ test-integration: ## Run the smoke tests inside the running stack, then check fo
 	@echo "test-integration: running inside airflow-scheduler, where the volumes and network are"
 	docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow && pytest -q -m integration tests"
 	$(MAKE) schema-check
+	@echo "test-integration: generator integration tests run on the host, where the Docker socket is"
+	uv run pytest -q -m integration generator/tests
+	$(MAKE) seed-verify
 
 up: ## Generate .env if absent, validate it, then start the stack and wait for health
 	uv run python scripts/stack_up.py
@@ -68,8 +71,18 @@ endif
 schema-check: ## Fail if the live schema and the committed data dictionary disagree
 	uv run python scripts/schema_check.py
 
-seed: ## Load the initial historical dataset into the source database
-	@echo "not implemented until the M2 data half"
+seed: ## Generate and load the historical dataset (NORDBANK_ENV, _SEED, _ANCHOR_DATE)
+	uv run python -m generator
+
+seed-verify: ## Run the coherence invariants against the loaded database
+	uv run python -m generator --verify
+
+seed-manifest: ## Write the run manifest (CHECK=1 compares against the committed one)
+ifdef CHECK
+	uv run python -m generator --manifest --check
+else
+	uv run python -m generator --manifest
+endif
 
 tick: ## Generate one business day of source mutations
 	@echo "not implemented until M3"
