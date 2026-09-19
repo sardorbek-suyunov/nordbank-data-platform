@@ -620,7 +620,11 @@ defaults:
     alert_recall: {min: 0.50, max: 0.74}
     confirmed_fraud_rate_among_alerts: {min: 0.42, max: 0.78}
     approval_rate_overall: {min: 0.55, max: 0.78}
-    default_rate_overall: {min: 0.010, max: 0.075}
+    # Observed default at the anchor, not lifetime default. They are different numbers and
+    # the first is always the smaller: a loan book contains vintages that have not
+    # seasoned, and a loan whose default month falls after the anchor has not defaulted.
+    # Measured 0.0094 at dev against lifetime rates of 0.004 to 0.164 by band.
+    default_rate_overall: {min: 0.004, max: 0.075}
     login_precedes_transaction_share: {min: 0.80, max: 0.95}
     non_eea_merchant_share: {min: 0.02, max: 0.07}
     card_not_present_share: {min: 0.28, max: 0.56}

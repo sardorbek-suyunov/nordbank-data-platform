@@ -94,9 +94,7 @@ class TableSpool:
         self.path = path
         self.columns = TABLE_COLUMNS[table]
         self.rows = 0
-        self._handle = path.open(
-            "w", encoding=ENCODING, newline="", buffering=WRITE_BUFFER_BYTES
-        )
+        self._handle = path.open("w", encoding=ENCODING, newline="", buffering=WRITE_BUFFER_BYTES)
 
     def write(self, values: Sequence[Any]) -> None:
         if len(values) != len(self.columns):

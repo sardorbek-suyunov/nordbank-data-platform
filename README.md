@@ -62,6 +62,9 @@ make install       # virtual environment and git hooks
 make up            # build if needed, start, wait for every healthcheck
 make health        # per-component probe table
 make verify-dag    # trigger the health-check DAG from the CLI and verify it
+make schema-apply  # source DDL, reference seeds and the column classifications
+make seed          # generate and load the synthetic operating history
+make seed-verify   # the fourteen coherence invariants, against what was loaded
 ```
 
 The first `make up` takes about 6 minutes, most of it building the Airflow image and pulling
@@ -77,6 +80,7 @@ milestone that implements them.
 .
 ├── docs/            architecture, conventions, specs, ADRs, checkpoints, BI and diagrams
 ├── generator/       synthetic core banking source system and its daily mutation engine
+│                    deterministic: seed, anchor date and profile fix the output
 ├── airflow/         DAGs, plugins and orchestration tests
 ├── dbt/             bronze, silver and gold models, snapshots, macros, tests, seeds
 ├── contracts/       per-source data contracts and drift behaviour
@@ -95,7 +99,7 @@ Every directory carries a README stating its purpose and its ownership boundary.
 |---|---|---|
 | M0 | Repository foundation and conventions | done |
 | M1 | Local stack: Postgres, MinIO, Airflow | done |
-| M2 | Source system DDL and initial historical load | in progress |
+| M2 | Source system DDL and initial historical load | done |
 | M3 | Mutation engine: daily change generation | pending |
 | M4 | Bronze ingestion, contracts and quarantine | pending |
 | M5 | Silver: conformance, SCD2, PII tokenisation | pending |
@@ -115,9 +119,11 @@ Every directory carries a README stating its purpose and its ownership boundary.
 - [Data dictionary](docs/data_dictionary.md) — entity inventory, grain and load pattern
 - [Model inventory](docs/model_inventory.md) — every planned model, its grain, inputs and milestone
 - [PII classification](docs/pii_classification.md) — the four column classes and how each is handled
+- [Generator realism](docs/generator_realism.md) — every distribution, its parameters, the justification, and what is deliberately unrealistic
 - [Runbook](docs/runbook.md) — local setup, endpoints, resource envelope, failures, WSL2 notes
 - [Decision records](docs/adr/) — medallion layering, DuckDB, synthetic source, BI tooling,
-  PII crypto-shredding, LocalExecutor, declarative Airflow configuration, bronze immutability
+  PII crypto-shredding, LocalExecutor, declarative Airflow configuration, bronze immutability,
+  numbered SQL migrations, sanctions screening through the vault, the COPY loader
 - [Specifications](docs/specs/) — numbered specs and the amendment protocol
 - [Checkpoints](docs/checkpoints/) — one report per completed milestone
 
