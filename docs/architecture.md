@@ -354,15 +354,41 @@ hook.
 
 Three profiles, selected by `NORDBANK_ENV`:
 
-| Profile | Scale | Footprint | Purpose |
+| Profile | Scale | Lake and warehouse footprint | Purpose |
 |---|---|---|---|
 | `ci` | About 500 customers and tens of thousands of transactions | Under 100 MB of parquet and warehouse combined | A full pipeline run completes in under a minute, so CI can run end to end on every pull request |
 | `dev` | About 5,000 customers and a few million transactions | About 2 GB | The default for local work: large enough for incremental logic to be meaningful, small enough to rebuild over a coffee |
-| `full` | About 250,000 customers and tens of millions of transactions | About 25 GB | Exercises partition pruning, incremental models and the single-writer constraint under load |
+| `full` | About 250,000 customers | About 25 GB | Exercises partition pruning, incremental models and the single-writer constraint under load |
 
 The profiles differ only in generator parameters and dbt variables. No model, DAG or contract
 is conditional on the profile; if a transformation only works at small scale, that is a
 defect, not a configuration.
+
+### The source database, measured
+
+The footprint column above is about the lake and the warehouse, which M2 does not build. The
+source database is a separate thing and these are the figures the M2 generator actually
+produced on a freshly nuked and schema-applied stack, on the machine in
+`project_state.md`:
+
+| Profile | Customers | History | Transactions | Total `core` rows | Source database | Generate and load |
+|---|---|---|---|---|---|---|
+| `ci` | 500 | 6 months | 41,393 | 209,190 | 67 MB | 11.5 s |
+| `dev` | 5,000 | 3 years | 2,321,273 | 11,468,955 | 2,819 MB | 327.6 s |
+| `full` | 250,000 | 5 years | not run to completion | about 900 million, projected | — | — |
+
+**The three targets in spec 003 section 1 are not mutually consistent, and this is where that
+became visible.** The specification asks for tens of thousands of transactions at `ci`, two to
+four million at `dev`, and tens of millions at `full`. The first two are met. The third cannot
+be, at any single per-account activity rate, because the step from `dev` to `full` is about
+eighty times in account-months: fifty times the customers and one and two-thirds the history,
+against a `dev` figure that is already in its stated band. Two to four million multiplied by
+eighty is one hundred and sixty to three hundred and twenty million, which is hundreds of
+millions rather than tens.
+
+The generator was not adjusted to protect either number. `dev` sits in its stated band because
+that band is stated precisely; `full` is reported as projected rather than measured, and the
+resolution is an open decision in `project_state.md`.
 
 The `full` profile cannot be seeded row by row. At tens of millions of rows, a generator that
 issues one INSERT per record turns the historical load into hours of work and makes the
