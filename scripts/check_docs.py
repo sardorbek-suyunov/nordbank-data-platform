@@ -99,8 +99,7 @@ def band_failures() -> list[str]:
             )
         elif in_doc != in_config:
             failures.append(
-                f"band {name!r}: generator_realism.md says {in_doc}, profiles.yml says "
-                f"{in_config}"
+                f"band {name!r}: generator_realism.md says {in_doc}, profiles.yml says {in_config}"
             )
     return failures
 
