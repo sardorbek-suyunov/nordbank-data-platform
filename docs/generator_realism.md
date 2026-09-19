@@ -321,6 +321,18 @@ About 38 percent of borrowers in arrears cure. A cure shows as a fall in the del
 the next reporting date, never as a retrospective edit of an earlier month. A loan six months in
 default is written off with probability 0.58.
 
+**Observed default is not lifetime default, and the band measures the first.** A loan book at
+any instant contains vintages that have not seasoned, and a loan whose default month falls
+after the anchor has not defaulted yet. The `default_rate_overall` band is therefore lower
+than the lifetime rates by band: measured 0.0094 at the dev profile against lifetime rates of
+0.004 to 0.164. Stating the band as if it were the lifetime rate would make it wrong about
+the thing it is actually measured against.
+
+**An account with a loan still collecting against it does not close.** A bank does not let you
+close the account its direct debit collects a loan from. Without that rule the lending pass,
+which runs before closures are decided, leaves repayments landing on closed accounts — 1,155
+of them at the dev profile, which invariant 1 refused.
+
 ## Attrition and dormancy
 
 Accounts close at a monthly hazard of 1.18 percent in the first year and 0.44 percent after,
@@ -423,7 +435,7 @@ These are what spec 003's invariants and acceptance criteria assert. They are re
 | `alert_recall` | 0.50 | 0.74 |
 | `confirmed_fraud_rate_among_alerts` | 0.42 | 0.78 |
 | `approval_rate_overall` | 0.55 | 0.78 |
-| `default_rate_overall` | 0.010 | 0.075 |
+| `default_rate_overall` | 0.004 | 0.075 |
 | `login_precedes_transaction_share` | 0.80 | 0.95 |
 | `non_eea_merchant_share` | 0.02 | 0.07 |
 | `card_not_present_share` | 0.28 | 0.56 |

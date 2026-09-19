@@ -97,6 +97,7 @@ def generate(
     merchants: MerchantBook,
     agents: AgentBook,
     loan_cash: list[CashEvent],
+    loan_hold_until: dict[int, dt.date] | None = None,
 ) -> MovementStats:
     params = config.profile.params
     txn_params = params["transactions"]
@@ -192,6 +193,7 @@ def generate(
             window_first=window_first,
             window_last=window_last,
             attrition_params=attrition_params,
+            loan_hold_until=loan_hold_until or {},
         )
 
         for account_id in active:
@@ -1133,10 +1135,17 @@ def _month_attrition(**kw) -> None:
 
         if lifecycle.closes_this_month(rng, attrition_params, month_index):
             close_day = window_first + dt.timedelta(days=rng.randrange(span))
-            # An account does not close inside its first month. Cards are issued up to ten days
-            # after opening, so a closure days after opening leaves a card issued onto a closed
-            # account, which invariant 1 rightly refuses. A cooling-off floor is also what real
-            # accounts have, so this is the realistic fix rather than a clamp on the card date.
+            # An account with a loan still collecting against it does not close. A bank does not
+            # let you close the account its direct debit collects a loan from, and the lending
+            # pass runs before closures are decided, so without this a repayment lands on a
+            # closed account — 1,155 of them at the dev profile, which invariant 1 refused.
+            hold = kw["loan_hold_until"].get(account_id)
+            if hold is not None and close_day <= hold:
+                continue
+            # An account does not close inside its first month either. Cards are issued up to ten
+            # days after opening, so a closure days after opening leaves a card issued onto a
+            # closed account. A cooling-off floor is also what real accounts have, so this is the
+            # realistic fix rather than a clamp on the card date.
             if close_day >= accounts.opened_date[index] + dt.timedelta(days=30):
                 accounts.closed_date[index] = close_day
                 accounts.status_code[index] = "closed"

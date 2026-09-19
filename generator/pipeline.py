@@ -77,6 +77,7 @@ def generate(config: RunConfig, ref: RefData, spool: Spool) -> RunResult:
         merchants,
         agents,
         loans.cash_events,
+        loans.hold_until,
     )
 
     deposits.write_accounts(accounts, spool)

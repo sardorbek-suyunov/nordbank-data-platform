@@ -1,0 +1,73 @@
+{
+  "profile": "ci",
+  "seed": 42,
+  "anchor": "2026-09-18",
+  "generator_version": "1.0.0",
+  "total_rows": 209190,
+  "tables": {
+    "account_holders": {
+      "rows": 878,
+      "digest": "1861091587366:1787112668492"
+    },
+    "accounts": {
+      "rows": 760,
+      "digest": "1642817562966:1659551836668"
+    },
+    "agent_locations": {
+      "rows": 3,
+      "digest": "8082320035:7364892538"
+    },
+    "cards": {
+      "rows": 474,
+      "digest": "1036960511763:1006264178442"
+    },
+    "customer_addresses": {
+      "rows": 583,
+      "digest": "1240848712757:1268940170773"
+    },
+    "customers": {
+      "rows": 500,
+      "digest": "1111790313062:1097104248288"
+    },
+    "fraud_alerts": {
+      "rows": 40,
+      "digest": "90609126346:83098945789"
+    },
+    "gl_entries": {
+      "rows": 87416,
+      "digest": "188820713710069:188123769004598"
+    },
+    "gl_transactions": {
+      "rows": 43695,
+      "digest": "94270006456739:93870710700727"
+    },
+    "loan_applications": {
+      "rows": 25,
+      "digest": "70815307733:48176329472"
+    },
+    "loan_installments": {
+      "rows": 576,
+      "digest": "1239529050694:1264339903235"
+    },
+    "loans": {
+      "rows": 12,
+      "digest": "23043967418:24930319859"
+    },
+    "login_sessions": {
+      "rows": 24557,
+      "digest": "52674057050613:52738238220976"
+    },
+    "merchants": {
+      "rows": 120,
+      "digest": "232524548636:276346592678"
+    },
+    "payments": {
+      "rows": 8158,
+      "digest": "17488160755592:17421005983878"
+    },
+    "transactions": {
+      "rows": 41393,
+      "digest": "89067499039802:89187269177440"
+    }
+  }
+}

@@ -48,6 +48,11 @@ class CashEvent:
 @dataclass
 class LoanBook:
     cash_events: list[CashEvent] = field(default_factory=list)
+    # The last date each account still has a loan movement on it. An account cannot
+    # close before then: a bank does not let you close the account its direct debit
+    # collects a loan from, and letting it close leaves repayments landing on a closed
+    # account, which invariant 1 refuses.
+    hold_until: dict[int, dt.date] = field(default_factory=dict)
     loans: int = 0
     applications: int = 0
     installments: int = 0
@@ -335,4 +340,8 @@ def generate(
             )
 
     book.cash_events.sort(key=lambda event: (event.when, event.account_id, event.source_entity_id))
+    for event in book.cash_events:
+        day = event.when.date()
+        if day > book.hold_until.get(event.account_id, dt.date.min):
+            book.hold_until[event.account_id] = day
     return book
