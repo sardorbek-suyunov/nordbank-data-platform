@@ -125,10 +125,54 @@ them, and the next `make up` rebuilds everything from configuration.
 | `ModuleNotFoundError: No module named 'airflow'` in a container | `AIRFLOW_UID` was changed; the image installs Airflow into user 50000's home | Set `AIRFLOW_UID=50000` in `.env` |
 | `import airflow` fails on Windows | Airflow does not support native Windows | Expected, not a defect. `make test-dags` runs those tests inside the project image and says so; `make test` never needs Airflow |
 | `make test-integration` fails with "service not running" | The stack is down | `make up` first; the smoke tests run inside `airflow-scheduler` |
+| `check-env` reports a variable present in `.env.example` and missing from `.env` | A milestone added an environment variable, and `.env` was generated before it | Add the variable by hand, or regenerate: `rm .env && make init-env`. This is the second time an init-once mechanism has bitten — see the database grant below — and it is the same shape of trap both times |
+| `make schema-apply` fails with `permission denied for database nordbank` | The stack was started before the M2 branch, so `infra/docker/postgres-source/init/10_privileges.sh` never granted `create on database` to the application role. An init script runs once, on an empty data volume | `FORCE=1 make nuke && make up`. Recorded in ADR 0009 |
+| `make seed` fails with `is not seeded; generator/profiles.yml names a code the reference layer does not have` | A profile parameter names a reference code the seed does not carry | Run `make schema-apply`, which seeds `ref`. If it persists, the parameter is wrong: the message names the table and the code |
+| A `make seed` run leaves CSV files under `data/generator/` | The load failed partway, and the spool is kept deliberately so the rows that failed can be looked at | Inspect them, then delete the directory. A successful run removes its own spool unless `--keep-spool` was passed |
+| `make seed-manifest CHECK=1` reports a difference after a generator change | Working as intended: the committed `ci` manifest is what makes determinism an enforced invariant | If the change was meant to alter generated values, regenerate with `make seed-manifest` and commit the new manifest alongside the change that caused it |
+
+## Seeding the source database
+
+```bash
+make seed              # generate and load, honouring the three environment variables
+make seed-verify       # run the fourteen coherence invariants against what was loaded
+make seed-manifest     # write the run manifest; CHECK=1 compares the committed one
+```
+
+Three environment variables determine the output completely: `NORDBANK_SEED`,
+`NORDBANK_ANCHOR_DATE` and `NORDBANK_ENV`. The same three give a byte-identical database.
+The anchor defaults to the real current date so local data always looks current; CI pins
+it, because the committed `ci` manifest is compared against a regeneration and an anchor
+that moved every midnight would fail that comparison daily.
+
+`make seed` empties the sixteen `core` tables first. `ref` and `platform` are seeded by
+`make schema-apply` and are not touched.
+
+### The pattern M3 and M4 need
+
+The mutation engine at M3 advances the source by one business day, and the backfill at M4
+needs genuine day-by-day change to extract. Loading with an anchor of today leaves
+nothing to step forward into: every row is already as current as it can be, and a
+watermark extraction has one window to read.
+
+**Load with an anchor in the past, then step forward.**
+
+```bash
+NORDBANK_ANCHOR_DATE=2026-06-30 make seed   # history ends three months ago
+make tick                                    # from M3: advance one business day
+```
+
+Each tick moves `updated_at` on the rows it touches, so an incremental extraction has a
+real window of changed rows rather than the whole table or nothing. The loader's output is
+a valid starting state for that by construction: every audit timestamp is the row's true
+last-change time in simulated history, no row carries the load timestamp, and every
+identity sequence is synchronised past the largest key its table holds, so the first row
+the mutation engine inserts does not collide.
 
 ## Backfill procedure
 
-Populated at M4, once partitions, batch ids and watermarks are in place.
+Populated at M4, once partitions, batch ids and watermarks are in place. The anchor
+pattern above is the half of it that exists now.
 
 ## Escalation
 
