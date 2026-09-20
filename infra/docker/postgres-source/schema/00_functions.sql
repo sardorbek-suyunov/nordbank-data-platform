@@ -12,12 +12,33 @@ comment on schema platform is
 -- rather than table by table, so a table added later cannot be missed. Never called by
 -- application code: watermark extraction reads updated_at, and a write path that forgets to set
 -- it loses rows silently.
+--
+-- The time comes from a simulation clock where one is set, and from the wall clock otherwise
+-- (spec 002 design rule 4, as amended 2026-09-20). A tick simulates a date in the past, so an
+-- UPDATE during a tick that stamped now() would give every mutated historical row today's
+-- watermark and deliver the whole source to M4 inside one extraction window.
+--
+-- nullif is load-bearing rather than defensive, and it was measured. A custom setting that was
+-- never set reads as NULL, but one set with SET LOCAL reads as the EMPTY STRING for the rest of
+-- that session once the transaction ends. Without the nullif, the second tick on a reused
+-- connection would evaluate ''::timestamptz and raise.
+--
+-- It earns its keep a second time on purpose: core and ref carry simulated time, platform
+-- carries real time, so a tick clears the setting before writing its own bookkeeping rows and
+-- falls back to now() here. platform.tick_log is a reconciliation control that M7 reads, and a
+-- control that lies about when it ran is useless.
+--
+-- Cost: none measurable. A/B/A at 50,000 updated rows on core.transactions measured 1569, 1447
+-- and 1428 ms with now() against 1409, 1434 and 1429 ms with the lookup.
 create or replace function core.set_updated_at()
 returns trigger
 language plpgsql
 as $$
 begin
-    new.updated_at := now();
+    new.updated_at := coalesce(
+        nullif(current_setting('nordbank.sim_now', true), '')::timestamptz,
+        now()
+    );
     return new;
 end;
 $$;
