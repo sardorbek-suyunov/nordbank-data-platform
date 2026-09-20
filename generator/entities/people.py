@@ -154,7 +154,16 @@ def generate(config: RunConfig, ref: RefData, streams: SubStreams, spool: Spool)
         book.risk_band_code.append(risk_band)
         book.date_of_birth.append(date_of_birth)
         book.kyc_status_code.append(kyc_status)
-        book.device_count.append(lifecycle.device_count(rng, digital))
+        # On its own addressable stream rather than from this customer's general stream.
+        # The M3 mutation engine needs the same number to pick a device for a session, and
+        # the alternative is reading it back: `count(distinct device_fingerprint)` over
+        # core.login_sessions measures 3.0 s on the dev book, which is a third of a tick's
+        # whole budget and grows with the history. Consuming it here would also make the
+        # value depend on how many draws precede it in this loop, so adding a customer
+        # attribute would silently move every device count.
+        book.device_count.append(
+            lifecycle.device_count(streams.stream("devices", customer_id), digital)
+        )
 
         customer_rows.write(
             (

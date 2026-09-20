@@ -558,3 +558,28 @@ far below any n a band could be honest about.
 The qualification carries forward unchanged. Invariant 9's statistical band is suspended at
 `ci` after sixty ticks exactly as it is after a load, the structural checks are asserted, and
 the suspension is reported with its n and interval half-width.
+
+### 2026-09-20 — The device count moves to its own addressable stream
+
+`generator/entities/people.py` drew each customer's device count from that customer's general
+stream, as one draw among the dozen that build the row. Spec 004's mutation engine needs the
+same number to choose which device a login session comes from, and it has no way to get it.
+
+Reading it back is not affordable. `count(distinct device_fingerprint)` grouped by customer
+over `core.login_sessions` measures **3.0 seconds on the `dev` book**, which is a third of a
+tick's entire budget under spec 004 acceptance criterion 13, and it grows with the history
+rather than with the day.
+
+The draw therefore moves to `streams.stream("devices", customer_id)`, which the mutation engine
+can address directly. The coordinates do not collide with the per-month new-device hazard
+`generator/entities/movements.py` already draws at `("devices", customer_id, month_index)`.
+
+The change is worth making on its own terms as well as for M3. A value consumed from a shared
+per-entity stream depends on how many draws precede it, so adding any customer attribute would
+have silently moved every device count — the failure mode `generator/rng.py` exists to prevent,
+reappearing inside a single stream rather than between streams.
+
+**This alters generated values and therefore the committed `ci` manifest**, which is
+regenerated with the change that caused it, as `docs/runbook.md` prescribes. The distributions
+are untouched: the same weights produce the same shape, and the numbers move only because the
+draws come from a different place.
