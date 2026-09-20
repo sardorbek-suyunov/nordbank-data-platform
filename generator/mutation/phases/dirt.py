@@ -131,20 +131,37 @@ def _duplicate_customers(context: TickContext, rates: dict, day_start: dt.dateti
 
 
 def _near_miss(rng: Any, full_name: str) -> str:
-    """A name one edit away: a confusable, a diacritic, a transposition or a dropped letter."""
+    """A name one edit away: a confusable, a diacritic, a transposition or a dropped letter.
+
+    The kinds are tried in the drawn order and the first that can change the name wins. A
+    confusable swap finds nothing in a name with no `a`, `c`, `e`, `o` or `p`, and returning it
+    unchanged would produce an exact duplicate — equality-joinable, and so not the
+    entity-resolution problem this exists to create. A family name of three characters or fewer
+    has no admissible edit at all and does yield an exact duplicate, which is a real case and is
+    left as one.
+    """
     given, _, family = full_name.partition(" ")
-    kind = rng.randrange(4)
-    if kind == 0:
-        return f"{given} {_swap(rng, family, CONFUSABLES)}"
-    if kind == 1:
-        return f"{given} {_swap(rng, family, DIACRITICS)}"
-    if kind == 2 and len(family) > 3:
-        cut = rng.randrange(1, len(family) - 1)
-        return f"{given} {family[:cut]}{family[cut + 1]}{family[cut]}{family[cut + 2 :]}"
-    if len(family) > 3:
-        cut = rng.randrange(1, len(family) - 1)
-        return f"{given} {family[:cut]}{family[cut + 1 :]}"
+    kinds = [rng.randrange(4)]
+    kinds += [kind for kind in range(4) if kind != kinds[0]]
+
+    for kind in kinds:
+        edited = _edit(rng, family, kind)
+        if edited != family:
+            return f"{given} {edited}"
     return f"{given} {family}"
+
+
+def _edit(rng: Any, family: str, kind: int) -> str:
+    if kind == 0:
+        return _swap(rng, family, CONFUSABLES)
+    if kind == 1:
+        return _swap(rng, family, DIACRITICS)
+    if len(family) <= 3:
+        return family
+    cut = rng.randrange(1, len(family) - 1)
+    if kind == 2:
+        return f"{family[:cut]}{family[cut + 1]}{family[cut]}{family[cut + 2 :]}"
+    return f"{family[:cut]}{family[cut + 1 :]}"
 
 
 def _swap(rng: Any, word: str, table: dict[str, str]) -> str:
