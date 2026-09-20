@@ -40,9 +40,17 @@ def near_misses() -> list[tuple[str, str]]:
 
 def test_a_duplicate_is_close_enough_to_match_and_different_enough_to_need_matching():
     pairs = near_misses()
-    assert any(original != duplicate for original, duplicate in pairs)
     for original, duplicate in pairs:
         assert edit_distance(original, duplicate) <= 2, (original, duplicate)
+
+
+def test_a_family_name_long_enough_to_edit_is_always_edited():
+    # A confusable swap finds nothing in a name with no a, c, e, o or p, and returning it
+    # unchanged would give an exact duplicate: equality-joinable, and so not the
+    # entity-resolution problem the duplicate exists to create.
+    for original, duplicate in near_misses():
+        if len(original.split(" ")[1]) > 3:
+            assert duplicate != original, original
 
 
 def test_the_given_name_is_never_touched():
