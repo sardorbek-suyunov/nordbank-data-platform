@@ -211,6 +211,17 @@ def apply_deltas(documented: list[Column], fired: list[str]) -> list[Column]:
     return columns
 
 
+def expected_schema(documented: list[Column], execute: Any) -> tuple[list[Column], list[str]]:
+    """The schema the database should have: the committed dictionary plus what has fired.
+
+    One function, because this is one fact and it had two implementations for about an hour —
+    `make schema-check` read the drift log and the same comparison running inside the stack did
+    not, so the second failed on the column the first expected. Both call this now.
+    """
+    fired = fired_names(execute)
+    return apply_deltas(documented, fired), fired
+
+
 def classification_rows(fired: list[str]) -> list[Column]:
     """The columns a fired event added, which `platform.column_classifications` has to hold."""
     out: list[Column] = []

@@ -4,6 +4,12 @@ This is the control that stops the dictionary rotting (spec 002 section 7). `mak
 runs the same comparison from the host through psql; this runs it through a driver as the
 extraction role, which also proves the reader can see everything it needs to.
 
+**The expected schema is the dictionary plus the drift events that have already fired**, and it
+is composed by `generator.drift.expected_schema` rather than here, because this test and
+`make schema-check` need the same answer. They briefly did not: this one failed in CI on the
+column a tick had added while the host-side check passed, which is exactly what one fact with
+two implementations produces.
+
 Alongside the comparison it asserts the schema-wide invariants that are cheap to check from the
 catalogue and expensive to notice by hand: the audit columns by schema, the updated_at index
 and trigger on every table, the absence of floating point, the absence of anywhere a card
@@ -74,10 +80,27 @@ def test_the_schema_has_not_been_applied_is_reported_not_silently_passed(execute
         pytest.fail("no tables in core, ref or platform: run `make schema-apply` first")
 
 
-def test_live_schema_matches_the_data_dictionary(documented, execute) -> None:
-    differences = compare(documented, live_columns(execute), execute)
+def _expected_schema(documented, execute):
+    """The dictionary plus the fired drift, or the dictionary alone where the engine is absent.
 
-    assert not differences, "\n".join(str(difference) for difference in differences)
+    The generator package is mounted into the image for `ops_source_tick`. If a deployment ever
+    runs this test without it, the dictionary on its own is the right answer, because a source
+    with no mutation engine has no drift to have fired.
+    """
+    try:
+        from generator import drift
+    except ImportError:  # pragma: no cover - only when the engine is not mounted
+        return list(documented), []
+    return drift.expected_schema(list(documented), execute)
+
+
+def test_live_schema_matches_the_data_dictionary(documented, execute) -> None:
+    expected, fired = _expected_schema(documented, execute)
+    differences = compare(expected, live_columns(execute), execute)
+
+    assert not differences, "\n".join(
+        [*(str(difference) for difference in differences), f"drift events fired: {fired}"]
+    )
 
 
 def test_every_column_is_classified_and_nothing_extra_is(documented, execute) -> None:
