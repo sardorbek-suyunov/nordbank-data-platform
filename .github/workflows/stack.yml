@@ -81,6 +81,38 @@ jobs:
           NORDBANK_ANCHOR_DATE: "2026-09-18"
         run: make seed-manifest CHECK=1
 
+      # Spec 004, amended: a short sequence rather than the sixty-tick run. Sixty ticks twice —
+      # once for coherence and once for replay determinism — would add the whole sequence twice
+      # to a required check that already builds an image, starts nine services, applies a schema
+      # and seeds a profile. What this proves is the wiring, the per-tick reconciliation, and one
+      # drift event firing with schema-check still green. The sixty-tick sequences, the replay
+      # comparison and the thirty-tick dev run are local acceptance tests, reported against the
+      # specification.
+      #
+      # 2026-09-30 is the anchor plus twelve days, which is when the additive drift event fires.
+      - name: Advance the simulated source through a drift event
+        env:
+          NORDBANK_ENV: ci
+          NORDBANK_SEED: "42"
+          NORDBANK_ANCHOR_DATE: "2026-09-18"
+        run: make tick-to DATE=2026-09-30
+
+      - name: Show the simulation state and the ticks it ran
+        env:
+          NORDBANK_ENV: ci
+        run: make tick-status
+
+      # The drift event has fired, so the expected schema is now the dictionary plus its delta.
+      # A green check here is the whole point of spec 004 section 3's amendment.
+      - name: Check the schema against the dictionary plus the fired drift
+        run: make schema-check
+
+      - name: Verify the invariants after the ticks
+        env:
+          NORDBANK_ENV: ci
+          NORDBANK_ANCHOR_DATE: "2026-09-18"
+        run: make seed-verify
+
       - name: Integration tests
         env:
           NORDBANK_ENV: ci

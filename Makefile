@@ -3,7 +3,7 @@ SHELL := bash
 .DEFAULT_GOAL := help
 
 .PHONY: help install lint format test test-dags test-integration up down nuke health logs \
-	verify-dag seed seed-verify seed-manifest tick dbt-build dbt-docs dq clean
+	verify-dag seed seed-verify seed-manifest tick tick-to tick-status dbt-build \n	dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -84,8 +84,18 @@ else
 	uv run python -m generator --manifest
 endif
 
-tick: ## Generate one business day of source mutations
-	@echo "not implemented until M3"
+tick: ## Advance the simulated source by one business day (DATE=YYYY-MM-DD to name it)
+ifdef DATE
+	uv run python -m generator.mutation --date $(DATE)
+else
+	uv run python -m generator.mutation
+endif
+
+tick-to: ## Advance the simulated source to DATE, one transaction per day
+	uv run python -m generator.mutation --to $(DATE)
+
+tick-status: ## Print the simulation state and the last ten ticks
+	uv run python -m generator.mutation --status
 
 dbt-build: ## Run dbt build against the active target
 	@echo "not implemented until M4"
