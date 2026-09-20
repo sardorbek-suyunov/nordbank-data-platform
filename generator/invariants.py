@@ -97,18 +97,35 @@ def _queries(config: RunConfig) -> list[tuple[str, str]]:
     core_tables = LOAD_ORDER
 
     # One row per core table, counting rows whose audit timestamps are out of order or fall
-    # after the anchor. The anchor bound is exclusive of the following day, so a row stamped at
-    # 23:59:59 on the anchor is inside the history and one stamped a second later is not.
+    # after the simulated present. The bound is exclusive of the following day, so a row stamped
+    # at 23:59:59 on that date is inside the history and one stamped a second later is not.
+    #
+    # **The bound is the simulated date, not the load anchor** (spec 003, amended 2026-09-20).
+    # A tick advances the source past its anchor one simulated day at a time, so every row a
+    # tick writes is after the anchor by construction and the anchor bound is false the moment
+    # the first tick commits. The property is unchanged — no row carries a timestamp from the
+    # future of the simulation, and none carries the real wall clock — and it is now stated
+    # against the simulation's present rather than against its starting point. `platform` rows
+    # are excluded: they carry real time deliberately, so asserting them here would fail on
+    # every tick.
     audit_union = " union all ".join(
         f"""
         select '{table}' as tbl, count(*) as n
           from core.{table}
          where updated_at < created_at
-            or created_at >= date '{anchor}' + interval '1 day'
-            or updated_at >= date '{anchor}' + interval '1 day'
+            or created_at >= (select bound from sim)
+            or updated_at >= (select bound from sim)
         """  # noqa: S608
         for table in core_tables
     )
+    # Falls back to the run anchor when nothing has ticked, which is every run before M3's
+    # first tick and every fresh load afterwards.
+    simulated_present = f"""
+        with sim as (
+          select coalesce((select simulated_date from platform.simulation_state),
+                          date '{anchor}') + interval '1 day' as bound
+        )
+    """
 
     return [
         # 1. No movement outside the account's open window.
@@ -289,8 +306,20 @@ def _queries(config: RunConfig) -> list[tuple[str, str]]:
         where x.first_opened < x.date_of_birth + interval '18 years'
         """,
         ),
-        # 11. Audit timestamps are ordered and inside the history.
-        ("11", f"select count(*), coalesce(min(tbl), '') from ({audit_union}) y where n > 0"),
+        # 11. Audit timestamps are ordered and at or before the simulated present.
+        (
+            "11",
+            f"{simulated_present} "
+            f"select count(*), coalesce(min(tbl), '') from ({audit_union}) y where n > 0",
+        ),
+        # 11b. The bound the check used, reported so the result names the ceiling it asserted
+        # against rather than leaving a reader to infer it from the anchor.
+        (
+            "11b",
+            f"select coalesce((select simulated_date::text from platform.simulation_state), "
+            f"'{anchor}'), "
+            f"(select count(*) from platform.tick_log)",
+        ),
         # 12a. Catalogue: every core foreign key exists and is validated.
         (
             "12a",
@@ -414,7 +443,7 @@ NAMES = {
     8: "every loan traces to an approved application, within its approved amount",
     9: "fraud alerts are well formed and the confirmed-fraud rate is in band",
     10: "every customer was eighteen at their first account opening",
-    11: "audit timestamps are ordered and inside the history",
+    11: "audit timestamps are ordered and at or before the simulated present",
     12: "no orphan in any foreign key",
     13: "digital transactions are preceded by a login",
     14: "card purchase first digits follow Benford",
@@ -522,6 +551,15 @@ def run(config: RunConfig) -> InvariantReport:
 
     # 11
     count, example = _offender(raw.get("11", []))
+    bound_rows = raw.get("11b", [])
+    bound = bound_rows[0][0] if bound_rows else config.anchor.isoformat()
+    ticks = int(bound_rows[0][1]) if bound_rows and len(bound_rows[0]) > 1 else 0
+    report.measurements["simulated_present"] = float(ticks)
+    ceiling = (
+        f"simulated present {bound} after {ticks} tick(s)"
+        if ticks
+        else f"anchor {bound}, no tick has run"
+    )
     report.results.append(
         CheckResult(
             11,
@@ -529,7 +567,9 @@ def run(config: RunConfig) -> InvariantReport:
             PASS if count == 0 else FAIL,
             count,
             example,
-            "no offending rows" if count == 0 else f"{count:,} table(s) with offending rows",
+            f"no offending rows, bound at the {ceiling}"
+            if count == 0
+            else f"{count:,} table(s) with offending rows, bound at the {ceiling}",
         )
     )
 
