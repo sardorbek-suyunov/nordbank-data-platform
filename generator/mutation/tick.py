@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ..rng import SubStreams
+from . import guard as guard_module
 from . import report as report_module
 from . import state as state_module
 
@@ -38,35 +39,64 @@ if str(ROOT / "scripts") not in sys.path:
 
 from source_db_driver import clear_simulation_clock, set_simulation_clock  # noqa: E402
 
-# Phase names in the order they run, each with the hour of the simulated day its in-place
-# updates are stamped with.
+
+@dataclass(frozen=True)
+class PhaseClock:
+    """When in the simulated day a phase's in-place updates are stamped.
+
+    `batched` means every update in the phase shares one instant, the way a nightly job writes
+    a whole sweep at the moment it ran.
+    """
+
+    start_hour: int
+    end_hour: int
+    batched: bool = False
+
+
+# How many distinct instants a jittered phase spreads its updates over.
 #
-# **The hours are why acceptance criterion 9 has a window to reconcile against rather than a
-# point.** The trigger stamps every update in a transaction with whatever the clock says, so a
-# tick that set it once would give a whole day's changes one identical `updated_at`. That is
-# not wrong — architecture.md's extraction reads `updated_at >= watermark - lag` precisely
-# because rows can share an instant — but it would collapse the tick's window to a single
-# value and leave the overlap logic with nothing to exercise. Inserts are unaffected either
-# way: they carry their own event instant, written explicitly, because the trigger fires
+# Per-entity uniqueness is neither achievable nor wanted. The trigger reads one clock value per
+# statement, so a genuinely unique instant per row would mean one statement per row — thousands
+# of round trips inside the tick's transaction, to buy a property real systems do not have.
+# Twenty-four buckets puts a distinct instant every few minutes of a phase's window, which
+# reads as a distribution rather than as a spike, and costs one extra statement per bucket per
+# table.
+JITTER_BUCKETS = 24
+
+# Phase windows, in the order the phases run.
+#
+# **Why the updates are spread at all.** The trigger stamps every update in a transaction with
+# whatever the clock says, so a tick that set it once would give a whole day's changes one
+# identical `updated_at`. That would collapse acceptance criterion 9's window to a point and
+# make the tick's output look nothing like a day of a real system. Inserts are unaffected
+# either way: they carry their own event instant, written explicitly, because the trigger fires
 # `before update` only.
 #
-# The hours are plausible rather than arbitrary. Lifecycle changes are an overnight batch,
-# acquisition happens in the working day, movements post through it, analyst dispositions land
-# in the afternoon, and the back-office corrections that produce dirt come last.
-PHASE_HOURS: dict[str, int] = {
-    "lifecycle": 6,
-    "acquisition": 9,
-    "movements": 12,
-    "dispositions": 16,
-    "dirt": 18,
-    "deletes": 20,
-    "drift": 22,
+# **Why `lifecycle` is deliberately not spread.** `architecture.md` justifies M4's `>=` overlap
+# on the extraction watermark partly by a specific failure: several rows share the exact
+# `updated_at` that became the watermark, and a strict greater-than reads one of them and skips
+# the rest for good. If every timestamp this engine produces were distinct, that case would
+# never arise and no test at M4 could exercise the defence against it. The account and card
+# status sweep therefore writes its whole batch at one identical instant, which is also what a
+# nightly batch job does, so the realistic choice and the testable one are the same choice.
+#
+# The windows are plausible rather than arbitrary: an overnight sweep, onboarding during
+# office hours, movements across the whole day, analyst dispositions in the working afternoon,
+# back-office corrections after it, a purge in the evening, and a migration last.
+PHASE_CLOCKS: dict[str, PhaseClock] = {
+    "lifecycle": PhaseClock(2, 3, batched=True),
+    "acquisition": PhaseClock(9, 17),
+    "movements": PhaseClock(0, 24),
+    "dispositions": PhaseClock(9, 18),
+    "dirt": PhaseClock(14, 20),
+    "deletes": PhaseClock(20, 22),
+    "drift": PhaseClock(23, 24),
 }
 
 # A failure can be injected after any phase, which is how acceptance criterion 2 is
 # demonstrated: the hook is a Python keyword argument with no command line flag and no
 # environment variable behind it, so it cannot be reached from an operator's shell by accident.
-PHASES: tuple[str, ...] = tuple(PHASE_HOURS)
+PHASES: tuple[str, ...] = tuple(PHASE_CLOCKS)
 
 
 class InducedFailureError(RuntimeError):
@@ -88,16 +118,73 @@ class TickContext:
     seed: int
     streams: SubStreams
     report: report_module.TickReport
+    # Accounts whose balance this tick moved, declared by whatever moved them. The guard
+    # re-derives each one's balance from scratch rather than trusting the delta, so this set
+    # says where to look and nothing more.
+    touched_accounts: set[int] = field(default_factory=set)
 
     def stream(self, name: str, *key: object):
         """A random stream for `name` at `key`, scoped to this tick's date."""
         return self.streams.stream(f"tick.{name}", self.simulated_date.isoformat(), *key)
+
+    def month_stream(self, name: str, *key: object):
+        """A random stream stable for the whole simulated month rather than for one day.
+
+        Per-account context lives here: the small set of merchants an account uses regularly,
+        its recurring mandates, whether the customer picked up a new device. Keying those on
+        the day would reshuffle them every tick, which would destroy the fraud model's
+        unfamiliar-merchant context and Q19's device signal. The historical load keys the same
+        context on account and month, so this keeps the two halves of the book consistent.
+        """
+        return self.streams.stream(f"tick.{name}", self.simulated_date.strftime("%Y-%m"), *key)
+
+    @property
+    def window(self) -> tuple[dt.datetime, dt.datetime]:
+        """The half-open span this tick's `updated_at` values fall in: the simulated day."""
+        return self.at(0), self.at(0) + dt.timedelta(days=1)
 
     def at(self, hour: int = 0, minute: int = 0, second: int = 0) -> dt.datetime:
         """An instant inside the simulated day."""
         return dt.datetime.combine(
             self.simulated_date, dt.time(hour, minute, second), tzinfo=dt.UTC
         )
+
+    def phase_instant(self, phase: str, bucket: int = 0) -> dt.datetime:
+        """The instant a given jitter bucket of `phase` stamps its updates with.
+
+        A batched phase ignores the bucket and returns its window's start, so every row it
+        writes shares one `updated_at`. That tie is deliberate; see PHASE_CLOCKS.
+        """
+        clock = PHASE_CLOCKS[phase]
+        if clock.batched:
+            return self.at(clock.start_hour)
+        span = (clock.end_hour - clock.start_hour) * 3600
+        offset = int(span * (bucket + 0.5) / JITTER_BUCKETS)
+        return self.at(clock.start_hour) + dt.timedelta(seconds=offset)
+
+    def bucket_of(self, phase: str, key: object) -> int:
+        """Which jitter bucket an entity falls in, drawn on its own substream.
+
+        On the entity's own stream rather than round-robin, so the assignment is a property of
+        the entity and the seed rather than of the order rows came back from the database.
+        """
+        if PHASE_CLOCKS[phase].batched:
+            return 0
+        return self.stream(f"jitter.{phase}", key).randrange(JITTER_BUCKETS)
+
+    def jitter_groups(
+        self, phase: str, items: Iterable[Any], key_of: Callable[[Any], object]
+    ) -> list[tuple[dt.datetime, list[Any]]]:
+        """Group `items` into jitter buckets and return them in time order.
+
+        The caller sets the clock to each instant and issues one statement for its group, so a
+        phase costs one statement per non-empty bucket rather than one per row. A batched
+        phase yields a single group, which is the point of it.
+        """
+        buckets: dict[int, list[Any]] = {}
+        for item in items:
+            buckets.setdefault(self.bucket_of(phase, key_of(item)), []).append(item)
+        return [(self.phase_instant(phase, bucket), buckets[bucket]) for bucket in sorted(buckets)]
 
 
 # A change class takes the context and records what it did on the report. The table is passed
@@ -158,7 +245,10 @@ def run(
         # core and ref carry simulated time from here, re-stamped per phase so that the tick's
         # changes spread across the simulated day instead of sharing one instant.
         for name in PHASES:
-            set_simulation_clock(cursor, context.at(PHASE_HOURS[name]))
+            # A phase that stamps nothing itself still starts from a defined instant, so a
+            # handler that issues a bare UPDATE without grouping does not inherit the previous
+            # phase's clock.
+            set_simulation_clock(cursor, context.phase_instant(name))
             handler = handlers.get(name)
             if handler is not None:
                 handler(context)
@@ -167,6 +257,22 @@ def run(
                     f"failure induced after the {name!r} phase of tick {target}. Nothing is "
                     f"committed: the simulation date and every row are unchanged."
                 )
+
+        # The delta guard, inside the transaction and before anything is committed. A guard
+        # whose failure left the tick committed would be a log line about a database that is
+        # already wrong, so this raises and the caller's rollback is what happens next.
+        guard_result = guard_module.run(
+            cursor,
+            touched_accounts=context.touched_accounts,
+            window=context.window,
+            recurring_prices=[
+                float(price) for price in profile.params["amounts"]["recurring_amount_choices"]
+            ],
+        )
+        guard_module.assert_coverage(
+            guard_result, profile.band("login_precedes_transaction_share")[0]
+        )
+        report.guard = guard_result
 
         # platform carries real time from here. Clearing holds for the rest of the
         # transaction, which is why every platform write is below this line.

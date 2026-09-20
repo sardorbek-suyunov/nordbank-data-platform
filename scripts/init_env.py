@@ -29,6 +29,10 @@ EXTERNAL = "__EXTERNAL__"
 DERIVED = {
     "AWS_SECRET_ACCESS_KEY": "MINIO_ROOT_PASSWORD",
     "AIRFLOW_CONN_NORDBANK_SOURCE_DB": "SOURCE_READ_PASSWORD",
+    # ops_source_tick writes to the source and so authenticates as the application role, not
+    # as the SELECT-only one every extraction path uses. The distinction is the subject of a
+    # paragraph in docs/architecture.md rather than an inference from a connection id.
+    "AIRFLOW_CONN_NORDBANK_SOURCE_SIMULATOR": "SOURCE_APP_PASSWORD",
     "AIRFLOW_CONN_NORDBANK_LAKE": "MINIO_ROOT_PASSWORD",
 }
 
