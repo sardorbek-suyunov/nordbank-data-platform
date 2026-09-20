@@ -130,7 +130,26 @@ six-day-old window. The reconciliation runs per tick instead, which costs 7.8 ms
 tables and is the only form M4 depends on — an extractor running at the end of day D sees exactly
 what the log says changed on day D.
 
-**It found two defects by itself, which is what a control is for.** A tick that logged 214
+**CI found two more, both of them a check that was not checking what it said.** Neither shows
+up on a machine that reseeds before it verifies, and CI ticks first.
+
+`make schema-check` composed the expected schema as the dictionary plus the fired drift, and the
+same comparison running inside the stack did not. Once a tick fired the additive event the two
+disagreed: the host-side check reported 510 columns agreeing and the in-container test failed on
+`core.merchants.merchant_risk_score` as undocumented. One fact with two implementations, which
+`specs/README.md` says to replace with one; `generator.drift.expected_schema` is now that one.
+
+Both of invariant 11's breakage tests passed for a reason other than the one they named. The
+ordering test set `created_at` to the row's current `updated_at` plus a day — but the trigger
+fires `before update` and rewrites `updated_at` to the clock, so the row came out correctly
+ordered, and the test passed on the *bound* clause because the wall clock was past the load
+anchor. Moving the bound to the simulated present removed the accident and left the ordering
+clause untested, which is what it had been all along. Each test now breaks the clause it names,
+and the bound one does it by pointing the simulation clock past the simulated date, which is
+what a tick does and the only way a statement can put a value in `updated_at` at all.
+
+**The delta guard and the reconciliation found two defects by themselves, which is what a control
+is for.** A tick that logged 214
 accounts against a window holding 213, because the balance fold moved an account the acquisition
 phase had just inserted; the rule "a tick never updates a row it inserted in the same tick" comes
 from that. And, through the schema rather than the control, an application written with a
