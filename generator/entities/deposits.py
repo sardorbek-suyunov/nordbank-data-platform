@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from ..config import RunConfig
+from ..realism import recurrence
 from ..realism.calendar import at_time
 from ..realism.distributions import bernoulli, cents, weighted_choice
 from ..refdata import RefData
@@ -173,30 +174,12 @@ def generate(
             accounts.card_ids.append([])
             accounts.holders.append([customer_id])
 
-            salary_day, salary_amount = 0, Decimal("0.0000")
-            credit_share = float(
-                txn_params["regular_credit_share_by_product_class"].get(product_class, 0.0)
+            # On its own stream, keyed on the account, so that a tick can re-derive the same
+            # income for the same account without replaying this loop. See
+            # generator/realism/recurrence.py.
+            salary_day, salary_amount = recurrence.regular_credit(
+                streams.stream("recurrence.credit", account_id), txn_params, product_class
             )
-            if bernoulli(rng, credit_share):
-                salary_day = rng.randrange(24, 29)
-                salary_amount = cents(
-                    min(
-                        60_000.0,
-                        max(
-                            50.0,
-                            math.exp(
-                                rng.gauss(
-                                    float(
-                                        txn_params["regular_credit_mu_by_product_class"][
-                                            product_class
-                                        ]
-                                    ),
-                                    float(txn_params["regular_credit_sigma"]),
-                                )
-                            ),
-                        ),
-                    )
-                )
             accounts.salary_day.append(salary_day)
             accounts.salary_amount.append(salary_amount)
 
