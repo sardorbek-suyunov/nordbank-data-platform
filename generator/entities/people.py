@@ -61,9 +61,18 @@ def _cohort_sizes(config: RunConfig, streams: SubStreams) -> list[tuple[dt.date,
     initial = int(config.profile.customers * float(params["acquisition"]["initial_customer_share"]))
     remaining = config.profile.customers - initial
 
+    # The first and last months of the window are partial, so their weight is the share of the
+    # month the window actually covers. Without it the last month acquires a full month of
+    # customers into however many days remain before the anchor, which is an acquisition spike
+    # on the last day of history rather than a trend.
+    weights = [
+        weight * _window_fraction(month, config)
+        for month, weight in zip(months, weights, strict=True)
+    ]
+
     total_weight = sum(weights)
     sizes = [int(remaining * weight / total_weight) for weight in weights]
-    sizes[-1] += remaining - sum(sizes)
+    sizes[sizes.index(max(sizes))] += remaining - sum(sizes)
 
     # The opening book signs up before the window, spread over the two years before it, so the
     # oldest cohorts differ in age rather than all starting on the same day.
@@ -81,6 +90,18 @@ def _cohort_sizes(config: RunConfig, streams: SubStreams) -> list[tuple[dt.date,
     return cohorts
 
 
+def _window_fraction(month: dt.date, config: RunConfig) -> float:
+    """The share of `month` that falls inside the history window."""
+    from ..realism.calendar import days_in_month  # noqa: PLC0415 - one call site
+
+    span = days_in_month(month.year, month.month)
+    first = max(month.replace(day=1), config.history_start)
+    last = min(month.replace(day=span), config.anchor)
+    if last < first:
+        return 0.0
+    return ((last - first).days + 1) / span
+
+
 def _signup_dates(config: RunConfig, streams: SubStreams) -> list[dt.date]:
     """One signup date per customer, ordered oldest first so customer ids follow time."""
     rng = streams.stream("acquisition", "days")
@@ -92,9 +113,16 @@ def _signup_dates(config: RunConfig, streams: SubStreams) -> list[dt.date]:
         from ..realism.calendar import days_in_month
 
         span = days_in_month(month.year, month.month)
+        # Drawn inside the part of the month the history covers, rather than across the whole
+        # month and then clamped. Clamping put every signup that landed past the anchor onto the
+        # anchor itself: measured at `ci`, 25 of 500 customers signed up on one day.
+        first = max(month.replace(day=1), config.history_start)
+        last = min(month.replace(day=span), config.anchor)
+        available = (last - first).days + 1
+        if available <= 0:
+            continue
         for _ in range(size):
-            day = month.replace(day=1) + dt.timedelta(days=rng.randrange(span))
-            dates.append(min(day, config.anchor))
+            dates.append(first + dt.timedelta(days=rng.randrange(available)))
     dates.sort()
     return dates[: config.profile.customers]
 

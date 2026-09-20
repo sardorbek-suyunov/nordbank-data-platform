@@ -108,6 +108,35 @@ has a trend to find instead of noise around zero. Acquisition is seasonal on the
 as spending but damped to 35 percent of it (`seasonality_weight`), because opening a bank
 account is less seasonal than buying things.
 
+### The edges of the window, and what they were getting wrong
+
+Three defects lived at the boundaries of the history window. None of them was visible while the
+book was a static snapshot; all three surfaced the moment the mutation engine produced a day
+after the anchor and it could be compared with the day before it.
+
+**A monthly rate is now scaled to the days its window actually covers.** The generator draws a
+month's activity per account and places it inside the account's window within that month. Three
+windows are short: the month the history starts in, the month it ends in, and the month an
+account opens in. Spreading a whole month's activity over a short window makes those days
+*denser* rather than fewer, and the last one is the worst place for it: measured at `ci`, the
+eighteen days before the anchor ran at 608.7 transactions a day against August's 209.2, a cliff
+on exactly the date M4 begins extracting.
+
+**An entity whose date falls past the anchor does not exist yet.** Second and third accounts
+open 14 to 900 days after signup and cards 0 to 10 days after the account. Dates past the anchor
+were clamped onto it, which put 221 of 760 accounts and 138 of 464 cards on one day, against one
+to four accounts on every other day. A third of the book therefore had no history at all, and
+the last day of the history looked like a migration. They are now omitted instead: a customer
+who joined last month has not opened their second account yet, which is both true and what makes
+account count grow with tenure.
+
+**A card's expiry is read off its expiry date rather than drawn.** `status_mix` used to draw
+`expired` directly, and at `ci` every one of the 33 cards it produced had an expiry date years in
+the future. The status is now derived — a card is expired when its expiry date has passed — and
+`expired` is out of the mix. A four-year validity over a six-month history means no card expires
+at `ci` or `dev`, and reporting none is the honest answer rather than a status the dates do not
+support.
+
 ### Hour of day
 
 `hour_weights` is bimodal: a lunchtime peak around 12:00 and a larger evening peak around 18:00
