@@ -229,23 +229,40 @@ def test_10_catches_a_customer_under_eighteen_at_opening(query_text):
 
 
 def test_11_catches_updated_at_before_created_at(query_text):
+    """The ordering clause, broken against the timestamp the trigger is about to write.
+
+    `created_at` has to be set past `now()`, not past the row's current `updated_at`. The
+    trigger fires `before update` and rewrites `updated_at` to the clock, so an update that
+    moved `created_at` forward from the *old* `updated_at` left the row correctly ordered around
+    a freshly stamped one — and this test passed anyway, on the bound clause, because the wall
+    clock was after the load anchor. Moving invariant 11's bound to the simulated present
+    removed that accident and left the ordering clause untested, which is what it had been all
+    along.
+    """
     rows = run_broken(
         query_text["11"],
         """
-        update core.merchants set created_at = updated_at + interval '1 day'
+        update core.merchants set created_at = now() + interval '1 day'
          where merchant_id = (select min(merchant_id) from core.merchants)
         """,
     )
     assert offenders(rows) > 0
 
 
-def test_11_catches_a_row_stamped_after_the_anchor(query_text):
+def test_11_catches_a_row_stamped_after_the_simulated_present(query_text):
+    """The bound clause, at the ceiling the check actually asserts against.
+
+    The simulation clock is what puts a timestamp there: the trigger owns `updated_at` and no
+    statement can assign it directly, so breaking this means doing what a tick does and pointing
+    the clock at a day the simulation has not reached.
+    """
     rows = run_broken(
         query_text["11"],
-        f"""
-        update core.merchants
-           set created_at = timestamptz '{ANCHOR.isoformat()} 00:00:00+00' + interval '2 days',
-               updated_at = timestamptz '{ANCHOR.isoformat()} 00:00:00+00' + interval '2 days'
+        """
+        select set_config('nordbank.sim_now',
+            (select (simulated_date + interval '2 days')::text
+               from platform.simulation_state), true);
+        update core.merchants set created_at = created_at
          where merchant_id = (select min(merchant_id) from core.merchants)
         """,
     )
