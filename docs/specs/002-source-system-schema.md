@@ -878,3 +878,66 @@ entries are its lines. A polymorphic reference cannot carry a foreign key, so re
 integrity at that join is replaced by invariant 6 and a data quality test at M7. Design rule 8
 is therefore not universal, and the exception is recorded here rather than left to be
 discovered in the DDL.
+
+### 2026-09-20 — Design rule 4 reads a simulation clock, and `platform` is exempt from it
+
+Spec 004 advances the source one simulated day at a time. An `UPDATE` during a tick fires
+`core.set_updated_at()`, which sets `now()`, so every mutated historical row would carry the
+real wall clock and the whole milestone would collapse into one watermark window.
+
+`core.set_updated_at()` therefore reads a transaction-scoped custom setting and falls back to
+`now()`:
+
+```sql
+new.updated_at := coalesce(
+    nullif(current_setting('nordbank.sim_now', true), '')::timestamptz,
+    now()
+);
+```
+
+Design rule 4 holds unchanged in substance: the trigger still owns `updated_at` on every
+`UPDATE`, and no code path assigns it directly. What changed is where the trigger reads the
+time from.
+
+**The `nullif` is load-bearing, not defensive, and it was measured.** A custom setting that has
+never been set reads as `NULL`, but one set with `SET LOCAL` reads as the **empty string** for
+the rest of that session once the transaction ends. Without the `nullif`, the second tick on a
+reused connection would evaluate `''::timestamptz` and raise. Measured on PostgreSQL 16.15:
+after commit, `current_setting('nordbank.sim_now', true)` returns `''`, `is null` is false and
+`= ''` is true.
+
+**`SET LOCAL`, not `SET`, and the reason is leakage.** A plain `SET` survives commit and would
+backdate every later write on that connection; `SET LOCAL` is discarded at transaction end,
+including on an abort. Cross-session isolation was measured directly: while one backend held an
+open transaction with the setting applied, a second backend read the fallback. Through a driver
+the statement form is `select set_config('nordbank.sim_now', <value>, true)`, because `SET`
+accepts no bind parameter.
+
+**The simulated clock is not visible in the catalogue, and the earlier claim that it was is
+withdrawn.** Placeholder settings are excluded from `pg_settings` and from `SHOW ALL`, and
+`SHOW nordbank.sim_now` errors with `unrecognized configuration parameter` in a session that
+has not set it. Only `current_setting(..., true)` sees it. The authoritative record of the
+simulated date is `platform.simulation_state`, which is a table, and that is where an operator
+looks.
+
+**`core` and `ref` carry simulated time; `platform` carries real time.** The trigger is
+attached to all three schemas, so a tick that left the clock set would backdate its own
+bookkeeping. `platform.tick_log` is a reconciliation control that M7 reads, and a control that
+lies about when it ran is useless. The tick therefore clears the setting with
+`set_config('nordbank.sim_now', '', true)` before writing any `platform` row, and the `nullif`
+makes the fallback to `now()` work for the second time.
+
+Clearing is not scoped to the following statement: it holds for the remainder of the
+transaction. This is an ordering requirement rather than a toggle. A tick sets the clock once,
+performs every `core` and `ref` write, clears the clock once, and writes its `platform` rows
+last.
+
+**The negative consequence, stated as spec 004 requires.** Any write in the tick's transaction
+is backdated, not only the ones intended to be. Measured: with the clock set, an unrelated
+`UPDATE` on `core.merchants` in the same transaction took the simulated timestamp. Confining
+the setting to `SET LOCAL` in the tick's own transaction is what bounds the blast radius, and
+the ordering rule above is what keeps `platform` out of it.
+
+**Cost: none measurable.** A/B/A at 50,000 updated rows on `core.transactions`, PostgreSQL
+16.15: `now()` 1569, 1447, 1428 ms; simulation clock 1409, 1434, 1429 ms. The setting lookup
+disappears into the roughly 29 microseconds per row the heap and index writes cost.
