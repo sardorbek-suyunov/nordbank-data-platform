@@ -522,3 +522,39 @@ neither is worth 27 seconds.
 
 A target set by measurement, with the reasoning stated, is the right kind of target. Chasing the
 last 27 seconds to protect a number chosen before anything had been built is not.
+
+### 2026-09-20 — Invariant 11's upper bound is the simulated present, not the load anchor
+
+Invariant 11 asserts that `created_at` and `updated_at` are ordered and that both fall at or
+before `anchor_date`. Spec 004's mutation engine advances the source past its anchor one
+simulated day at a time, so every row a tick writes is after the anchor by construction and
+the invariant is false the moment the first tick commits.
+
+This is the only one of the fourteen that mutation breaks outright. The others are either
+unaffected or constrain what a tick may do; this one is simply measuring against the wrong
+ceiling once the source can move.
+
+The bound becomes **the current simulated date**, read from `platform.simulation_state`,
+falling back to the run anchor when no tick has run. The property being protected is unchanged
+— no row carries a timestamp from the future of the simulation, and none carries the real wall
+clock — and it is now stated against the simulation's present rather than against its starting
+point.
+
+`platform` rows are excluded from the check. They carry real time deliberately, per spec 002's
+amendment of design rule 4, so asserting them against the simulated present would fail every
+tick. Invariant 11 covers the sixteen `core` tables as it always did.
+
+### 2026-09-20 — Acceptance criterion 5 keeps its `ci` qualification under spec 004
+
+The amendment of 2026-09-18 narrowed criterion 5 to read "all fourteen invariants pass on `ci`
+and on `dev`, with invariant 9's statistical band suspended at `ci` and the suspension
+reported", because a precision band over a few dozen fraudulent events asserts nothing.
+
+Spec 004's criterion 5 asks for all fourteen to pass after sixty ticks on `ci` and thirty on
+`dev`, which restores the unqualified wording this amendment removed. Sixty ticks do not change
+the argument: at `ci` the book grows by roughly a third and the dispositioned-alert count stays
+far below any n a band could be honest about.
+
+The qualification carries forward unchanged. Invariant 9's statistical band is suspended at
+`ci` after sixty ticks exactly as it is after a load, the structural checks are asserted, and
+the suspension is reported with its n and interval half-width.
