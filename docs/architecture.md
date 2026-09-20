@@ -80,6 +80,31 @@ that day.
 expected; the load is an upsert keyed on series and period, and the previous value is kept in
 the silver history.
 
+### The simulation is not part of the platform
+
+One DAG writes to the source database, and the distinction matters enough to state rather than
+leave to be inferred from a connection id.
+
+`ops_source_tick` advances the simulated core banking system by one business day. It is
+**simulation infrastructure standing in for the source system's own operation** — the nightly
+batches, the customer activity and the back-office corrections a real bank's core system would
+perform for itself. A real deployment would not have it, because a real bank's core system
+already runs. It exists here because the source is generated, and M4's extraction needs a
+source that changes rather than a static snapshot.
+
+It is therefore not part of the data platform, and it is the only thing in this repository that
+writes to `core`. It authenticates through a connection of its own, `nordbank_source_simulator`,
+as the application role, and the name is chosen so that a reader scanning the connection list
+can see which side of the line it sits on.
+
+**The extraction path remains read-only and is unchanged.** Every ingestion DAG from M4 onward
+authenticates through `nordbank_source_db` as `nordbank_reader`, which holds `select` and
+nothing else, and spec 002's acceptance criterion 8 proves all four refusals. Nothing in the
+platform's own path acquires the ability to write to a source, and no extraction task shares a
+connection with the simulator.
+
+The DAG is paused by default, so the capability is not exercised unless somebody asks for it.
+
 ## Layer contracts
 
 **Bronze guarantees** that what is stored is what the source sent, with direct identifiers

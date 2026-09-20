@@ -39,17 +39,22 @@ x-airflow-common: &airflow-common
     AIRFLOW_ADMIN_LASTNAME: ${AIRFLOW_ADMIN_LASTNAME}
     AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL}
     AIRFLOW_CONN_NORDBANK_SOURCE_DB: ${AIRFLOW_CONN_NORDBANK_SOURCE_DB}
+    # ops_source_tick only. The simulation stands in for the source system's own
+    # operation; the platform's extraction path stays on the SELECT-only connection above.
+    AIRFLOW_CONN_NORDBANK_SOURCE_SIMULATOR: ${AIRFLOW_CONN_NORDBANK_SOURCE_SIMULATOR}
     AIRFLOW_CONN_NORDBANK_LAKE: ${AIRFLOW_CONN_NORDBANK_LAKE}
     DUCKDB_PATH: ${DUCKDB_PATH}
     LAKE_BUCKET: ${LAKE_BUCKET}
     NORDBANK_ENV: ${NORDBANK_ENV}
-    PYTHONPATH: /opt/airflow/plugins
+    PYTHONPATH: /opt/airflow/plugins:/opt/airflow
     TZ: UTC
   volumes:
     - ./airflow/dags:/opt/airflow/dags:ro
     - ./airflow/plugins:/opt/airflow/plugins:ro
     - ./airflow/tests:/opt/airflow/tests:ro
     - ./scripts:/opt/airflow/scripts:ro
+    # ops_source_tick runs the mutation engine, which lives in the generator package.
+    - ./generator:/opt/airflow/generator:ro
     # The schema drift test compares the live database against docs/data_dictionary.md, and
     # `make test-integration` runs it in here.
     - ./docs:/opt/airflow/docs:ro

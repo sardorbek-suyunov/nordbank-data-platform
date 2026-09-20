@@ -59,9 +59,36 @@ fails with `ModuleNotFoundError: No module named 'airflow'`. CI hit exactly this
 | Airflow health | http://localhost:8080/api/v2/monitor/health | none, endpoint is public | What `make health` probes |
 | MinIO S3 API | http://localhost:9000 | `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` | The lake; `mc` is the admin path |
 | MinIO console | http://localhost:9001 | as above | Browsing objects by hand |
-| Source database | localhost:5432, database `nordbank` | `SOURCE_READ_USER` reads, `SOURCE_APP_USER` owns | Simulated core banking system |
+| Source database | localhost:55432, database `nordbank` | `SOURCE_READ_USER` reads, `SOURCE_APP_USER` owns | Simulated core banking system |
 | Airflow metadata database | localhost:5433, database `airflow` | `POSTGRES_AIRFLOW_USER` | Airflow state; not for platform data |
 | Warehouse | `/opt/warehouse/nordbank.duckdb` inside the containers | none, file permissions | DuckDB file on a named volume |
+
+### Why the source database publishes on 55432 and not 5432
+
+`POSTGRES_SOURCE_PORT` defaults to 55432. That is deliberate and it is the only non-standard
+port in the stack.
+
+**The published port affects host-side tooling only.** Airflow, the init containers and every
+other service reach `postgres-source` by service name on the compose network, on 5432, and
+none of them reads this variable. Changing it cannot break anything inside the stack.
+
+**What it defends against is a collision that reports nothing.** A native PostgreSQL
+installation on the developer's machine is the single most likely thing to already hold 5432,
+and when it does, Docker's published mapping is shadowed silently: `docker compose ps` still
+prints `0.0.0.0:5432->5432/tcp`, `make up` succeeds and `make health` passes, because every
+probe reaches the container over the compose network. Only host-side tooling notices, and
+before M3 there was none that connected by port, so the collision was invisible.
+
+M3's mutation engine connects from the host with a driver (ADR 0012), which is where this
+surfaced: it reached a PostgreSQL 18 service instead of the container and failed
+authentication for a role that server had never heard of. Two defences, because they cover
+different failures. The non-standard default avoids the collision on most machines. The
+connection then asserts it reached the Nordbank source anyway, and every failure path names a
+port collision as a candidate cause, because a default cannot rule out a machine that happens
+to use 55432 for something else.
+
+If you need a different port, change `POSTGRES_SOURCE_PORT` in `.env` and run
+`make down && make up`. Only the host side moves.
 
 The warehouse is deliberately not reachable from the host: it lives on a named volume, so
 probes and tests run inside a container. Connections are environment-defined and therefore
@@ -116,6 +143,7 @@ them, and the next `make up` rebuilds everything from configuration.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `make up` fails with a port already allocated | Another Postgres, MinIO or Airflow is running on 5432, 5433, 8080, 9000 or 9001 | Change the `*_PORT` value in `.env`, or stop the other service. Only the host side moves; nothing inside the compose network changes |
+| A host-side tool reports `authentication failed`, or `not the Nordbank source`, while `make health` passes | Something else holds the published port, so the container's mapping is shadowed. Docker reports the mapping either way and every in-stack probe still passes, because services reach each other over the compose network | `docker compose ps postgres-source` to confirm, then set `POSTGRES_SOURCE_PORT` in `.env` to a free port and `make down && make up`. The default is 55432 for this reason |
 | `preflight: Docker reports N GiB ... below the 6 GiB floor` | Docker Desktop is allocated less memory than the stack is validated at | Raise it in Settings, Resources. On WSL2, set `memory=` in `%UserProfile%\.wslconfig` and run `wsl --shutdown` |
 | Airflow services restart repeatedly, logs mention the Fernet key | `AIRFLOW_FERNET_KEY` is missing or not a valid 32-byte urlsafe base64 key | Generate one: `python -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())"` and put it in `.env`, then `make down && make up` |
 | `no space left on device`, or Docker Desktop reports a full disk | The WSL2 virtual disk filled with images, volumes and logs | `docker system prune`, `FORCE=1 make nuke` to drop stack volumes, and compact the WSL2 disk if it stays large |

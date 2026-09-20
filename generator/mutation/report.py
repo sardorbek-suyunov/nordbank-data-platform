@@ -52,6 +52,9 @@ class TickReport:
     counts: dict[str, dict[str, int]] = field(default_factory=lambda: defaultdict(dict))
     deleted_keys: list[tuple[str, int]] = field(default_factory=list)
     drift_fired: list[str] = field(default_factory=list)
+    # Set by the delta guard once it has passed. None on a tick that never reached it, which
+    # is every tick that failed, because the guard raises rather than recording a verdict.
+    guard: Any = None
 
     def record(self, table: str, klass: str, count: int = 1) -> None:
         if klass not in CLASSES:
@@ -158,6 +161,15 @@ def format_report(report: TickReport) -> str:
             for klass, width in zip(CLASSES, (9, 9, 10, 8, 8), strict=True)
         )
     )
+    if report.guard is not None:
+        guard = report.guard
+        lines.append("")
+        lines.append(
+            f"  guard: invariant 4 exact over {guard.accounts_checked:,} touched account(s); "
+            f"invariant 13 {guard.coverage_share:.3f} over "
+            f"{guard.coverage_population:,} digital transaction(s)"
+            + ("" if guard.coverage_asserted else ", reported not asserted")
+        )
     if report.drift_fired:
         lines.append("")
         lines.append(f"  drift fired: {', '.join(report.drift_fired)}")
