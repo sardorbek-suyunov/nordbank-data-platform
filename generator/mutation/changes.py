@@ -15,11 +15,12 @@ one schema.
 
 from __future__ import annotations
 
-from .phases import movements
+from .phases import lifecycle, movements
 from .tick import ChangePhase
 
 # Populated as each change class lands. A phase absent from this table is simply not run, and
 # `generator/mutation/tick.py` names the full sequence in PHASES.
 HANDLERS: dict[str, ChangePhase] = {
+    "lifecycle": lifecycle.run,
     "movements": movements.run,
 }

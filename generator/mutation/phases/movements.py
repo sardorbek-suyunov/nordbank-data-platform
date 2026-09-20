@@ -349,13 +349,15 @@ def _post_deferred_transactions(
         return
 
     context.set_clock(stamp)
-    changed = apply_updates(
-        context.cursor,
-        "update core.transactions set transaction_status_code = 'posted' "
-        "where transaction_id = any(%s::bigint[])",
-        chosen,
+    context.report.record_update(
+        "transactions",
+        apply_updates(
+            context.cursor,
+            "update core.transactions set transaction_status_code = 'posted' "
+            "where transaction_id = any(%s::bigint[]) returning transaction_id",
+            chosen,
+        ),
     )
-    context.report.record("transactions", "updated", changed)
 
 
 def _advance_payments(
@@ -444,22 +446,20 @@ def _advance_payments(
         return
 
     context.set_clock(stamp)
-    changed = 0
-    if booking:
-        context.cursor.execute(
-            "update core.payments set payment_status_code = 'booked', booked_at = %s "
-            "where payment_id = any(%s::bigint[])",
-            (stamp, booking),
+    for status, column, ids in (
+        ("booked", "booked_at", booking),
+        ("settled", "settled_at", settling),
+    ):
+        context.report.record_update(
+            "payments",
+            apply_updates(
+                context.cursor,
+                f"update core.payments set payment_status_code = '{status}', {column} = %s "  # noqa: S608
+                f"where payment_id = any(%s::bigint[]) returning payment_id",
+                ids,
+                scalars=(stamp,),
+            ),
         )
-        changed += context.cursor.rowcount
-    if settling:
-        context.cursor.execute(
-            "update core.payments set payment_status_code = 'settled', settled_at = %s "
-            "where payment_id = any(%s::bigint[])",
-            (stamp, settling),
-        )
-        changed += context.cursor.rowcount
-    context.report.record("payments", "updated", changed)
 
 
 def _clear_late_arrivals(
@@ -1329,18 +1329,21 @@ def _write_fold(context: TickContext, fold: Fold) -> None:
     if not account_ids:
         return
     context.set_clock(context.at(FOLD_HOUR, FOLD_MINUTE))
-    changed = apply_updates(
-        context.cursor,
-        """
-        update core.accounts a
-           set current_balance_amount = a.current_balance_amount + d.delta
-          from unnest(%s::bigint[], %s::numeric[]) as d(account_id, delta)
-         where a.account_id = d.account_id
-        """,
-        account_ids,
-        deltas,
+    context.report.record_update(
+        "accounts",
+        apply_updates(
+            context.cursor,
+            """
+            update core.accounts a
+               set current_balance_amount = a.current_balance_amount + d.delta
+              from unnest(%s::bigint[], %s::numeric[]) as d(account_id, delta)
+             where a.account_id = d.account_id
+            returning a.account_id
+            """,
+            account_ids,
+            deltas,
+        ),
     )
-    context.report.record("accounts", "updated", changed)
 
 
 # ------------------------------------------------------------------------------- helpers

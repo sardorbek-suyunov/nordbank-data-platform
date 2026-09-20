@@ -627,6 +627,40 @@ defaults:
       # costs the balance nothing.
       payment_settles: 0.55
 
+    lifecycle:
+      # Account status transitions reuse the monthly hazards in `attrition`, divided by the
+      # length of the simulated month, so the tick and the historical load move accounts at one
+      # rate rather than at two that happen to look alike. These are the ones the history has no
+      # analogue of.
+      #
+      # Terms change rarely. An overdraft limit is reviewed at a renewal or on request, not
+      # monthly.
+      overdraft_limit_change_monthly_hazard: 0.004
+      # Cards are blocked on a suspected compromise or a customer's call, which is rare per card
+      # per month but adds up across a book.
+      card_block_monthly_hazard: 0.006
+      # A blocked card does not stay blocked: the customer calls, the card is superseded and a
+      # replacement goes out within a few days. A daily hazard because the clock starts at the
+      # block rather than at the month.
+      blocked_card_replacement_daily_hazard: 0.22
+      # A current account left with no usable card gets one. This is also what heals the
+      # accounts the historical book leaves carrying nothing but a blocked, cancelled or
+      # replaced card.
+      card_reissue_monthly_hazard: 0.35
+      # Customer attributes. One of the four changes on a given day, drawn from their combined
+      # hazard, because four independent draws would sometimes pick the same customer twice and
+      # the tick log counts distinct rows. Risk and KYC move on review cycles, contact details
+      # when the customer updates them, and a surname on a marriage or a deed poll — which is
+      # the rarest of the four by two orders of magnitude and is what makes fuzzy matching at
+      # M5 non-trivial.
+      customer_risk_band_monthly_hazard: 0.008
+      customer_kyc_monthly_hazard: 0.011
+      customer_contact_monthly_hazard: 0.019
+      customer_surname_monthly_hazard: 0.0012
+      # A move. The old address is closed the day before the new one starts, so a point-in-time
+      # lookup has exactly one answer.
+      address_change_monthly_hazard: 0.007
+
     reversal:
       # A posted transaction is reversed rather than soft deleted (spec 004, amended). The
       # reversal is its own movement with its own ledger entries, which is what a real ledger

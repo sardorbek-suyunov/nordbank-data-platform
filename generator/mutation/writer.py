@@ -103,8 +103,8 @@ class TickWriter:
         return written
 
 
-def apply_updates(cursor: Any, statement: str, *columns: list) -> int:
-    """Run one set-based `UPDATE` over a group of rows and return how many changed.
+def apply_updates(cursor: Any, statement: str, *columns: list, scalars: tuple = ()) -> list[int]:
+    """Run one set-based `UPDATE` over a group of rows and return the keys it changed.
 
     The caller passes parallel arrays, one per column, and writes the statement around
     `unnest(%s::bigint[], %s::numeric[], ...)`. Arrays rather than a `VALUES` list because
@@ -112,13 +112,23 @@ def apply_updates(cursor: Any, statement: str, *columns: list) -> int:
     has no unambiguous adaptation and would have to be rendered into SQL by hand — which is
     both an injection surface and the place quoting bugs live.
 
+    **The statement must end in `returning <primary key>`.** Keys rather than a row count,
+    because the tick log counts distinct rows changed: two phases can touch one row in one tick,
+    and the row appears once in the window acceptance criterion 9 reconciles against. `scalars`
+    are bound before the arrays, for a statement that also needs a plain value.
+
     One statement per group is what keeps a phase's cost proportional to the number of jitter
     buckets rather than to the number of rows.
     """
     if not columns or not columns[0]:
-        return 0
+        return []
     widths = {len(column) for column in columns}
     if len(widths) != 1:
         raise ValueError(f"parallel arrays differ in length: {[len(c) for c in columns]}")
-    cursor.execute(statement, tuple(columns))
-    return cursor.rowcount
+    if "returning" not in statement.lower():
+        raise ValueError(
+            "an update must return the keys it changed; the tick log counts distinct rows, "
+            "not statements"
+        )
+    cursor.execute(statement, (*scalars, *columns))
+    return [row[0] for row in cursor.fetchall()]
