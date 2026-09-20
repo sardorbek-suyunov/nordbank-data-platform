@@ -88,9 +88,8 @@ def main() -> int:
         return 1
 
     execute = db.executor()
-    fired = drift.fired_names(execute)
+    documented, fired = drift.expected_schema(documented, execute)
     if fired:
-        documented = drift.apply_deltas(documented, fired)
         print(f"schema-check: {len(fired)} drift event(s) have fired: {', '.join(fired)}")
 
     differences = compare(documented, live_columns(execute), execute)
