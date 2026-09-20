@@ -36,7 +36,7 @@ from decimal import Decimal
 from ..config import RunConfig
 from ..realism import amounts as amount_model
 from ..realism import fraud as fraud_model
-from ..realism import lifecycle, presentment
+from ..realism import lifecycle, presentment, recurrence
 from ..realism.calendar import (
     at_time,
     clamp_day_of_month,
@@ -392,28 +392,24 @@ def _account_month(**kw) -> None:
     if span_days <= 0:
         return
 
-    # A small, stable set of merchants the account uses regularly. Everything outside it is an
-    # unfamiliar merchant, which is one of the contexts fraud concentrates in.
-    familiar: list[int] = []
-    if len(merchants) > 0:
-        familiar = [rng.randrange(1, len(merchants) + 1) for _ in range(8)]
-
-    # Recurring mandates: the same amount on the same day of month, which is what makes the
-    # subscription population anti-Benford and why invariant 14 excludes it.
-    mandates: list[tuple[int, Decimal, int]] = []
-    if has_card and bernoulli(rng, float(amount_params["recurring_share"]) * 4):
-        for _ in range(rng.randrange(1, 4)):
-            mandates.append(
-                (
-                    rng.randrange(1, 29),
-                    amount_model.recurring_amount(rng, amount_params),
-                    familiar[rng.randrange(len(familiar))] if familiar else 1,
-                )
-            )
+    # The account's regular context for this month, each on its own stream keyed on the account
+    # and the calendar month. Addressable rather than drawn in sequence here, because the
+    # mutation engine has to derive the same values from the same seed without replaying this
+    # function. See generator/realism/recurrence.py.
+    month_key = recurrence.month_key(window_first)
+    familiar = recurrence.familiar_merchants(
+        streams.stream("recurrence.merchants", account_id, month_key), len(merchants)
+    )
+    mandates = recurrence.mandates(
+        streams.stream("recurrence.mandates", account_id, month_key),
+        amount_params,
+        familiar,
+        has_card=has_card,
+    )
 
     weekend_factors = txn_params["weekend_band_factors"]
     new_device_month = bernoulli(
-        streams.stream("devices", accounts.customer_id[index], month_index),
+        streams.stream("devices", accounts.customer_id[index], month_key),
         float(params["digital"]["new_device_monthly_hazard"]),
     )
 
@@ -1185,7 +1181,7 @@ def _month_sessions(**kw) -> None:
         )
         device_total = max(1, customers.device_count[customer_id - 1])
         new_device = bernoulli(
-            streams.stream("devices", customer_id, month_index),
+            streams.stream("devices", customer_id, recurrence.month_key(window_first)),
             float(digital_params["new_device_monthly_hazard"]),
         )
         for _ in range(count):

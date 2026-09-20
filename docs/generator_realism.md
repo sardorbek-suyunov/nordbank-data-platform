@@ -50,6 +50,33 @@ survives — and what the requirement protects against — is that the random *s
 independent, and that every entity not causally downstream of lending comes out byte-identical.
 Both are tested.
 
+### Addressable facts, and why the mutation engine forced some of them
+
+A stream being independent is not the same as a value drawn from it being *addressable*. A value
+drawn in sequence from a stream something else is also drawing from can only be reproduced by
+replaying every draw that preceded it. That is free for a generator that holds the whole book in
+memory, and impossible for the mutation engine, which starts from a database and knows an
+account's key and the date and nothing else.
+
+Three facts about an account are therefore drawn from streams of their own, keyed on the account
+and — where the fact may change monthly — on the calendar month: its **regular credit**, the day
+of month it arrives and its amount; the **familiar merchant set** it returns to; and its
+**recurring mandates**. A fourth, the customer's **device count**, moved for the same reason
+earlier in M3. `generator/realism/recurrence.py` holds all three, and both halves of the book
+call it, so an account's income does not change when the simulation crosses the anchor.
+
+The key is the calendar month, `"2026-09"`, rather than a position in the history. The historical
+load knows a month by its index and a tick knows a date, and only the first of those is
+computable from both. Using the index would not fail: it would give an account one set of
+familiar merchants up to the anchor and a different set after it, and the only symptom would be
+the fraud model's unfamiliar-merchant context stepping on a date nothing else steps on.
+
+The rejected alternative was to read these facts back out of `core.transactions` — the income is
+the regular credit, the mandates are the repeated amounts. It cannot work: a salary, a loan
+disbursement and an opening deposit are all a `transfer_in` on the `api` channel, and telling
+them apart would mean marking them in the source. A generator flag in the bank's schema is
+exactly what the recurring-price rule in `generator/invariants.py` refuses to add.
+
 ### The random source is the standard library
 
 `random.Random`, not a third-party generator. The committed `ci` manifest makes determinism a
