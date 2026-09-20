@@ -119,10 +119,15 @@ def generate(
             type_code = weighted_choice(rng, accounts_params["type_mix"])
             product_class = str(ref.row("account_types", type_code)["product_class_code"])
 
-            # The first account opens with the customer; later ones open later.
+            # The first account opens with the customer; later ones open later. An account
+            # whose opening date falls past the anchor has not been opened yet, so it does not
+            # exist — it is not clamped onto the anchor. Clamping put 221 of 760 accounts on one
+            # day at `ci`, against one to four on every other day, which gave a third of the
+            # book no history at all and handed M4's first extraction a day that looks like a
+            # migration.
             opened = signup + dt.timedelta(days=0 if ordinal == 0 else rng.randrange(14, 900))
             if opened > config.anchor:
-                opened = config.anchor
+                continue
 
             currency = "EUR"
             if bernoulli(rng, float(accounts_params["non_eur_share"])):
@@ -238,7 +243,9 @@ def generate(
                 product_code = weighted_choice(rng, cards_params["product_mix"])
                 issued = opened + dt.timedelta(days=rng.randrange(0, 10))
                 if issued > config.anchor:
-                    issued = config.anchor
+                    # Not yet issued, for the same reason an account past the anchor is not yet
+                    # opened. The clamp put 138 of 464 cards on the anchor date.
+                    continue
                 expiry = dt.date(
                     issued.year + int(cards_params["validity_years"]),
                     issued.month,

@@ -8,7 +8,7 @@
 # The values under `bands` are contracts that spec 003 invariants and acceptance criteria are
 # written against, so they also appear in that document for a reader to review. A document that
 # stated no bands could not be reviewed for whether its bands are sensible, which is its whole
-# purpose, so the duplication is unavoidable — and scripts/check_docs.py, which the `docs` CI
+# purpose, so the duplication is unavoidable вЂ” and scripts/check_docs.py, which the `docs` CI
 # job runs, fails if the two disagree. One source per fact, and a mechanical check where two
 # representations are unavoidable (docs/specs/README.md).
 
@@ -128,20 +128,25 @@ defaults:
     validity_years: 4
     # A card is reissued as a new row rather than updated, so a share of cards reach one of the
     # terminal statuses during the history.
+    #
+    # `expired` is deliberately absent. Expiry is a function of the expiry date and is derived
+    # from it, not drawn: a card whose status said `expired` while its expiry date was years
+    # away is incoherent, and measured at `ci` every one of the 33 such cards had a future
+    # expiry date. A four-year validity over a six-month history means no card expires at `ci`
+    # or `dev`, which is the honest answer rather than a status nothing in the data supports.
     status_mix:
-      active: 0.83
-      expired: 0.07
-      replaced: 0.05
-      blocked: 0.025
-      cancelled: 0.025
+      active: 0.892
+      replaced: 0.054
+      blocked: 0.027
+      cancelled: 0.027
 
   merchants:
     # Merchants per thousand customers, so the ratio holds across profiles rather than the
     # count. A fixed merchant count would make full-profile customers share a tiny catalogue.
     per_thousand_customers: 240
     # Non-EEA merchants are held to a few percent, deliberately. Q4 can only price intra-EEA
-    # consumer volume — the outbound inter-regional interchange rate is null and stays null,
-    # see metric_definitions.md — so this share is the bounded null exposure of Q4, not an
+    # consumer volume вЂ” the outbound inter-regional interchange rate is null and stays null,
+    # see metric_definitions.md вЂ” so this share is the bounded null exposure of Q4, not an
     # estimate of a real card book's geography. Recorded as unrealistic in the realism document.
     non_eea_share: 0.04
     non_eea_mix:
@@ -439,7 +444,7 @@ defaults:
     # measure nothing.
     # Recall is configured here and asserted by unit test, and it is deliberately not a
     # contract band. It cannot be measured from the loaded database, because its
-    # denominator is all fraud — including fraud nobody ever detected or reported — and
+    # denominator is all fraud вЂ” including fraud nobody ever detected or reported вЂ” and
     # the database stores only alerts and their dispositions, which is what a bank has.
     # See the alert performance entry in docs/metric_definitions.md.
     detection_recall: 0.62
@@ -644,7 +649,7 @@ defaults:
     # measured rather than argued: chi-square tests significance, not effect size, and
     # its power grows with the sample. A fixed critical value is therefore stricter at a
     # larger profile, which is the opposite of the scale-invariance it was chosen for.
-    # The ci run measured a deviation of 0.00577 — close conformity — against a
+    # The ci run measured a deviation of 0.00577 вЂ” close conformity вЂ” against a
     # chi-square of 80.5 on 23,437 amounts, and the same distribution at dev would
     # produce a chi-square around sixty times larger for no reason but the row count.
     # The chi-square statistic is still computed and reported beside the deviation.

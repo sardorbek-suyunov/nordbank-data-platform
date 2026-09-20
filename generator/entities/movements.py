@@ -381,16 +381,24 @@ def _account_month(**kw) -> None:
         if rate_by_class
         else float(txn_params["per_account_month"])
     )
-    seasonal = day_weight(kw["month_weights"], 1.0, window_first)
-    growth = growth_multiplier(float(params["acquisition"]["monthly_growth_rate"]), month_index)
-    expected = base_rate * seasonal * growth
-    count = overdispersed_poisson(rng, expected, float(txn_params["per_account_month_dispersion"]))
-
     card_ids = accounts.card_ids[index]
     has_card = bool(card_ids)
     span_days = (window_last - window_first).days + 1
     if span_days <= 0:
         return
+
+    # A monthly rate over a window that is not a whole month is scaled to the days it actually
+    # covers. Three windows are short: the month the history starts in, the month it ends in,
+    # and the month an account opens in. Without this the rate is spread over the short window
+    # instead of the month, which makes those days denser rather than fewer — measured at the
+    # `ci` profile, the eighteen days before the anchor ran at 608.7 transactions a day against
+    # August's 209.2, a cliff at exactly the date M4 begins extracting from.
+    window_fraction = span_days / days_in_month(window_first.year, window_first.month)
+
+    seasonal = day_weight(kw["month_weights"], 1.0, window_first)
+    growth = growth_multiplier(float(params["acquisition"]["monthly_growth_rate"]), month_index)
+    expected = base_rate * seasonal * growth * window_fraction
+    count = overdispersed_poisson(rng, expected, float(txn_params["per_account_month_dispersion"]))
 
     # The account's regular context for this month, each on its own stream keyed on the account
     # and the calendar month. Addressable rather than drawn in sequence here, because the
@@ -705,7 +713,7 @@ def _account_month(**kw) -> None:
     # Bank-initiated postings, which arrive whether the customer transacted or not.
     bank_channel = txn_params["bank_initiated_channel"]
     for type_code, monthly_rate in sorted(txn_params["bank_initiated_per_account_month"].items()):
-        if not bernoulli(rng, min(1.0, float(monthly_rate))):
+        if not bernoulli(rng, min(1.0, float(monthly_rate) * window_fraction)):
             continue
         day = window_first + dt.timedelta(days=rng.randrange(span_days))
         seq += 1
@@ -741,7 +749,7 @@ def _account_month(**kw) -> None:
     # Payment instructions.
     payment_count = overdispersed_poisson(
         rng,
-        float(pay_params["per_account_month"]) * growth,
+        float(pay_params["per_account_month"]) * growth * window_fraction,
         float(pay_params["per_account_month_dispersion"]),
     )
     for _ in range(payment_count):
@@ -1163,6 +1171,10 @@ def _month_sessions(**kw) -> None:
     span = (window_last - window_first).days + 1
     if span <= 0:
         return
+    # Scaled to the days the window covers, for the reason `_account_month` states: a whole
+    # month of sessions spread over the eighteen days before the anchor made them 2.4 times
+    # denser there than in August.
+    window_fraction = span / days_in_month(window_first.year, window_first.month)
 
     seen_customers: set[int] = set()
 
@@ -1176,7 +1188,7 @@ def _month_sessions(**kw) -> None:
         session_rng = streams.stream("sessions", customer_id, month_index)
         count = overdispersed_poisson(
             session_rng,
-            float(digital_params["background_sessions_per_customer_month"]),
+            float(digital_params["background_sessions_per_customer_month"]) * window_fraction,
             float(digital_params["sessions_dispersion"]),
         )
         device_total = max(1, customers.device_count[customer_id - 1])
