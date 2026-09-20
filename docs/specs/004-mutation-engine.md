@@ -545,3 +545,42 @@ the real one.** Either the anchor is chosen so the extracted window stays behind
 the feed synthesises rates for simulated-future dates and says so. Both are defensible and the
 choice should be deliberate, which is why it is written down before the milestone that makes
 it.
+
+### 2026-09-20 — Criterion 9's reconciliation is exact at the tick, not after the run
+
+Criterion 9 asks that `platform.tick_log` counts reconcile exactly against rows whose
+`updated_at` falls within each tick's window, for all sixty ticks. Run once at the end of the
+sixty, it cannot, and the reason is arithmetic rather than a defect in either side: a later tick
+re-stamps a row an earlier tick wrote, and the earlier window loses it permanently.
+
+The historical book already exhibits it, because the loader stamps an account with its last
+movement. Accounts with a movement on a day, against accounts whose `updated_at` is that day, on
+the loaded `ci` book:
+
+| Day | Accounts that moved | Accounts stamped that day |
+|---|---|---|
+| Six days before the anchor | 210 | 6 |
+| Three days before | 234 | 21 |
+| The day before | 232 | 82 |
+
+With 466 of 736 open accounts touched by a single day of movements, `accounts` loses most of a
+six-day-old window. The same is true of any table a later tick revisits, and revisiting is the
+milestone's purpose.
+
+**The reconciliation therefore runs per tick, immediately after each one commits**, and that is
+also the only form of it M4 depends on: an extractor running at the end of day D sees exactly
+what the log says changed on day D. It does not run in December against September's window.
+Measured, one day's window across five tables costs 7.8 milliseconds on the `ci` book, so
+running it sixty times is free against a two-second per-tick budget.
+
+Two rules keep the identity exact, and both constrain the change classes rather than the check:
+
+- The row count is `rows_inserted + rows_updated`. `rows_late_arriving` is a subset of the first
+  and `rows_soft_deleted` of the second, so adding them would double count, and `rows_deleted`
+  is excluded because a physically deleted row is not in the table to be found.
+- **A tick never updates a row it inserted in the same tick.** The log would count it twice and
+  the window once. The `dirt` phase edits the population that was already there, and a new row
+  that should carry dirt is written dirty rather than written clean and corrected.
+
+The after-sixty figures are still reported, with the difference and its explanation, because the
+difference is itself the measurement that justifies this amendment.
