@@ -25,6 +25,11 @@ accounts and not one past its limit, so every instance downstream is attributabl
 Invariant 4 is unaffected by any of it, because invariant 4 asserts that the stored balance is
 the signed sum of posted movements and knows nothing about the limit.
 
+**A tick never updates a row it inserted in the same tick.** The acquisition phase runs first
+and writes a new account with its opening deposit already folded in, so this phase skips an
+account opened today. Counting an insert and an update separately against a window that holds
+the row once is the off-by-one acceptance criterion 9 exists to catch.
+
 **The posting date is the tick's date, never the business date.** A late arrival's ledger entry
 posts to the current open period. Posting it to D−4 would restate totals for a day already
 reported, which is the same reproducibility argument that makes FX rates non-restating in
@@ -189,12 +194,7 @@ def run(context: TickContext) -> None:
         balance={account_id: a.balance for account_id, a in snapshot.accounts.items()},
     )
 
-    ledger = LedgerWriter(
-        context.writer,
-        model.gl,
-        first_batch_id=snapshot.next_id["gl_transactions"],
-        first_entry_id=snapshot.next_id["gl_entries"],
-    )
+    ledger = context.ledger
     alerts = AlertWriter(context.writer, first_id=snapshot.next_id["fraud_alerts"])
     sessions = SessionWriter(
         context.writer,
@@ -740,6 +740,13 @@ def _account_day(
     day after the anchor looks like the day before it rather than like a separate simulation.
     """
     if account.status_code == "dormant":
+        return
+    if account.opened_date == context.simulated_date:
+        # Acquired by the phase before this one. A tick never updates a row it inserted in the
+        # same tick: the log would count the insert and the balance fold separately and the
+        # window would hold the row once, which is the off-by-one acceptance criterion 9's
+        # reconciliation is there to catch. The account's opening deposit is written with it,
+        # so its balance is already the signed sum of its posted movements.
         return
 
     day = context.simulated_date

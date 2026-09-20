@@ -33,6 +33,8 @@ from decimal import Decimal
 
 from ...entities import vocabulary as vocab
 from ...entities.lending import CashEvent
+from ...realism import lending as lending_model
+from ...realism.calendar import add_months
 from ...realism.distributions import bernoulli, cents, weighted_choice
 from ..tick import TickContext
 from ..writer import apply_updates
@@ -65,6 +67,8 @@ def run(context: TickContext) -> None:
     _cards(context, daily)
     _customers(context, daily)
     _addresses(context, daily)
+    _decide_applications(context)
+    _disburse_approved(context)
     _loans(context)
 
 
@@ -588,3 +592,222 @@ def _close_settled_loans(context: TickContext) -> None:
         """
     )
     context.report.record_update("loans", [row[0] for row in context.cursor.fetchall()])
+
+
+# ---------------------------------------------------------------------------- the lending funnel
+
+
+# When in the simulated day a decision and a disbursement are stamped. Inside office hours
+# rather than at the sweep's own instant, because both are an underwriter's act.
+DECISION_HOUR = 11
+DISBURSEMENT_HOUR = 14
+
+
+def _decide_applications(context: TickContext) -> None:
+    """Decide the applications whose decision lag has elapsed.
+
+    The lag is two to 216 hours in the historical model — up to nine days — so an application
+    written by the acquisition phase sits in `scoring` for a while, which is what gives M4 a row
+    that changes status days after it arrived. The lag is drawn from a stream keyed on the
+    application, so it is the same number on every replay and does not have to be stored.
+    """
+    lending = context.profile.params["lending"]
+    reasons = context.snapshot.ref.codes("decision_reasons")
+    now = context.at(DECISION_HOUR)
+
+    context.cursor.execute(
+        """
+        select a.loan_application_id,
+               -- Nullable on the application; the underwriter scores the customer, so the
+               -- customer's current band is the answer when the application does not carry one.
+               coalesce(a.risk_band_code, c.risk_band_code) as risk_band_code,
+               a.applied_at, a.requested_amount
+          from core.loan_applications a
+          join core.customers c on c.customer_id = a.customer_id
+          join ref.loan_application_statuses s on s.code = a.loan_application_status_code
+         where not s.is_decided and not a.is_deleted
+         order by a.loan_application_id
+        """
+    )
+    statuses: dict[str, list[int]] = {}
+    approvals: tuple[list[int], list] = ([], [])
+    decisions: tuple[list[int], list[str]] = ([], [])
+
+    for application_id, risk_band, applied_at, requested in context.cursor.fetchall():
+        rng = context.stream("lifecycle.decision", application_id)
+        lag = rng.randint(
+            int(lending["decision_lag_hours_min"]), int(lending["decision_lag_hours_max"])
+        )
+        if applied_at + dt.timedelta(hours=lag) > now:
+            continue
+
+        roll = rng.random()
+        withdrawn = float(lending["withdrawn_share"])
+        expired = withdrawn + float(lending["expired_share"])
+        if roll < withdrawn:
+            statuses.setdefault("withdrawn", []).append(application_id)
+            decisions[0].append(application_id)
+            decisions[1].append("customer_withdrew" if "customer_withdrew" in reasons else "")
+        elif roll < expired:
+            statuses.setdefault("expired", []).append(application_id)
+            decisions[0].append(application_id)
+            decisions[1].append("expired_no_response" if "expired_no_response" in reasons else "")
+        elif bernoulli(rng, lending_model.approval_probability(lending, risk_band)):
+            approvals[0].append(application_id)
+            approvals[1].append(lending_model.approved_amount(rng, lending, requested))
+        else:
+            statuses.setdefault("rejected", []).append(application_id)
+            decisions[0].append(application_id)
+            decisions[1].append(lending_model.decision_reason(rng, False, risk_band, reasons))
+
+    for status, ids in sorted(statuses.items()):
+        context.report.record_update(
+            "loan_applications",
+            apply_updates(
+                context.cursor,
+                "update core.loan_applications set loan_application_status_code = %s, "
+                "decided_at = %s where loan_application_id = any(%s::bigint[]) "
+                "returning loan_application_id",
+                ids,
+                scalars=(status, now),
+            ),
+        )
+    context.report.record_update(
+        "loan_applications",
+        apply_updates(
+            context.cursor,
+            """
+            update core.loan_applications a
+               set decision_reason_code = nullif(d.reason, '')
+              from unnest(%s::bigint[], %s::text[]) as d(application_id, reason)
+             where a.loan_application_id = d.application_id
+            returning a.loan_application_id
+            """,
+            decisions[0],
+            decisions[1],
+        ),
+    )
+    context.report.record_update(
+        "loan_applications",
+        apply_updates(
+            context.cursor,
+            """
+            update core.loan_applications a
+               set loan_application_status_code = 'approved', decided_at = %s,
+                   approved_amount = d.amount,
+                   decision_reason_code = %s
+              from unnest(%s::bigint[], %s::numeric[]) as d(application_id, amount)
+             where a.loan_application_id = d.application_id
+            returning a.loan_application_id
+            """,
+            approvals[0],
+            approvals[1],
+            scalars=(now, "within_policy" if "within_policy" in reasons else None),
+        ),
+    )
+
+
+def _disburse_approved(context: TickContext) -> None:
+    """Draw down the approved applications whose disbursement lag has elapsed.
+
+    Money leaving the bank is what starts the risk, so disbursement lags the decision by one to
+    twenty-one days in the historical model and by the same here. Not every approval is drawn
+    down; `disbursement_share` decides, and an application that is never drawn stays approved
+    with no loan against it, which is what the historical book leaves too.
+    """
+    lending = context.profile.params["lending"]
+    ref = context.snapshot.ref
+    day = context.simulated_date
+    stamp = context.at(DISBURSEMENT_HOUR)
+
+    context.cursor.execute(
+        """
+        select a.loan_application_id, a.customer_id, a.loan_product_code, a.approved_amount,
+               a.application_currency_code, a.decided_at, ah.account_id
+          from core.loan_applications a
+          join core.account_holders ah on ah.customer_id = a.customer_id
+          join ref.holder_roles hr on hr.code = ah.holder_role_code and hr.is_primary
+          join core.accounts ac on ac.account_id = ah.account_id
+          join ref.account_statuses s on s.code = ac.account_status_code
+         where a.loan_application_status_code = 'approved' and a.approved_amount is not null
+           and s.is_open and not a.is_deleted and not ac.is_deleted
+           and not exists (select 1 from core.loans l
+                            where l.loan_application_id = a.loan_application_id)
+         order by a.loan_application_id
+        """
+    )
+    for (
+        application_id,
+        customer_id,
+        product_code,
+        approved,
+        currency,
+        decided_at,
+        account_id,
+    ) in context.cursor.fetchall():
+        rng = context.stream("lifecycle.disbursement", application_id)
+        if not bernoulli(rng, float(lending["disbursement_share"])):
+            continue
+        lag = rng.randint(
+            int(lending["disbursement_lag_days_min"]), int(lending["disbursement_lag_days_max"])
+        )
+        if decided_at.date() + dt.timedelta(days=lag) > day:
+            continue
+
+        product = ref.row("loan_products", product_code)
+        term = int(product["term_months"])
+        rate = Decimal(str(product["nominal_annual_rate"]))
+        loan_id = context.snapshot.take_id("loans")
+
+        context.writer.add(
+            "loans",
+            (
+                loan_id,
+                f"LN{loan_id:013d}",
+                application_id,
+                customer_id,
+                product_code,
+                "current",
+                day,
+                add_months(day, term),
+                None,
+                approved,
+                currency,
+                rate,
+                term,
+                stamp,
+                stamp,
+                False,
+            ),
+        )
+        for installment in lending_model.schedule(approved, rate, term, add_months(day, 1)):
+            installment_id = context.snapshot.take_id("loan_installments")
+            context.writer.add(
+                "loan_installments",
+                (
+                    installment_id,
+                    loan_id,
+                    installment.number,
+                    installment.due_date,
+                    installment.due_amount,
+                    Decimal("0.0000"),
+                    None,
+                    currency,
+                    stamp,
+                    stamp,
+                    False,
+                ),
+            )
+
+        context.cash_events.append(
+            CashEvent(
+                when=stamp,
+                account_id=account_id,
+                amount=approved,
+                source_entity_code="transaction",
+                source_entity_id=0,
+                description="transfer_in",
+                currency_code=currency,
+                principal_component=None,
+            )
+        )
