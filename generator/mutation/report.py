@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -50,6 +51,12 @@ class TickReport:
     started_at: dt.datetime | None = None
     completed_at: dt.datetime | None = None
     counts: dict[str, dict[str, int]] = field(default_factory=lambda: defaultdict(dict))
+    # Updates are counted by key rather than by rows affected, because two phases can touch one
+    # row in one tick — the lifecycle sweep sets an account dormant and the movement fold moves
+    # its balance — and the row appears once in the tick's window. Counting statements instead
+    # of rows would make acceptance criterion 9 fail on a tick that did nothing wrong.
+    updated_keys: dict[str, set[int]] = field(default_factory=lambda: defaultdict(set))
+    soft_deleted_keys: dict[str, set[int]] = field(default_factory=lambda: defaultdict(set))
     deleted_keys: list[tuple[str, int]] = field(default_factory=list)
     drift_fired: list[str] = field(default_factory=list)
     # Measurements the tick prints and the acceptance runs report. Not persisted: both are
@@ -67,6 +74,28 @@ class TickReport:
             raise ValueError(f"unknown operation class {klass!r}; expected one of {CLASSES}")
         if count:
             self.counts[table][klass] = self.counts[table].get(klass, 0) + count
+
+    def record_update(self, table: str, keys: Iterable[int], *, soft_delete: bool = False) -> int:
+        """Record updated rows by key and return how many were new to this tick.
+
+        Idempotent per key: a row a second phase updates again is already counted. The count on
+        the report is always the size of the key set, so it is the number of distinct rows the
+        tick changed and nothing else.
+        """
+        keys = [int(key) for key in keys]
+        if not keys:
+            return 0
+
+        seen = self.updated_keys[table]
+        before = len(seen)
+        seen.update(keys)
+        self.counts[table]["updated"] = len(seen)
+
+        if soft_delete:
+            deleted = self.soft_deleted_keys[table]
+            deleted.update(keys)
+            self.counts[table]["soft_deleted"] = len(deleted)
+        return len(seen) - before
 
     def record_delete(self, table: str, key: int) -> None:
         """A physical delete, counted and with its key kept for M7's reconciler."""
