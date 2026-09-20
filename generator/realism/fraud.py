@@ -22,6 +22,7 @@ perfectly is the same fake one step further in.
 from __future__ import annotations
 
 import datetime as dt
+import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -177,3 +178,59 @@ def rule_for(rng: random.Random, fraud: dict[str, Any], context: FraudContext) -
         weights["merchant_risk"] = weights.get("merchant_risk", 0.0) * 2.0
     total = sum(weights.values())
     return weighted_choice(rng, {code: weight / total for code, weight in weights.items()})
+
+
+def _beta_density(alpha: float, beta: float, value: float) -> float:
+    """The Beta(alpha, beta) density at `value`, computed in log space.
+
+    Log space because the normalising constant overflows a float for the shapes a score
+    distribution uses, and because the two densities are only ever compared as a ratio.
+    """
+    value = min(1.0 - 1e-9, max(1e-9, value))
+    log_density = (
+        math.lgamma(alpha + beta)
+        - math.lgamma(alpha)
+        - math.lgamma(beta)
+        + (alpha - 1.0) * math.log(value)
+        + (beta - 1.0) * math.log1p(-value)
+    )
+    return math.exp(log_density)
+
+
+def alert_prior(fraud: dict[str, Any]) -> float:
+    """The share of alerts that are raised on genuinely fraudulent transactions.
+
+    Derived from the detector rather than configured, exactly as the realism document says
+    precision is: recall times the fraud rate, over that plus the false alert rate times
+    everything else. It is the prior an analyst starts from before reading the score.
+    """
+    rate = float(fraud["target_rate"])
+    caught = float(fraud["detection_recall"]) * rate
+    false_alerts = float(fraud["false_alert_rate"]) * (1.0 - rate)
+    total = caught + false_alerts
+    return caught / total if total > 0 else 0.0
+
+
+def confirmation_probability(fraud: dict[str, Any], score: float) -> float:
+    """The probability an analyst confirms fraud on an alert scoring `score`.
+
+    **The disposition follows the evidence, not the hidden truth.** A tick reads an alert out of
+    the database and cannot know whether the transaction behind it was fraudulent: nothing in
+    `core` records that, and nothing should — a bank does not store which of its transactions
+    were really fraud, it stores which alerts its analysts confirmed. So the disposition is the
+    posterior of the two score distributions the detector draws from, against the prior above.
+
+    It reproduces the historical precision by construction rather than by a second parameter,
+    because the scores it reads were drawn from those same two distributions, and it gives a
+    high-scoring alert a higher chance of being confirmed — which is what makes Q10's precision
+    differ between rules instead of being one number repeated.
+    """
+    prior = alert_prior(fraud)
+    fraud_density = _beta_density(
+        float(fraud["score_fraud_alpha"]), float(fraud["score_fraud_beta"]), score
+    )
+    legit_density = _beta_density(
+        float(fraud["score_legit_alpha"]), float(fraud["score_legit_beta"]), score
+    )
+    total = prior * fraud_density + (1.0 - prior) * legit_density
+    return prior * fraud_density / total if total > 0 else prior
