@@ -318,6 +318,7 @@ def run(
             recurring_prices=[
                 float(price) for price in profile.params["amounts"]["recurring_amount_choices"]
             ],
+            sample_rng=context.stream("guard.balances"),
         )
         guard_module.assert_coverage(
             guard_result, profile.band("login_precedes_transaction_share")[0]

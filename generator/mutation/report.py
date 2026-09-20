@@ -199,8 +199,13 @@ def format_report(report: TickReport) -> str:
     if report.guard is not None:
         guard = report.guard
         lines.append("")
+        sampled = (
+            ""
+            if guard.accounts_touched <= guard.accounts_checked
+            else f" sampled from {guard.accounts_touched:,}"
+        )
         lines.append(
-            f"  guard: invariant 4 exact over {guard.accounts_checked:,} touched account(s); "
+            f"  guard: invariant 4 exact over {guard.accounts_checked:,} account(s){sampled}; "
             f"invariant 13 {guard.coverage_share:.3f} over "
             f"{guard.coverage_population:,} digital transaction(s)"
             + ("" if guard.coverage_asserted else ", reported not asserted")
