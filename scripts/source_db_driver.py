@@ -46,6 +46,17 @@ EXPECTED_SCHEMAS = ("core", "ref", "platform")
 CONNECT_TIMEOUT = 10
 
 
+# The custom setting core.set_updated_at() reads, per spec 002 design rule 4 as amended.
+SIMULATION_CLOCK = "nordbank.sim_now"
+
+# `SET LOCAL <name> = %s` is a syntax error: SET takes no bind parameter. set_config with
+# is_local true is the function form of SET LOCAL and does, which keeps the value parameterised
+# rather than interpolated into SQL. Its second argument is text, so the instant is rendered
+# here rather than left to the driver's timestamptz adaptation, which set_config will not
+# accept.
+_SET_CLOCK = "select set_config(%s, %s, true)"
+
+
 class SourceDatabaseError(RuntimeError):
     """The source database could not be reached, or what answered was not the source database."""
 
@@ -179,3 +190,25 @@ def connect(settings: Settings | None = None, *, autocommit: bool = False) -> It
         yield connection
     finally:
         connection.close()
+
+
+def set_simulation_clock(cursor: Any, moment: Any) -> None:
+    """Point the `updated_at` trigger at a simulated instant for the rest of this transaction.
+
+    Transaction-scoped, so it is discarded at commit and at rollback alike and cannot reach
+    another session or a later transaction on a pooled connection. A plain `SET` would survive
+    the commit and backdate everything written afterwards on that connection.
+    """
+    cursor.execute(_SET_CLOCK, (SIMULATION_CLOCK, moment.isoformat()))
+
+
+def clear_simulation_clock(cursor: Any) -> None:
+    """Return the trigger to the wall clock for the rest of this transaction.
+
+    `core` and `ref` carry simulated time; `platform` carries real time, because
+    `platform.tick_log` is a reconciliation control M7 reads and a control that lies about when
+    it ran is useless. Clearing is not scoped to the next statement: it holds until the
+    transaction ends. So this is an ordering requirement rather than a toggle — set once, write
+    `core` and `ref`, clear once, write `platform` last.
+    """
+    cursor.execute(_SET_CLOCK, (SIMULATION_CLOCK, ""))
