@@ -941,3 +941,30 @@ the ordering rule above is what keeps `platform` out of it.
 **Cost: none measurable.** A/B/A at 50,000 updated rows on `core.transactions`, PostgreSQL
 16.15: `now()` 1569, 1447, 1428 ms; simulation clock 1409, 1434, 1429 ms. The setting lookup
 disappears into the roughly 29 microseconds per row the heap and index writes cost.
+
+### 2026-09-20 — Access-path indexes, where a foreign key index is not the index the query needs
+
+Design rule 12 gives every foreign key column an index, and the catalogue loop in
+`50_audit_and_indexes.sql` enforces it. That serves the constraint. It does not serve a query
+that filters on the key *and* a range of another column, because the second predicate is
+evaluated after every row for that key has been read, and it serves nothing at all for a column
+that is not a key.
+
+M3's mutation engine is where that became load-bearing, and four indexes are added with it. Each
+is justified by a query that exists rather than by one that might:
+
+- `core.login_sessions (customer_id, started_at)`. Spec 003 invariant 13 and question 19 both
+  ask the same question — this customer's sessions in a window around an instant — and the
+  foreign key index answers it by reading every session that customer ever had. Measured on the
+  `dev` book's 1.5 million sessions, invariant 13 over the whole book goes from 52.8 s to 6.7 s.
+  The index is leading on `customer_id`, so it also serves the foreign key and the catalogue loop
+  leaves the single-column one out.
+- `core.transactions (booked_at)`, `core.payments (initiated_at)` and `core.payments (booked_at)`.
+  The mutation engine's clearing cycle reads recent business history on every tick and filters on
+  a business timestamp over a window of days. None of those columns is a foreign key, so each
+  query scanned the whole table: a seven-day window over 2.2 million transactions went from
+  1,227 ms to 25 ms, and over 470,000 payments from 1,230 ms to 16 ms.
+
+`updated_at` is indexed and is not a substitute for the second group. It says when the bank last
+touched a row; these questions are about when the customer did, and on a late-arriving item those
+are different days by construction.

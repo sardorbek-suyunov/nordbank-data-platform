@@ -143,3 +143,38 @@ begin
     end loop;
 end;
 $$;
+
+-- 4. Access-path indexes: the ones a query needs that a foreign key does not imply.
+--
+-- The catalogue loop above gives every foreign key column a single-column index, which serves
+-- the constraint. It does not serve a query that filters on the key *and* a range of another
+-- column, because the second predicate is evaluated after every row for that key has been read.
+--
+-- `core.login_sessions` is where that bites. Spec 003 invariant 13 and question 19 both ask the
+-- same shape of question — this customer's sessions in a window around an instant — and the
+-- foreign key index answers it by reading every session that customer ever had. Measured on the
+-- `dev` book, 1.5 million sessions over 5,000 customers:
+--
+--   invariant 13 over the whole book   52.8 s  ->  6.7 s
+--   the mutation engine's delta guard   1.9 s  ->  0.02 s
+--
+-- The composite index is leading on `customer_id`, so it also serves the foreign key and the
+-- loop above leaves the single-column one out.
+create index if not exists ix_login_sessions_customer_started
+    on core.login_sessions (customer_id, started_at);
+
+-- The clearing cycle reads recent business history on every tick: the authorisations that may
+-- post today, the payments that may book or settle, the postings that may be reversed, the
+-- non-posted rows that may be voided. All four filter on a business timestamp over a window of
+-- days, and none of those columns is a foreign key, so the loop above leaves them unindexed and
+-- every one of those queries scans the whole table. Measured on the `dev` book's 2.2 million
+-- transactions and 470,000 payments, a seven-day window:
+--
+--   the authorisations that may post today   1,227 ms  ->  25 ms
+--   the payments that may book or settle     1,230 ms  ->  16 ms
+--
+-- `updated_at` is indexed and is not a substitute: it says when the bank last touched a row,
+-- and these questions are about when the customer did.
+create index if not exists ix_transactions_booked_at on core.transactions (booked_at);
+create index if not exists ix_payments_initiated_at on core.payments (initiated_at);
+create index if not exists ix_payments_booked_at on core.payments (booked_at);
