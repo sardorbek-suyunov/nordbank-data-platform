@@ -699,6 +699,10 @@ defaults:
       # A move. The old address is closed the day before the new one starts, so a point-in-time
       # lookup has exactly one answer.
       address_change_monthly_hazard: 0.007
+      # Acquirer risk score revisions on core.merchants, which only exist once the scripted
+      # drift event has added the column. An unscored merchant is scored for the first time far
+      # more readily than a scored one is revised, so the phase multiplies this for a null.
+      merchant_risk_score_monthly_hazard: 0.06
 
     reversal:
       # A posted transaction is reversed rather than soft deleted (spec 004, amended). The

@@ -28,6 +28,7 @@ from .manifest import build as build_manifest
 from .manifest import compare as compare_manifest
 from .manifest import format_manifest
 from .manifest import write as write_manifest
+from .mutation.reset import reset as reset_simulation
 from .pipeline import generate, spool_root
 from .refdata import RefDataError, validate_against
 from .refdata import load as load_refdata
@@ -145,6 +146,13 @@ def main(argv: list[str] | None = None) -> int:
     result = generate(config, ref, spool)
     print(f"seed: generated {sum(result.counts.values()):,} rows in {result.seconds:.2f} s")
 
+    # The simulation is reset before the new book is loaded, not after: reverting a drift event
+    # drops a column, and doing that to a table that has just been filled would be a schema
+    # change on live data for no reason. Spec 004 section 7, as amended.
+    reset_report = reset_simulation(
+        profile=config.profile.name, seed=config.seed, anchor=config.anchor
+    )
+
     report = load_into_database(config, spool)
     faults = assert_sequences_ahead()
     if faults:
@@ -171,6 +179,15 @@ def main(argv: list[str] | None = None) -> int:
         f"seed: loaded in {report.total_seconds:.2f} s "
         f"({report.ledger_chunks} ledger chunk(s), "
         f"{report.foreign_keys_restored} foreign keys revalidated)"
+    )
+    if reset_report.reverted:
+        print(
+            f"seed: reverted {len(reset_report.reverted)} fired drift event(s): "
+            f"{', '.join(reset_report.reverted)}"
+        )
+    print(
+        f"seed: simulation reset to {reset_report.anchor}"
+        + (f", {reset_report.ticks_cleared} tick(s) cleared" if reset_report.ticks_cleared else "")
     )
     print(f"seed: {elapsed:.2f} s total")
 
