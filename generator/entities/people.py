@@ -12,7 +12,9 @@ customers it sizes, adding a customer attribute would change how many customers 
 from __future__ import annotations
 
 import datetime as dt
+import random
 from dataclasses import dataclass, field
+from typing import Any, NamedTuple
 
 from ..config import RunConfig
 from ..realism import lifecycle
@@ -127,6 +129,132 @@ def _signup_dates(config: RunConfig, streams: SubStreams) -> list[dt.date]:
     return dates[: config.profile.customers]
 
 
+class NewCustomer(NamedTuple):
+    """One customer's drawn attributes, before they become a row.
+
+    Extracted so the mutation engine can acquire a customer with the same draws in the same
+    order as the historical load, rather than with a second implementation of the same
+    distributions. The parameters were always single-sourced; this makes the sequence single
+    sourced too, which is the part a reviewer cannot check by reading two files.
+    """
+
+    date_of_birth: dt.date
+    country_code: str
+    risk_band_code: str
+    kyc_status_code: str
+    full_name: str
+    email: str | None
+    phone: str | None
+    national_identifier: str | None
+    created_at: dt.datetime
+
+
+def draw_customer(
+    rng: random.Random, customers: dict[str, Any], customer_id: int, signup: dt.date
+) -> NewCustomer:
+    """Draw one customer from the profile. Consumes `rng` in a fixed order."""
+    age = triangular_int(
+        rng,
+        int(customers["age_at_signup_min"]),
+        int(customers["age_at_signup_mode"]),
+        int(customers["age_at_signup_max"]),
+    )
+    # Born `age` years before signup, offset within the year so birthdays are spread.
+    birth_year = signup.year - age
+    date_of_birth = dt.date(birth_year, 1, 1) + dt.timedelta(days=rng.randrange(365))
+    if date_of_birth >= signup:
+        date_of_birth = signup - dt.timedelta(days=365 * 18 + 1)
+
+    country = weighted_choice(rng, customers["country_mix"])
+    risk_band = weighted_choice(rng, customers["risk_band_mix"])
+    kyc_status = weighted_choice(rng, customers["kyc_status_mix"])
+
+    given = vocab.GIVEN_NAMES[rng.randrange(len(vocab.GIVEN_NAMES))]
+    family = vocab.FAMILY_NAMES[rng.randrange(len(vocab.FAMILY_NAMES))]
+
+    email = (
+        f"{given.lower()}.{family.lower()}{customer_id}@example.invalid"
+        if bernoulli(rng, float(customers["email_share"]))
+        else None
+    )
+    phone = (
+        f"+{rng.randrange(30, 49)}{rng.randrange(100000000, 999999999)}"
+        if bernoulli(rng, float(customers["phone_share"]))
+        else None
+    )
+    national_identifier = (
+        f"{country}-{rng.randrange(10**8, 10**9 - 1)}"
+        if bernoulli(rng, float(customers["national_identifier_share"]))
+        else None
+    )
+
+    return NewCustomer(
+        date_of_birth=date_of_birth,
+        country_code=country,
+        risk_band_code=risk_band,
+        kyc_status_code=kyc_status,
+        full_name=f"{given} {family}",
+        email=email,
+        phone=phone,
+        national_identifier=national_identifier,
+        created_at=at_time(signup, rng.randrange(7, 22), rng.randrange(60), rng.randrange(60)),
+    )
+
+
+def customer_row(customer_id: int, signup: dt.date, drawn: NewCustomer) -> tuple:
+    """The `core.customers` row for a drawn customer."""
+    return (
+        customer_id,
+        f"CUS{customer_id:010d}",
+        drawn.full_name,
+        drawn.email,
+        drawn.phone,
+        drawn.national_identifier,
+        drawn.date_of_birth,
+        drawn.kyc_status_code,
+        drawn.risk_band_code,
+        signup,
+        drawn.country_code,
+        drawn.created_at,
+        drawn.created_at,
+        False,
+    )
+
+
+def address_row(
+    rng: random.Random,
+    address_id: int,
+    customer_id: int,
+    country: str,
+    valid_from: dt.date,
+    stamp: dt.datetime,
+    *,
+    address_type: str = "residential",
+) -> tuple:
+    """One address row, drawn from the country's own city and postcode vocabulary."""
+    cities = vocab.cities_for(country)
+    digits = vocab.postcode_digits(country)
+    city = cities[rng.randrange(len(cities))]
+    postal_code = str(rng.randrange(10 ** (digits - 1), 10**digits))
+    return (
+        address_id,
+        customer_id,
+        address_type,
+        vocab.street_address(rng.randrange(64), rng.randrange(8), rng.randrange(1, 240)),
+        f"Flat {rng.randrange(1, 40)}"
+        if address_type == "correspondence" and bernoulli(rng, 0.4)
+        else None,
+        city,
+        postal_code,
+        country,
+        valid_from,
+        None,
+        stamp,
+        stamp,
+        False,
+    )
+
+
 def generate(config: RunConfig, ref: RefData, streams: SubStreams, spool: Spool) -> CustomerBook:
     params = config.profile.params
     customers = params["customers"]
@@ -140,48 +268,15 @@ def generate(config: RunConfig, ref: RefData, streams: SubStreams, spool: Spool)
     for customer_id, signup in enumerate(_signup_dates(config, streams), start=1):
         rng = streams.stream("customers", customer_id)
 
-        age = triangular_int(
-            rng,
-            int(customers["age_at_signup_min"]),
-            int(customers["age_at_signup_mode"]),
-            int(customers["age_at_signup_max"]),
-        )
-        # Born `age` years before signup, offset within the year so birthdays are spread.
-        birth_year = signup.year - age
-        date_of_birth = dt.date(birth_year, 1, 1) + dt.timedelta(days=rng.randrange(365))
-        if date_of_birth >= signup:
-            date_of_birth = signup - dt.timedelta(days=365 * 18 + 1)
+        drawn = draw_customer(rng, customers, customer_id, signup)
+        country = drawn.country_code
+        created_at = drawn.created_at
 
-        country = weighted_choice(rng, customers["country_mix"])
-        risk_band = weighted_choice(rng, customers["risk_band_mix"])
-        kyc_status = weighted_choice(rng, customers["kyc_status_mix"])
-
-        given = vocab.GIVEN_NAMES[rng.randrange(len(vocab.GIVEN_NAMES))]
-        family = vocab.FAMILY_NAMES[rng.randrange(len(vocab.FAMILY_NAMES))]
-        full_name = f"{given} {family}"
-
-        email = (
-            f"{given.lower()}.{family.lower()}{customer_id}@example.invalid"
-            if bernoulli(rng, float(customers["email_share"]))
-            else None
-        )
-        phone = (
-            f"+{rng.randrange(30, 49)}{rng.randrange(100000000, 999999999)}"
-            if bernoulli(rng, float(customers["phone_share"]))
-            else None
-        )
-        national_identifier = (
-            f"{country}-{rng.randrange(10**8, 10**9 - 1)}"
-            if bernoulli(rng, float(customers["national_identifier_share"]))
-            else None
-        )
-
-        created_at = at_time(signup, rng.randrange(7, 22), rng.randrange(60), rng.randrange(60))
         book.signup_date.append(signup)
         book.country_code.append(country)
-        book.risk_band_code.append(risk_band)
-        book.date_of_birth.append(date_of_birth)
-        book.kyc_status_code.append(kyc_status)
+        book.risk_band_code.append(drawn.risk_band_code)
+        book.date_of_birth.append(drawn.date_of_birth)
+        book.kyc_status_code.append(drawn.kyc_status_code)
         # On its own addressable stream rather than from this customer's general stream.
         # The M3 mutation engine needs the same number to pick a device for a session, and
         # the alternative is reading it back: `count(distinct device_fingerprint)` over
@@ -193,69 +288,22 @@ def generate(config: RunConfig, ref: RefData, streams: SubStreams, spool: Spool)
             lifecycle.device_count(streams.stream("devices", customer_id), digital)
         )
 
-        customer_rows.write(
-            (
-                customer_id,
-                f"CUS{customer_id:010d}",
-                full_name,
-                email,
-                phone,
-                national_identifier,
-                date_of_birth,
-                kyc_status,
-                risk_band,
-                signup,
-                country,
-                created_at,
-                created_at,
-                False,
-            )
-        )
-
-        cities = vocab.cities_for(country)
-        digits = vocab.postcode_digits(country)
-        city = cities[rng.randrange(len(cities))]
-        postal_code = str(rng.randrange(10 ** (digits - 1), 10**digits))
+        customer_rows.write(customer_row(customer_id, signup, drawn))
 
         address_id += 1
-        address_rows.write(
-            (
-                address_id,
-                customer_id,
-                "residential",
-                vocab.street_address(rng.randrange(64), rng.randrange(8), rng.randrange(1, 240)),
-                None,
-                city,
-                postal_code,
-                country,
-                signup,
-                None,
-                created_at,
-                created_at,
-                False,
-            )
-        )
+        address_rows.write(address_row(rng, address_id, customer_id, country, signup, created_at))
 
         if bernoulli(rng, float(customers["correspondence_address_share"])):
-            other_city = cities[rng.randrange(len(cities))]
             address_id += 1
             address_rows.write(
-                (
+                address_row(
+                    rng,
                     address_id,
                     customer_id,
-                    "correspondence",
-                    vocab.street_address(
-                        rng.randrange(64), rng.randrange(8), rng.randrange(1, 240)
-                    ),
-                    f"Flat {rng.randrange(1, 40)}" if bernoulli(rng, 0.4) else None,
-                    other_city,
-                    str(rng.randrange(10 ** (digits - 1), 10**digits)),
                     country,
                     signup,
-                    None,
                     created_at,
-                    created_at,
-                    False,
+                    address_type="correspondence",
                 )
             )
 

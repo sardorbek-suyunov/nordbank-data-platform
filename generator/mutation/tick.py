@@ -121,6 +121,10 @@ class TickContext:
     streams: SubStreams
     report: report_module.TickReport
     snapshot: snapshot_module.Snapshot
+    # One ledger for the whole tick. Two phases post monetary events — acquisition's opening
+    # deposits and everything the movement phase does — and two writers starting from the same
+    # high-water mark would allocate the same batch id.
+    ledger: Any = None
     # Rows the phases have decided but not yet copied. Flushed at the end of every phase, so a
     # later phase can update what an earlier one inserted.
     writer: TickWriter = field(default_factory=TickWriter)
@@ -215,6 +219,18 @@ class TickContext:
 ChangePhase = Callable[[TickContext], None]
 
 
+def _ledger_for(context: TickContext) -> Any:
+    """The tick's double-entry writer, continuing the ledger's own key sequence."""
+    from ..entities.ledger import LedgerWriter  # noqa: PLC0415 - the import is the wiring
+
+    return LedgerWriter(
+        context.writer,
+        context.profile.params["ledger"]["accounts"],
+        first_batch_id=context.snapshot.next_id["gl_transactions"],
+        first_entry_id=context.snapshot.next_id["gl_entries"],
+    )
+
+
 def run(
     connection: Any,
     *,
@@ -268,6 +284,8 @@ def run(
                 history_months=profile.history_months,
             ),
         )
+
+        context.ledger = _ledger_for(context)
 
         # core and ref carry simulated time from here, re-stamped per phase so that the tick's
         # changes spread across the simulated day instead of sharing one instant.
