@@ -56,3 +56,28 @@ def test_python_files_and_parsed_dags_agree() -> None:
     modules = {path.stem for path in DAG_FOLDER.glob("*.py") if not path.name.startswith("_")}
     parsed = set(_dagbag().dags)
     assert modules == parsed, f"DAG modules {modules} do not match parsed DAG ids {parsed}"
+
+
+def test_the_source_tick_is_paused_and_touches_no_warehouse_pool() -> None:
+    """Spec 004 section 6 and acceptance criterion 12.
+
+    Paused because M3 proves the wiring and M4 decides when to run it. No warehouse pool because
+    it touches only the source database, and taking a slot it does not need would block a DAG
+    that does.
+    """
+    dag = _dagbag().dags.get("ops_source_tick")
+    assert dag is not None, "ops_source_tick did not parse"
+    assert dag.is_paused_upon_creation is True
+    for task in dag.tasks:
+        assert task.pool == "default_pool", f"{task.task_id} holds pool {task.pool}"
+
+
+def test_the_simulation_writes_through_a_connection_of_its_own() -> None:
+    """The only thing in this repository that writes to `core` does not share the read-only id.
+
+    `docs/architecture.md` draws the line and names the connection, so the name is asserted
+    rather than left to a reader to notice.
+    """
+    source = (DAG_FOLDER / "ops_source_tick.py").read_text(encoding="utf-8")
+    assert "nordbank_source_simulator" in source
+    assert "nordbank_source_db" not in source.split('"""', 2)[2]
