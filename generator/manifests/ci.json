@@ -3,7 +3,7 @@
   "seed": 42,
   "anchor": "2026-09-18",
   "generator_version": "1.0.0",
-  "total_rows": 209190,
+  "total_rows": 209197,
   "tables": {
     "account_holders": {
       "rows": 878,
@@ -22,8 +22,8 @@
       "digest": "1042333069020:1005657716803"
     },
     "customer_addresses": {
-      "rows": 583,
-      "digest": "1196213860953:1243744883547"
+      "rows": 590,
+      "digest": "1336993254762:1259488064351"
     },
     "customers": {
       "rows": 500,
@@ -55,7 +55,7 @@
     },
     "login_sessions": {
       "rows": 24557,
-      "digest": "52826987504220:52876641841447"
+      "digest": "52543770861247:52940932204984"
     },
     "merchants": {
       "rows": 120,
