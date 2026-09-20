@@ -13,6 +13,13 @@ purely "run the files in order", and that is stated in ADR 0009 rather than hidd
 
 The dictionary is parsed before anything is written. A malformed dictionary aborts the apply
 with the offending line, and no partial classification is ever loaded.
+
+**Drift events that have already fired are re-applied**, and the columns they added are
+classified along with the documented ones. Phase 3 reloads the classification table from the
+dictionary and would otherwise drop the classification a drift event added, turning
+`schema-check` red; refusing to run while `platform.drift_log` is non-empty would make this
+target unusable after any tick. Re-applying is deterministic from the log, and every event's DDL
+is written to be idempotent like every other file here (spec 004 section 3, as amended).
 """
 
 from __future__ import annotations
@@ -25,6 +32,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import source_db_exec as db  # noqa: E402
 from schema_contract import DictionaryError, read_dictionary  # noqa: E402
+
+sys.path.insert(0, str(ROOT))
+from generator import drift  # noqa: E402
 
 SCHEMA_DIR = ROOT / "infra" / "docker" / "postgres-source" / "schema"
 SEED_DIR = ROOT / "infra" / "docker" / "postgres-source" / "seed"
@@ -106,6 +116,15 @@ def main() -> int:
 
     schema_files = _apply_directory(SCHEMA_DIR, "/schema")
     seed_files = _apply_directory(SEED_DIR, "/seed")
+
+    fired = drift.fired_names(db.executor())
+    for name in fired:
+        event = drift.event_by_name(name)
+        if event is None:
+            continue
+        print(f"schema-apply: re-applying drift event {name}")
+        db.run_sql(event.apply_sql + ";\n")
+    columns = columns + drift.classification_rows(fired)
 
     print(f"schema-apply: classifying {len(columns)} columns from {DICTIONARY.name}")
     db.run_sql(_classification_sql(columns))

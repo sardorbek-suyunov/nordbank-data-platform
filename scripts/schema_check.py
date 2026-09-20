@@ -12,6 +12,15 @@ It also checks that `platform.column_classifications` matches the dictionary, be
 is generated from it and a stale table means the extraction layer at M4 would tokenise the
 wrong set of columns.
 
+**The expected schema is the committed dictionary plus the drift events that have already
+fired** (spec 004 section 3, as amended). The mutation engine moves the source's shape mid-
+history, and "the DDL and the documentation change together" cannot mean a tick rewriting
+`docs/data_dictionary.md`: that file is committed and is this script's input, so a tick that
+edited it would make `git status` a function of how many ticks had been run. The timeline in
+`generator/drift/` declares each event's DDL and its dictionary delta as one object, and
+`platform.drift_log` says which have fired. Nothing committed is edited at runtime, and a
+checkout with no database parses the dictionary exactly as it did before M3.
+
 Wired into `make test-integration`, and run directly by `make schema-check`.
 """
 
@@ -31,6 +40,9 @@ from schema_contract import (  # noqa: E402
     live_columns,
     read_dictionary,
 )
+
+sys.path.insert(0, str(ROOT))
+from generator import drift  # noqa: E402
 
 DICTIONARY = ROOT / "docs" / "data_dictionary.md"
 
@@ -76,6 +88,11 @@ def main() -> int:
         return 1
 
     execute = db.executor()
+    fired = drift.fired_names(execute)
+    if fired:
+        documented = drift.apply_deltas(documented, fired)
+        print(f"schema-check: {len(fired)} drift event(s) have fired: {', '.join(fired)}")
+
     differences = compare(documented, live_columns(execute), execute)
     differences += classification_differences(execute, documented)
 

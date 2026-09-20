@@ -333,6 +333,16 @@ def run(
             cursor, to=target, completed_at=report.completed_at
         )
         report_module.write(cursor, report)
+        if report.drift_fired:
+            from .. import drift as drift_module  # noqa: PLC0415 - the import is the wiring
+
+            drift_module.record_fired(
+                cursor,
+                report.drift_fired,
+                simulated_date=target,
+                tick_sequence=report.tick_sequence,
+                applied_at=report.completed_at,
+            )
 
     connection.commit()
     return report

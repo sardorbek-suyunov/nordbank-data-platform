@@ -67,6 +67,7 @@ def run(context: TickContext) -> None:
     _cards(context, daily)
     _customers(context, daily)
     _addresses(context, daily)
+    _merchants(context, daily)
     _decide_applications(context)
     _disburse_approved(context)
     _loans(context)
@@ -94,6 +95,7 @@ def _daily_hazards(context: TickContext) -> dict[str, float]:
         "contact": float(mutation["customer_contact_monthly_hazard"]) / span,
         "surname": float(mutation["customer_surname_monthly_hazard"]) / span,
         "address": float(mutation["address_change_monthly_hazard"]) / span,
+        "merchant_risk": float(mutation["merchant_risk_score_monthly_hazard"]) / span,
         "unblock": float(mutation["blocked_card_replacement_daily_hazard"]),
     }
 
@@ -811,3 +813,56 @@ def _disburse_approved(context: TickContext) -> None:
                 principal_component=None,
             )
         )
+
+
+def _merchants(context: TickContext, daily: dict[str, float]) -> None:
+    """Acquirer risk score revisions, once the column exists.
+
+    `core.merchants.merchant_risk_score` is added mid-history by a scripted drift event, which
+    is the whole point of making that the additive event: the column appears partway through,
+    which is the condition M4's additive-drift handling is written for, and the revisions spec
+    004 section 1 asks for begin once it does. Before the event fires there is nothing to
+    revise, and this phase does nothing.
+
+    The score is a decimal fraction in [0, 1], not a percentage. `conventions.md` is explicit
+    that a column holding 4.25 for 4.25 per cent is a defect, because the next person to
+    multiply by it is wrong by two orders of magnitude and nothing fails.
+    """
+    context.cursor.execute(
+        "select 1 from platform.drift_log where target_schema = 'core' "
+        "and target_table = 'merchants' and target_column = 'merchant_risk_score'"
+    )
+    if context.cursor.fetchone() is None:
+        return
+
+    context.cursor.execute(
+        "select merchant_id, merchant_risk_score from core.merchants "
+        "where not is_deleted order by merchant_id"
+    )
+    ids: list[int] = []
+    scores: list[Decimal] = []
+    for merchant_id, current in context.cursor.fetchall():
+        rng = context.stream("lifecycle.merchant", merchant_id)
+        # An unscored merchant is scored for the first time far more readily than a scored one
+        # is revised: the acquirer works through its book once and then reviews.
+        hazard = daily["merchant_risk"] * (8.0 if current is None else 1.0)
+        if not bernoulli(rng, min(1.0, hazard)):
+            continue
+        ids.append(merchant_id)
+        scores.append(Decimal(str(round(rng.betavariate(2.0, 6.0), 8))))
+
+    context.report.record_update(
+        "merchants",
+        apply_updates(
+            context.cursor,
+            """
+            update core.merchants m
+               set merchant_risk_score = d.score
+              from unnest(%s::bigint[], %s::numeric[]) as d(merchant_id, score)
+             where m.merchant_id = d.merchant_id
+            returning m.merchant_id
+            """,
+            ids,
+            scores,
+        ),
+    )

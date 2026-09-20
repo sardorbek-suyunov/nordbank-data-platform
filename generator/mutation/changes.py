@@ -15,7 +15,15 @@ one schema.
 
 from __future__ import annotations
 
-from .phases import acquisition, deletes, dirt, dispositions, lifecycle, movements
+from .phases import (
+    acquisition,
+    deletes,
+    dirt,
+    dispositions,
+    drift,
+    lifecycle,
+    movements,
+)
 from .tick import ChangePhase
 
 # Populated as each change class lands. A phase absent from this table is simply not run, and
@@ -27,4 +35,5 @@ HANDLERS: dict[str, ChangePhase] = {
     "dispositions": dispositions.run,
     "dirt": dirt.run,
     "deletes": deletes.run,
+    "drift": drift.run,
 }
