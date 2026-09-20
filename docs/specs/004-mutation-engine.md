@@ -1,4 +1,4 @@
-# 004 вЂ” Mutation Engine
+# 004 — Mutation Engine
 
 Status: Approved
 Depends on: 000, 001, 002, 003
@@ -13,7 +13,7 @@ rather than a static snapshot.
 ## Simulation clock: the design decision this milestone turns on
 
 A tick simulates a date in the past. An `UPDATE` during that tick fires
-`core.set_updated_at()`, which sets `now()` вЂ” the real wall clock вЂ” and every
+`core.set_updated_at()`, which sets `now()` — the real wall clock — and every
 historical row would carry today's watermark. That defeats the entire milestone.
 
 **Resolution: the trigger reads a simulation clock, with `now()` as fallback.**
@@ -26,8 +26,8 @@ now()
 ```
 
 The tick sets `SET LOCAL nordbank.sim_now` for its transaction. Design rule 4
-holds unchanged in substance вЂ” the trigger still owns `updated_at`, no code path
-assigns it directly вЂ” and the simulated clock is explicit, transactional and
+holds unchanged in substance — the trigger still owns `updated_at`, no code path
+assigns it directly — and the simulated clock is explicit, transactional and
 visible in the catalogue. Record it as an amendment to spec 002 design rule 4,
 and state the negative consequence: a session that sets the variable and then
 performs unrelated writes would backdate them, so setting it is confined to the
@@ -37,7 +37,7 @@ tick's own transaction with `SET LOCAL`.
 
 - State lives in `platform.simulation_state`: current simulated date, seed,
   profile, tick sequence number, last tick completed at.
-- `make tick DATE=D` requires the current state to be exactly Dв€’1. Out-of-order
+- `make tick DATE=D` requires the current state to be exactly D−1. Out-of-order
   or skipped dates are refused with the expected date named. No implicit
   catch-up.
 - `make tick-to DATE=X` advances one day at a time to X, which is what M4's
@@ -45,7 +45,7 @@ tick's own transaction with `SET LOCAL`.
 - A tick is a state transition, not idempotent. What is guaranteed is
   **replayability**: the same seed, the same starting state and the same date
   produce the same result. The per-tick random substream derives from
-  `blake2b(seed вЂ– "tick" вЂ– date)`, so tick(D) does not depend on how many ticks
+  `blake2b(seed ‖ "tick" ‖ date)`, so tick(D) does not depend on how many ticks
   preceded it.
 - A tick is one transaction. A failed tick leaves the state untouched and the
   date unadvanced.
@@ -72,7 +72,7 @@ handle, so breadth matters more than volume:
 - `loans` and `loan_installments`: status transitions, and payments recorded by
   updating `paid_amount` and `paid_at`.
 - `merchants`: risk score revisions.
-- `fraud_alerts`: disposition. **This one is deliberately lagged** вЂ” an alert
+- `fraud_alerts`: disposition. **This one is deliberately lagged** — an alert
   raised on day D is dispositioned between D+2 and D+10 on a stated
   distribution, which is precisely why `metric_definitions.md` attributes alert
   precision to the disposition month rather than the alert month. The lag is
@@ -156,9 +156,9 @@ interleave ticks with extraction; M3 only proves the wiring. It acquires no
 warehouse pool, since it touches only the source database.
 
 ### 7. Make targets
-- `tick` вЂ” advance one day, reporting the change counts.
-- `tick-to` вЂ” advance to a date.
-- `tick-status` вЂ” print the simulation state and the last ten tick log rows.
+- `tick` — advance one day, reporting the change counts.
+- `tick-to` — advance to a date.
+- `tick-status` — print the simulation state and the last ten tick log rows.
 `seed` resets `platform.simulation_state` to the anchor date.
 
 ### 8. Tests
@@ -207,7 +207,7 @@ settlement files.
 Appended during implementation. The scope text above is left as issued; the protocol is in
 `docs/specs/README.md`.
 
-### 2026-09-20 вЂ” The tick reaches the database through a driver, not through psql
+### 2026-09-20 — The tick reaches the database through a driver, not through psql
 
 The specification does not name a transport, and M2's tooling establishes one by precedent:
 every host-side tool reaches the source through `psql` inside the container, because
@@ -215,21 +215,21 @@ every host-side tool reaches the source through `psql` inside the container, bec
 driver". That is a dependency choice recorded as an environment fact, and M3 is the milestone
 where the difference is load-bearing, so it was measured rather than inherited.
 
-Measured on the workload a tick actually performs вЂ” read the state a day's decisions need
+Measured on the workload a tick actually performs — read the state a day's decisions need
 (17,907 rows), then one transaction copying 10,403 rows over five tables and folding 1,824
-account balances вЂ” interleaved, PostgreSQL 16.15:
+account balances — interleaved, PostgreSQL 16.15:
 
 | Transport | connect | state read | write transaction | total |
 |---|---|---|---|---|
-| Held-open `psql` session | 71 ms | 298вЂ“386 ms | 306вЂ“353 ms | 628вЂ“765 ms |
-| psycopg 3 | about 60 ms | 31вЂ“40 ms | 464вЂ“523 ms | 520вЂ“561 ms |
+| Held-open `psql` session | 71 ms | 298–386 ms | 306–353 ms | 628–765 ms |
+| psycopg 3 | about 60 ms | 31–40 ms | 464–523 ms | 520–561 ms |
 
 Isolated, with the process launch counted, which is what one `make tick` pays: `psql` one-shot
-803вЂ“861 ms against psycopg 464вЂ“514 ms. Writing pre-encoded bytes in one mebibyte blocks rather
+803–861 ms against psycopg 464–514 ms. Writing pre-encoded bytes in one mebibyte blocks rather
 than a string made no difference to psycopg, so the simple form is used.
 
-**The driver wins on both paths** вЂ” an order of magnitude on the state read, and roughly
-1.7 times on a single-tick write вЂ” and it removes three things the pipe needs: a sentinel
+**The driver wins on both paths** — an order of magnitude on the state read, and roughly
+1.7 times on a single-tick write — and it removes three things the pipe needs: a sentinel
 protocol to frame responses, a reader thread per stream, and a hang as the failure mode when
 `psql` exits mid-protocol. It also gives native transaction control, which acceptance
 criterion 2 is written in terms of.
@@ -252,8 +252,8 @@ published port actually reaching it, and on the machine this was measured on it 
 owned the port; the stack came up healthy and nothing said otherwise, and the driver reached
 the wrong server and failed authentication. Two mitigations, both required:
 
-- The connection asserts on open that it reached the Nordbank source вЂ” server major version
-  and the three schemas вЂ” rather than assuming it.
+- The connection asserts on open that it reached the Nordbank source — server major version
+  and the three schemas — rather than assuming it.
 - An authentication failure or a failed assertion names the likely cause: another PostgreSQL
   bound to that port, `docker compose ps postgres-source` to check, `POSTGRES_SOURCE_PORT` in
   `.env` to move it.
@@ -264,7 +264,7 @@ that explains itself covers the rest.
 
 Recorded in ADR 0012.
 
-### 2026-09-20 вЂ” `require_stack()` leaves the tick path
+### 2026-09-20 — `require_stack()` leaves the tick path
 
 Every host-side target calls `db.require_stack()` first, which runs `docker compose ps` at a
 measured 530 ms. Against acceptance criterion 13's two-second budget for a `ci` tick that is a
@@ -274,7 +274,7 @@ The tick does not call it. The connection failure path carries the diagnosis ins
 the stack as the likely cause, which is the same information a second later and 530 ms
 cheaper. Every other target keeps it.
 
-### 2026-09-20 вЂ” Criterion 13's two clauses are one budget, and the per-tick figure is the binding one
+### 2026-09-20 — Criterion 13's two clauses are one budget, and the per-tick figure is the binding one
 
 Criterion 13 asks for a `dev` tick under 10 seconds and sixty `dev` ticks under 10 minutes.
 Those are the same number: sixty ticks at the per-tick ceiling is exactly 600 seconds, so the
@@ -287,7 +287,7 @@ components say where the budget actually goes, and it is not the data: a `dev` d
 under half a second. The fixed cost of reaching the database is the larger half at `ci` scale,
 which is why the transport was measured before anything was built on it.
 
-### 2026-09-20 вЂ” The disposition lag is one to fourteen days, as already delivered
+### 2026-09-20 — The disposition lag is one to fourteen days, as already delivered
 
 Section 1 states that an alert raised on day D is dispositioned between D+2 and D+10. The
 source already has a disposition lag, and it is not that one. `generator/profiles.yml` sets
@@ -304,7 +304,7 @@ The mutation engine reads `fraud.disposition_lag_days_min` and `disposition_lag_
 Criterion 7 measures against those, which is what "the stated distribution" means: the
 distribution the realism document states, not a second one stated here.
 
-### 2026-09-20 вЂ” Three named columns do not exist, and one becomes the drift event
+### 2026-09-20 — Three named columns do not exist, and one becomes the drift event
 
 Section 1 asks for in-place updates to `customers.occupation` and an income band, and to a
 merchant risk score. None of the three is a column of the source. `core.customers` carries
@@ -330,11 +330,11 @@ lookup.
 **a KYC status inconsistent with the account activity behind it**: a customer whose
 `kyc_status_code` is `pending` or `expired` while their accounts are open and transacting
 normally. Both values are legal, the foreign keys are satisfied, no constraint notices, and the
-combination is wrong in a way only a business rule can see вЂ” which is the property the original
+combination is wrong in a way only a business rule can see — which is the property the original
 case was chosen for. It is built from columns that exist, and it is realistic: KYC review
 cycles lapse without the bank freezing the account the same day.
 
-### 2026-09-20 вЂ” Soft deletes are restricted to rows that never moved money
+### 2026-09-20 — Soft deletes are restricted to rows that never moved money
 
 Section 1 names voided transactions as a soft-delete target. Invariant 4 reconciles
 `accounts.current_balance_amount` against posted transactions and payments and filters on
@@ -342,7 +342,7 @@ Section 1 names voided transactions as a soft-delete target. Invariant 4 reconci
 with no good branch: reverse the balance and invariant 4 fails, leave it and the source says
 the money moved while silver, which drops `is_deleted` rows, says it did not.
 
-A tick soft-deletes only transactions in a non-posted status вЂ” `pending`, `authorised`,
+A tick soft-deletes only transactions in a non-posted status — `pending`, `authorised`,
 `declined`, `reversed`. **A posted transaction is reversed, not deleted**, through
 `core.transactions.reversal_of_transaction_id`, which exists for this and which the historical
 load already uses. That is also what a real ledger does: an authorisation is voided, a posting
@@ -351,7 +351,7 @@ is reversed, and the reversal is itself a movement with its own ledger entries.
 Criterion 8's three entity types are unaffected: merged duplicate customers, non-posted
 transactions and cancelled applications.
 
-### 2026-09-20 вЂ” The balance moves at the status transition, not only at insert
+### 2026-09-20 — The balance moves at the status transition, not only at insert
 
 Invariant 4's computed value changes whenever a transaction or payment crosses the `is_posted`
 boundary, with no row inserted. A tick that flips a `pending` transaction to `posted`, or a
@@ -362,7 +362,7 @@ with a posted status, and the rows already in the book whose status it changes i
 posted one. Both are applied in the same `UPDATE ... FROM (VALUES ...)` that maintains
 `current_balance_amount`, so the fold stays one statement.
 
-### 2026-09-20 вЂ” Sequences are synchronised after the commit, never inside it
+### 2026-09-20 — Sequences are synchronised after the commit, never inside it
 
 `setval` is not transactional. Measured on PostgreSQL 16.15: a `setval` inside a transaction
 that then rolled back left the sequence at the value it had set. A tick that resynchronised
@@ -378,7 +378,7 @@ harmless and is stated rather than guarded: both the loader and the tick derive 
 `max(id)` rather than from the sequence, so nothing reads the stale value, and the next
 successful tick resynchronises it.
 
-### 2026-09-20 вЂ” Section 2 is restated, and the source performs exactly one physical delete
+### 2026-09-20 — Section 2 is restated, and the source performs exactly one physical delete
 
 Section 2's conclusion stands: the dirt this milestone produces is the dirt a constrained OLTP
 system genuinely emits, and genuine schema and type violations belong to the file and API feeds
@@ -386,7 +386,7 @@ at M4. Three corrections to how it argues that, and one addition.
 
 **The argument is stronger than "injecting them would trade credibility for a demonstration".**
 A foreign key that is enabled cannot be violated. An orphan in `core` is not something the
-generator declines to produce, it is something the source **cannot express** вЂ” the same shape
+generator declines to produce, it is something the source **cannot express** — the same shape
 of argument as ADR 0008, where bronze immutability is a property of key construction rather
 than of restraint. Refusing to do something and being unable to say it are different claims,
 and the second is the one that holds here.
@@ -394,7 +394,7 @@ and the second is the one that holds here.
 **A value can be malformed by the domain's rules while conforming to the column's.** The
 constraints bound the column, not the semantics. `core.payments.counterparty_iban` is
 `varchar(34)` checked against `^[A-Z]{2}[0-9A-Z]{13,32}$`, and nothing in the platform
-validates the mod-97 checksum вЂ” `docs/generator_realism.md` already records that the generated
+validates the mod-97 checksum — `docs/generator_realism.md` already records that the generated
 IBANs carry none. That is a real validation failure for a contract to catch at M4, produced by
 a source that violates no constraint, and it is the example to name because a `varchar` cannot
 express the rule that would catch it.
@@ -426,7 +426,7 @@ rather than left to be discovered: some systems purge merged duplicates outright
 tombstoning them, and the platform needs one real instance of the condition its M7 control is
 written to detect.
 
-### 2026-09-20 вЂ” `schema-check` computes the expected schema as the dictionary plus fired drift
+### 2026-09-20 — `schema-check` computes the expected schema as the dictionary plus fired drift
 
 Section 3 says the drift event changes the source DDL and the data dictionary together so that
 `schema-check` stays green. Measured, the three ways it disagrees are exact: adding a column
@@ -460,7 +460,7 @@ non-empty would make `schema-apply` unusable after any tick. Re-applying is dete
 the log, and the re-applied DDL is written to be idempotent, like every other file in
 `infra/docker/postgres-source/schema/`.
 
-### 2026-09-20 вЂ” `seed` resets the whole simulation, including fired drift
+### 2026-09-20 — `seed` resets the whole simulation, including fired drift
 
 Section 7 says `seed` resets `platform.simulation_state` to the anchor date. It has to reset
 more than that. `make seed` currently truncates the sixteen `core` tables and leaves `ref` and
@@ -475,21 +475,21 @@ database that has it, and the failure would surface far from its cause.
 Each drift event therefore declares its reversal alongside its application, and both are
 idempotent.
 
-### 2026-09-20 вЂ” Fuzzy matching is computed in the report, and no extension is installed
+### 2026-09-20 — Fuzzy matching is computed in the report, and no extension is installed
 
 Criterion 11 asks for duplicate customer records that are fuzzy-matchable, reported with the
 similarity that matched them. `pg_trgm` and `fuzzystrmatch` are available in the image and the
-application role can install them вЂ” measured: `similarity('Jan Kowalski', 'Jan Kowalsky')` is
+application role can install them — measured: `similarity('Jan Kowalski', 'Jan Kowalsky')` is
 0.733 and `levenshtein` is 1.
 
 Neither is installed. The criterion asks for a report, not a database capability, and an
 extension in the source database is a schema change that `schema-check` and the design rules
-would have to account for вЂ” `similarity` returns `real`, and design rule 1 prohibits floating
+would have to account for — `similarity` returns `real`, and design rule 1 prohibits floating
 point in these schemas, so a stored score would need care that a reported one does not.
 
 The report computes similarity in Python and states its function and threshold.
 
-### 2026-09-20 вЂ” A per-tick delta guard on invariants 4 and 13, with the full suite still the gate
+### 2026-09-20 — A per-tick delta guard on invariants 4 and 13, with the full suite still the gate
 
 Section 5 requires all fourteen invariants to hold after an arbitrary number of ticks, and
 criterion 5 verifies them after sixty. Nothing requires checking between ticks, and checking
@@ -521,14 +521,14 @@ None of the fourteen becomes more expensive to check under mutation. They were f
 before the first tick and they are full-book scans after the sixtieth, over a book that thirty
 `dev` ticks grow by about three per cent.
 
-### 2026-09-20 вЂ” CI runs a short tick sequence; the sixty-tick run is a reported local acceptance test
+### 2026-09-20 — CI runs a short tick sequence; the sixty-tick run is a reported local acceptance test
 
 Criterion 5 asks for sixty ticks on `ci` and criterion 4 for sixty more to prove replay
 determinism. Putting both in the `stack` workflow would add the tick sequence twice to a
 required check that already builds an image, starts nine services, applies a schema and seeds
 a profile.
 
-`stack.yml` runs a short sequence вЂ” enough to prove the wiring, the tick log reconciliation and
+`stack.yml` runs a short sequence — enough to prove the wiring, the tick log reconciliation and
 one drift event firing with `schema-check` still green. The sixty-tick sequences, the replay
 determinism comparison and the thirty-tick `dev` run are local acceptance tests, run and
 reported against this specification.
@@ -546,7 +546,7 @@ the feed synthesises rates for simulated-future dates and says so. Both are defe
 choice should be deliberate, which is why it is written down before the milestone that makes
 it.
 
-### 2026-09-20 вЂ” Criterion 9's reconciliation is exact at the tick, not after the run
+### 2026-09-20 — Criterion 9's reconciliation is exact at the tick, not after the run
 
 Criterion 9 asks that `platform.tick_log` counts reconcile exactly against rows whose
 `updated_at` falls within each tick's window, for all sixty ticks. Run once at the end of the
@@ -584,6 +584,49 @@ Two rules keep the identity exact, and both constrain the change classes rather 
 
 The after-sixty figures are still reported, with the difference and its explanation, because the
 difference is itself the measurement that justifies this amendment.
+
+### 2026-09-20 — Drift events fire at an offset from the anchor, not on an absolute date
+
+Section 3 says the timeline declares a simulated date per event. `NORDBANK_ANCHOR_DATE` is one of
+the three inputs that determine a run and defaults to the real current date, so an absolute date
+would fire for one anchor and never for any other: acceptance criterion 10's "at least one event
+fires within sixty ticks" would hold or not depending on when the run happened.
+
+Each event declares an offset in days from the anchor instead. That is a simulated date in every
+sense that matters and it is reproducible, which an absolute date is not. The two M3 events sit
+at twelve and thirty-seven days, so both fall inside a sixty-tick run at any anchor.
+
+### 2026-09-20 — The lending funnel takes three ticks, because the schema will not accept one
+
+Section 1 lists applications and disbursed loans among the inserts. Written as one act they are
+not insertable: `core.loan_applications` carries `decided_at >= applied_at`, and an application
+written with a decision by the same statement that draws its arrival time fails that check
+whenever the arrival is drawn later in the day than the decision instant. It did, on the first
+sixty-tick run.
+
+The funnel therefore spans ticks, which is also what the historical load models. The acquisition
+phase writes the application undecided. The lifecycle phase decides it once the two-to-216-hour
+`decision_lag_hours` has elapsed, and draws it down once the one-to-21-day
+`disbursement_lag_days` has. Both lags are drawn from a stream keyed on the application, so they
+survive a replay without a column to hold them — nothing in the schema records when an
+underwriter intends to look at a case, and adding one would put a simulation detail into the
+bank's data.
+
+### 2026-09-20 — The historical load does not populate `reversal_of_transaction_id`
+
+The amendment of 2026-09-20 on soft deletes says a posted transaction is reversed "through
+`core.transactions.reversal_of_transaction_id`, which exists for this and which the historical
+load already uses". Measured on the loaded `ci` book: 194 transactions carry the `reversed`
+status and **none** carries that column. `generator/profiles.yml` declared
+`transactions.reversal_share` at 0.0056, the same number as `status_mix.reversed`, and nothing
+read it.
+
+The substance of the ruling is unaffected and is implemented as stated: a posted transaction is
+reversed rather than soft deleted, by a reversing movement with its own ledger batch that leaves
+the original posted. What is corrected is the claim about the historical load. M3 is the first
+thing in this repository to populate the column, the orphan parameter is removed, and the
+reversal rate is stated under `mutation.reversal` where the code that reads it can be seen beside
+it.
 
 ### 2026-09-20 — The delta guard's balance check runs over a bounded sample, and four indexes pay for the rest
 

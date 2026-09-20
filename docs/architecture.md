@@ -157,6 +157,15 @@ drift means a new contract version and an explicit rerun.
 business key, resolves late arrivals by `updated_at`, applies soft deletes, converts amounts
 to `DECIMAL(18,4)` with an EUR equivalent, and normalises timestamps to UTC.
 
+*Business date, posting date and audit time are three different dates on a late-arriving item,
+and silver has to keep them apart.* An offline card transaction presented days after the
+customer made it carries `booked_at` on the day of the tap, `updated_at` on the day it reached
+the bank, and a ledger entry whose `posting_date` is that later day. The ledger posts to the
+current open period rather than to the business date, for the same reason FX rates do not
+restate: posting into a closed period would change totals for a day that has already been
+reported, and yesterday's figure would stop being reproducible from yesterday's data. Silver
+orders by business time and the ledger by posting date, and the two are not interchangeable.
+
 A soft delete and a deactivated reference code are not the same thing and are not applied the
 same way. `is_deleted` on a `core` row means the entity is gone, and silver removes it.
 `is_active = false` on a `ref` row means the code is no longer offered, and silver **retains**

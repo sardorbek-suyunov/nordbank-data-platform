@@ -377,6 +377,16 @@ absolute term keeps a tiny file from escalating over a rounding difference. Both
 in the currency the comparison happened in, so the thresholds do not move with the exchange
 rate.
 
+*A late-arriving item posts to a later date than it settled on, and that is a timing break
+rather than a defect.* The source presents an offline card transaction days after the customer
+made it, and its ledger entry posts to the period that is open when it arrives, not to the
+business date — posting into a closed period would restate a day already reported. The network
+file names the settlement date, so the two sides land on different dates for the same item. The
+comparison is still per settlement date, so the difference appears as a break, and materiality
+governs the response exactly as it does for any other. The resolution belongs to M4, which owns
+the settlement feed and decides whether it presents the item on its business date or on its
+clearing date; what is fixed here is that the ledger side never moves.
+
 **Source columns.** `sl_card_settlements.file_total_amount`,
 `sl_card_settlements.settlement_currency`, `sl_card_settlements.settlement_date`,
 `sl_card_settlements.network`, `fct_gl_entries.amount`, `fct_gl_entries.currency_code`,

@@ -186,8 +186,10 @@ watermark extraction has one window to read.
 **Load with an anchor in the past, then step forward.**
 
 ```bash
-NORDBANK_ANCHOR_DATE=2026-06-30 make seed   # history ends three months ago
-make tick                                    # from M3: advance one business day
+NORDBANK_ANCHOR_DATE=2026-06-30 make seed        # history ends three months ago
+make tick                                         # advance one business day
+make tick-to DATE=2026-07-31                      # one transaction per day, up to a date
+make tick-status                                  # where the simulation is and what it did
 ```
 
 Each tick moves `updated_at` on the rows it touches, so an incremental extraction has a
@@ -196,6 +198,37 @@ a valid starting state for that by construction: every audit timestamp is the ro
 last-change time in simulated history, no row carries the load timestamp, and every
 identity sequence is synchronised past the largest key its table holds, so the first row
 the mutation engine inserts does not collide.
+
+A tick is a state transition rather than an idempotent operation. `make tick DATE=X` requires
+the simulation to be at X minus one day and refuses anything else by naming the date it
+expected; there is no implicit catch-up, because each day owes `platform.tick_log` its own
+window. `make tick-to` advances a range one transaction per day for the same reason.
+
+**The simulated clock is free to run ahead of the real one.** The `ci` profile pins its anchor,
+so sixty ticks land beyond today. Nothing in the source objects: the only real-clock constraint
+in the schema is `core.customers.date_of_birth < current_date`, which a simulated future date
+does not touch. What it does constrain is M4 — the ECB feed cannot return a rate for a simulated
+date beyond the real one, so either the anchor is chosen so the extracted window stays behind
+real time, or the feed synthesises rates for simulated-future dates and says so.
+
+**`make seed` resets the whole simulation, not just the date.** It reverts every drift event the
+log says has fired, removes the classification rows those events added, empties the tick and
+drift logs, and points the simulation at the anchor. A schema that is post-drift while the log
+says nothing has fired is incoherent, and `make schema-check` would fail against it far from the
+seed that caused it.
+
+### Reproducing the acceptance evidence
+
+```bash
+NORDBANK_ENV=ci NORDBANK_ANCHOR_DATE=2026-09-18 make tick-acceptance
+NORDBANK_ENV=ci NORDBANK_ANCHOR_DATE=2026-09-18 make tick-acceptance REPLAY=1
+```
+
+The first seeds, runs sixty ticks asserting the tick log against each tick's own window, and
+reports the change-class counts, the late-arrival lag, the disposition lag, the duplicate
+similarity, the physical deletes and the drift. The second runs the whole thing twice and
+compares a digest of every table, which is what proves replay determinism. `TICKS=n` changes the
+length and `--profile dev` the scale.
 
 ## Backfill procedure
 
