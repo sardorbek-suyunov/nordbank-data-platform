@@ -3,7 +3,7 @@ SHELL := bash
 .DEFAULT_GOAL := help
 
 .PHONY: help install lint format test test-dags test-integration up down nuke health logs \
-	verify-dag seed seed-verify seed-manifest tick tick-to tick-status dbt-build \n	dbt-docs dq clean
+	verify-dag seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance dbt-build \n	dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -96,6 +96,13 @@ tick-to: ## Advance the simulated source to DATE, one transaction per day
 
 tick-status: ## Print the simulation state and the last ten ticks
 	uv run python -m generator.mutation --status
+
+tick-acceptance: ## Seed, tick and report specification 004's evidence (REPLAY=1, TICKS=n)
+ifdef REPLAY
+	uv run python scripts/tick_acceptance.py --replay --ticks $(or $(TICKS),60)
+else
+	uv run python scripts/tick_acceptance.py --ticks $(or $(TICKS),60)
+endif
 
 dbt-build: ## Run dbt build against the active target
 	@echo "not implemented until M4"
