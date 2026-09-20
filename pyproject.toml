@@ -6,6 +6,11 @@ requires-python = ">=3.11,<3.12"
 license = { text = "MIT" }
 dependencies = [
     "pyyaml>=6.0.3",
+    # The mutation engine reaches postgres-source directly, because a tick is one transaction
+    # and a driver gives a real rollback where a pipe gives a sentinel protocol. Measured
+    # against psql in ADR 0012. Already present in the Airflow image at 3.3.5, so the DAG
+    # needs no image change.
+    "psycopg[binary]>=3.2",
 ]
 
 [dependency-groups]
