@@ -40,6 +40,7 @@ REQUIRED_SECTIONS = (
     "lending",
     "attrition",
     "digital",
+    "mutation",
     "ledger",
     "loading",
     "bands",

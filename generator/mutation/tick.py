@@ -31,7 +31,9 @@ from typing import Any
 from ..rng import SubStreams
 from . import guard as guard_module
 from . import report as report_module
+from . import snapshot as snapshot_module
 from . import state as state_module
+from .writer import TickWriter
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 if str(ROOT / "scripts") not in sys.path:
@@ -118,10 +120,20 @@ class TickContext:
     seed: int
     streams: SubStreams
     report: report_module.TickReport
+    snapshot: snapshot_module.Snapshot
+    # Rows the phases have decided but not yet copied. Flushed at the end of every phase, so a
+    # later phase can update what an earlier one inserted.
+    writer: TickWriter = field(default_factory=TickWriter)
     # Accounts whose balance this tick moved, declared by whatever moved them. The guard
     # re-derives each one's balance from scratch rather than trusting the delta, so this set
     # says where to look and nothing more.
     touched_accounts: set[int] = field(default_factory=set)
+    # Loan cash flows the lifecycle phase has decided and the movement phase has to fold into
+    # the balance. The seam exists because a repayment is two facts in two phases: the
+    # installment is marked paid, which is a loan fact, and the money leaves the account, which
+    # is a movement. The historical pipeline splits them the same way, and invariant 4 requires
+    # the second to be a transaction rather than a kind of event of its own.
+    cash_events: list[Any] = field(default_factory=list)
 
     def stream(self, name: str, *key: object):
         """A random stream for `name` at `key`, scoped to this tick's date."""
@@ -142,6 +154,15 @@ class TickContext:
     def window(self) -> tuple[dt.datetime, dt.datetime]:
         """The half-open span this tick's `updated_at` values fall in: the simulated day."""
         return self.at(0), self.at(0) + dt.timedelta(days=1)
+
+    def set_clock(self, moment: dt.datetime) -> None:
+        """Point the `updated_at` trigger at `moment` for the statements that follow.
+
+        A phase calls this before an UPDATE whose rows should carry an instant other than the
+        one the tick set on its behalf. It holds until the next call or until the tick clears
+        the clock before writing `platform`.
+        """
+        set_simulation_clock(self.cursor, moment)
 
     def at(self, hour: int = 0, minute: int = 0, second: int = 0) -> dt.datetime:
         """An instant inside the simulated day."""
@@ -240,6 +261,12 @@ def run(
             seed=current.seed,
             streams=SubStreams(current.seed),
             report=report,
+            snapshot=snapshot_module.read(
+                cursor,
+                target,
+                anchor_date=current.anchor_date,
+                history_months=profile.history_months,
+            ),
         )
 
         # core and ref carry simulated time from here, re-stamped per phase so that the tick's
@@ -252,6 +279,11 @@ def run(
             handler = handlers.get(name)
             if handler is not None:
                 handler(context)
+                # Insert counts come from what COPY actually wrote rather than from what the
+                # handler believed it decided. The tick log is a reconciliation control, and a
+                # control whose counts are a second opinion on the write is not one.
+                for table, written in context.writer.flush(cursor).items():
+                    report.record(table, "inserted", written)
             if fail_after == name:
                 raise InducedFailureError(
                     f"failure induced after the {name!r} phase of tick {target}. Nothing is "

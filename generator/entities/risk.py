@@ -31,9 +31,11 @@ class AlertWriter:
 
     __slots__ = ("_next_id", "_rows", "confirmed", "dismissed", "open", "raised")
 
-    def __init__(self, spool: Spool) -> None:
+    def __init__(self, spool: Spool, *, first_id: int = 0) -> None:
         self._rows = spool.table("fraud_alerts")
-        self._next_id = 0
+        # Zero for the historical load, the table's high-water mark for a tick. See
+        # LedgerWriter for why a tick supplies its own keys rather than consuming a sequence.
+        self._next_id = first_id
         self.raised = 0
         self.confirmed = 0
         self.dismissed = 0
@@ -101,9 +103,9 @@ class SessionWriter:
 
     __slots__ = ("_countries", "_next_id", "_rows", "_seed", "linked", "total")
 
-    def __init__(self, spool: Spool, seed: int, countries: list[str]) -> None:
+    def __init__(self, spool: Spool, seed: int, countries: list[str], *, first_id: int = 0) -> None:
         self._rows = spool.table("login_sessions")
-        self._next_id = 0
+        self._next_id = first_id
         self._seed = seed
         self._countries = countries
         self.total = 0

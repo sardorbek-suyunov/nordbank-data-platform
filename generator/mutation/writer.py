@@ -32,6 +32,25 @@ from typing import Any
 from ..tables import LOAD_ORDER, TABLE_COLUMNS
 
 
+class TableSink:
+    """The append point for one table, with the interface `generator/spool.py` presents.
+
+    It exists so that the ledger, alert and session writers the historical load uses can write
+    a tick's rows without knowing where they go. Those three carry the models that invariants
+    5, 6, 9 and 13 are measured against, and a tick that reimplemented them would eventually
+    drift from the half of the book it has to be continuous with.
+    """
+
+    __slots__ = ("_writer", "table")
+
+    def __init__(self, writer: TickWriter, table: str) -> None:
+        self._writer = writer
+        self.table = table
+
+    def write(self, values: tuple) -> None:
+        self._writer.add(self.table, tuple(values))
+
+
 class TickWriter:
     """Collects a tick's new rows and copies them in dependency order.
 
@@ -54,6 +73,12 @@ class TickWriter:
                 f"generator/tables.py disagree about the column list"
             )
         self._rows[table].append(row)
+
+    def table(self, name: str) -> TableSink:
+        """An append point a spool-shaped writer can hold."""
+        if name not in TABLE_COLUMNS:
+            raise KeyError(f"{name} is not a core table")
+        return TableSink(self, name)
 
     def count(self, table: str) -> int:
         return len(self._rows[table])
