@@ -201,8 +201,11 @@ bank than `dev`, which is the opposite of what a larger profile is for.
 
 At 30,000 customers over five years the projection is about 23 million transactions, 115 million
 rows and 28 GB of source database, arithmetic on the `dev` measurement rather than a
-measurement. Running it and recording the real figures is the follow-up. Spec 003 carries the
-change as an amendment and `architecture.md` marks every `full` figure as projected.
+measurement. **Measuring it is re-gated on M6.** Run now it measures a seed and occupies the
+source database for about forty minutes of wall clock; run once the gold layer exists it
+measures seed through gold at twenty-three million transactions and yields the incremental
+against full refresh comparison the profile exists to produce. Spec 003 carries the change as
+an amendment and `architecture.md` marks every `full` figure as projected.
 
 **2. Q7 and Q8 need a vintage-conditioned default rate at M6.** An overall default rate is not a
 stable measure: its denominator's seasoning changes every month, so a growing book shows a
