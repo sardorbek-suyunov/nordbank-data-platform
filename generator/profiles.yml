@@ -8,7 +8,7 @@
 # The values under `bands` are contracts that spec 003 invariants and acceptance criteria are
 # written against, so they also appear in that document for a reader to review. A document that
 # stated no bands could not be reviewed for whether its bands are sensible, which is its whole
-# purpose, so the duplication is unavoidable вЂ” and scripts/check_docs.py, which the `docs` CI
+# purpose, so the duplication is unavoidable — and scripts/check_docs.py, which the `docs` CI
 # job runs, fails if the two disagree. One source per fact, and a mechanical check where two
 # representations are unavoidable (docs/specs/README.md).
 
@@ -145,8 +145,8 @@ defaults:
     # count. A fixed merchant count would make full-profile customers share a tiny catalogue.
     per_thousand_customers: 240
     # Non-EEA merchants are held to a few percent, deliberately. Q4 can only price intra-EEA
-    # consumer volume вЂ” the outbound inter-regional interchange rate is null and stays null,
-    # see metric_definitions.md вЂ” so this share is the bounded null exposure of Q4, not an
+    # consumer volume — the outbound inter-regional interchange rate is null and stays null,
+    # see metric_definitions.md — so this share is the bounded null exposure of Q4, not an
     # estimate of a real card book's geography. Recorded as unrealistic in the realism document.
     non_eea_share: 0.04
     non_eea_mix:
@@ -260,7 +260,6 @@ defaults:
       pending: 0.0075
       authorised: 0.0062
       reversed: 0.0056
-    reversal_share: 0.0056
     # Card not present rises across the history, linearly from start to end of the window.
     card_not_present_share_start: 0.31
     card_not_present_share_end: 0.52
@@ -444,7 +443,7 @@ defaults:
     # measure nothing.
     # Recall is configured here and asserted by unit test, and it is deliberately not a
     # contract band. It cannot be measured from the loaded database, because its
-    # denominator is all fraud вЂ” including fraud nobody ever detected or reported вЂ” and
+    # denominator is all fraud — including fraud nobody ever detected or reported — and
     # the database stores only alerts and their dispositions, which is what a bank has.
     # See the alert performance entry in docs/metric_definitions.md.
     detection_recall: 0.62
@@ -587,6 +586,55 @@ defaults:
     # generator target and the invariant asserts the floor in `bands`.
     login_precedes_transaction_share: 0.87
 
+  # Spec 004: what a tick changes, as distinct from what the history contains.
+  #
+  # Volumes are deliberately not restated here. A tick draws the day's movements from the same
+  # per-account rates as the historical load, divided by the length of the simulated month and
+  # carrying the same seasonality, weekend factor and growth trend, so the day after the anchor
+  # looks like the day before it. Only the things the history has no analogue of carry
+  # parameters of their own, and they are below.
+  mutation:
+
+    late_arrival:
+      # Offline card authorisations: transit gates, in-flight sales, unattended terminals that
+      # take a transaction without an online authorisation and present it days later. The bank
+      # learns of it after the fact and so cannot decline it, which is the point rather than a
+      # side effect: this is the only mechanism in the source that can leave an account past
+      # its overdraft limit, and the loaded ci book contains no such account at all.
+      # Share of a day's card purchases.
+      offline_card_share: 0.009
+      # Spec 004 section 1 states two to five days.
+      lag_days_min: 2
+      lag_days_max: 5
+      # Weighted towards the shorter lags: most offline files present at the next clearing
+      # cycle, and five days is a weekend with a holiday on the end of it.
+      lag_day_weights: [0.44, 0.29, 0.17, 0.10]
+
+    deferred_posting:
+      # An authorisation older than this is stale and never posts. Without the bound a tick
+      # would drain the historical book's whole standing backlog over its first few days, which
+      # is a spike rather than a steady state: 298 of the 378 non-posted transactions in the
+      # loaded ci book are more than thirty days old, and a real system would not clear those
+      # either.
+      max_age_days: 7
+      # Daily hazard that an in-flight row crosses into its next status. A hazard rather than a
+      # share of the backlog, so that time to clear is a property of the row's own age and the
+      # backlog settles at its own equilibrium against the rate new rows arrive.
+      transaction_posts: 0.38
+      payment_books: 0.42
+      # booked to settled moves no money, because both are is_posted. It is the largest single
+      # source of divergence between business time and audit time for silver to order, and it
+      # costs the balance nothing.
+      payment_settles: 0.55
+
+    reversal:
+      # A posted transaction is reversed rather than soft deleted (spec 004, amended). The
+      # reversal is its own movement with its own ledger entries, which is what a real ledger
+      # does, and it leaves invariant 4 exact on both rows rather than forcing a choice between
+      # a wrong balance and a source that says money moved when silver says it did not.
+      share_of_recent_postings: 0.0011
+      max_age_days: 5
+
   ledger:
     # Whole balanced batches per COPY transaction. Measured against the deferred constraint
     # trigger's queue, which does not spill to disk, inside the 512 MiB container limit. ADR
@@ -649,7 +697,7 @@ defaults:
     # measured rather than argued: chi-square tests significance, not effect size, and
     # its power grows with the sample. A fixed critical value is therefore stricter at a
     # larger profile, which is the opposite of the scale-invariance it was chosen for.
-    # The ci run measured a deviation of 0.00577 вЂ” close conformity вЂ” against a
+    # The ci run measured a deviation of 0.00577 — close conformity — against a
     # chi-square of 80.5 on 23,437 amounts, and the same distribution at dev would
     # produce a chi-square around sixty times larger for no reason but the row count.
     # The chi-square statistic is still computed and reported beside the deviation.

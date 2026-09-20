@@ -29,6 +29,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, NamedTuple
 
+from .. import refdata as refdata_module
+from ..realism.calendar import add_months
+
 # The identity column of every core table, for the high-water mark read.
 IDENTITY = {
     "customers": "customer_id",
@@ -87,6 +90,14 @@ class Alert(NamedTuple):
 class Snapshot:
     """The state one tick decides against. Read once, at the top of the transaction."""
 
+    # Where the history the tick continues began and ended. The seasonality, growth and
+    # card-not-present trends are all expressed against those two dates, so a tick that did not
+    # know them would produce a day that did not belong to the same curve as the day before it.
+    anchor_date: dt.date = dt.date.min
+    history_start: dt.date = dt.date.min
+    # The `ref` vocabularies, read through the tick's own cursor rather than through psql, so
+    # the tick and the historical load draw from the same codes with the same attributes.
+    ref: Any = None
     accounts: dict[int, Account] = field(default_factory=dict)
     cards_by_account: dict[int, list[Card]] = field(default_factory=dict)
     customer_country: dict[int, str] = field(default_factory=dict)
@@ -164,9 +175,40 @@ def _max_ids_sql() -> str:
     )
 
 
-def read(cursor: Any, simulated_date: dt.date) -> Snapshot:
-    """Read the whole of a tick's decision state. Six queries, tens of milliseconds."""
-    snapshot = Snapshot()
+def _ref_executor(cursor: Any) -> Any:
+    """Run `generator/refdata.py`'s queries through the tick's cursor.
+
+    The reference loader was written against psql's text output and takes an executor precisely
+    so that a second transport can supply one. Its converters parse strings, so the values come
+    back rendered the way psql renders them: `t` and `f` for a boolean, an empty field for null.
+    """
+
+    def run(sql: str) -> list[tuple[str, ...]]:
+        cursor.execute(sql)
+        return [
+            tuple(
+                ""
+                if value is None
+                else ("t" if value else "f")
+                if isinstance(value, bool)
+                else str(value)
+                for value in row
+            )
+            for row in cursor.fetchall()
+        ]
+
+    return run
+
+
+def read(
+    cursor: Any, simulated_date: dt.date, *, anchor_date: dt.date, history_months: int
+) -> Snapshot:
+    """Read the whole of a tick's decision state. Seven queries, tens of milliseconds."""
+    snapshot = Snapshot(
+        anchor_date=anchor_date,
+        history_start=add_months(anchor_date, -history_months),
+        ref=refdata_module.load(_ref_executor(cursor)),
+    )
 
     cursor.execute(_ACCOUNTS)
     for row in cursor.fetchall():

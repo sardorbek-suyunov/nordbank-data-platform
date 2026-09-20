@@ -469,6 +469,82 @@ from a sanctions list into a portfolio repository would publish accusations abou
 people to make a demonstration marginally more convincing, which is indefensible whatever the
 demonstration is worth.
 
+## What a tick changes
+
+The mutation engine advances the source one simulated day at a time. Its volumes are not
+parameters of their own: a tick draws the day's movements from the same per-account rates as the
+historical load, divided by the length of the simulated month and carrying the same seasonality,
+weekend factor and growth trend. The day after the anchor is meant to look like the day before
+it, and it is measured rather than assumed — per-day means over the thirty days either side of
+the anchor at `ci`: transactions 248.0 against 244.4, payments 50.8 against 53.5, login sessions
+159.1 against 159.7, ledger batches 272.0 against 276.6.
+
+Only the things the history has no analogue of carry parameters, and they are in the `mutation`
+section of `generator/profiles.yml`.
+
+### Late arrivals, and the only way an account goes past its limit
+
+**Offline card authorisations** are the interesting mechanism. A transit gate, an aircraft or an
+unattended pump takes a transaction without reaching the network and presents it days later, so
+the bank learns of it after the fact. `offline_card_share` is 0.9 percent of a day's card
+purchases and the lag is two to five days, weighted towards the shorter end because most offline
+files present at the next clearing cycle.
+
+Such a row **cannot be declined for insufficient funds**, because no online authorisation ever
+existed to decline. It posts, the balance moves, and if that takes the account past its overdraft
+limit then the account is past its overdraft limit. That is realistic and it is the point: the
+loaded `ci` book contains 72 overdrawn accounts and not one beyond its limit, so every
+unauthorised overdraft silver and gold ever see is created here and is attributable to it.
+
+They are card present. An offline authorisation happens at a terminal with the card in the
+customer's hand, which also keeps them out of invariant 13's population — there is no login
+before a tap at a barrier.
+
+**A deferred posting is not a late arrival**, and conflating them would be the easy mistake. An
+authorisation taken on an earlier day that clears today is an *update*: nothing is inserted,
+`booked_at` does not move, and only `updated_at` does. It is counted under `updated` rather than
+under `late_arriving`, which is a subset of `inserted`. It is not declined either — an
+authorisation already given is not taken back at clearing — so it produces the same unauthorised
+overdraft by the other route.
+
+A third transition moves no money at all: a payment going from `booked` to `settled`, both of
+which are `is_posted`. It is the largest single population of rows whose business time is days
+behind their `updated_at`, and it is exactly what silver's late-arrival ordering is for.
+
+`max_age_days` of 7 bounds what may still clear. Without it a tick would drain the historical
+book's whole standing backlog over its first few days, which is a spike rather than a steady
+state: 298 of the 378 non-posted transactions in the loaded `ci` book are more than thirty days
+old, and a real system would not clear those either.
+
+### The posting date is the tick's date
+
+A late arrival's ledger entry posts to the current open period, never to the business date.
+Posting into a closed period would restate totals for a day that has already been reported,
+which is the same reproducibility argument that makes FX rates non-restating in
+`architecture.md`. Business date, posting date and value date therefore diverge on a late
+arrival and all three mean something: `booked_at` is when the customer transacted,
+`posting_date` is when the bank recognised it, `value_date` is when the money moved.
+
+Invariant 5 holds on the posting date because every batch balances within itself. Q15 and Q16
+meet the divergence and `metric_definitions.md` records what it means for each.
+
+### The clearing cycle runs before the day
+
+Late arrivals, deferred postings, reversals and loan collections are applied in the small hours,
+which is when a real core system clears them, and the day's decline decisions therefore see the
+result. An account an offline transaction pushed past its limit overnight declines the debits it
+attempts that afternoon, which is the behaviour a customer would recognise.
+
+### A posting is reversed, never deleted
+
+A soft-deleted posted transaction is a fork with no good branch: invariant 4 filters on
+`is_posted` and not on `is_deleted`, so reversing the balance fails the invariant and leaving it
+makes the source say money moved while silver says it did not. A tick therefore inserts a
+reversing movement carrying `reversal_of_transaction_id`, with its own ledger batch, and leaves
+the original alone. Both rows stay posted, both are in the ledger, and the net balance effect is
+zero — which is what a real ledger does. Nothing in the source populated that column before this
+milestone.
+
 ## Deliberately unrealistic
 
 Everything below is wrong on purpose, or wrong and accepted. It is listed so that nobody has to

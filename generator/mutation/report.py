@@ -52,6 +52,12 @@ class TickReport:
     counts: dict[str, dict[str, int]] = field(default_factory=lambda: defaultdict(dict))
     deleted_keys: list[tuple[str, int]] = field(default_factory=list)
     drift_fired: list[str] = field(default_factory=list)
+    # Measurements the tick prints and the acceptance runs report. Not persisted: both are
+    # recoverable from the book itself — a decline for funds by its authorisation outcome, an
+    # unauthorised overdraft by comparing the balance to the limit — and a column on a
+    # reconciliation control should carry something that is not.
+    declined_for_funds: int = 0
+    unauthorised_overdrafts: list[int] = field(default_factory=list)
     # Set by the delta guard once it has passed. None on a tick that never reached it, which
     # is every tick that failed, because the guard raises rather than recording a verdict.
     guard: Any = None

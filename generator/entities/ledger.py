@@ -36,11 +36,22 @@ class LedgerWriter:
 
     __slots__ = ("_batch_id", "_batch_rows", "_entry_id", "_entry_rows", "accounts")
 
-    def __init__(self, spool: Spool, accounts: dict[str, str]) -> None:
+    def __init__(
+        self,
+        spool: Spool,
+        accounts: dict[str, str],
+        *,
+        first_batch_id: int = 0,
+        first_entry_id: int = 0,
+    ) -> None:
         self._batch_rows = spool.table("gl_transactions")
         self._entry_rows = spool.table("gl_entries")
-        self._batch_id = 0
-        self._entry_id = 0
+        # The historical load starts from an empty table and counts from one. A tick continues
+        # a table that already holds rows and starts from its high-water mark, because COPY
+        # supplies the key and no sequence is consulted (ADR 0011, and spec 004's amendment on
+        # setval not being transactional).
+        self._batch_id = first_batch_id
+        self._entry_id = first_entry_id
         self.accounts = accounts
 
     @property
