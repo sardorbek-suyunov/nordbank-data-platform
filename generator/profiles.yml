@@ -627,6 +627,45 @@ defaults:
       # costs the balance nothing.
       payment_settles: 0.55
 
+    dirt:
+      # What a well-constrained OLTP system still emits. Spec 004 section 2 argues the case: an
+      # orphan in `core` is not something this generator declines to produce, it is something
+      # the source cannot express, so genuine schema and type violations belong to the file and
+      # API feeds at M4.
+      #
+      # A second record for the same person, entered under a name one edit away. The most
+      # valuable item here, because it gives silver a real entity-resolution problem rather than
+      # a demonstration of one. Per existing customer per day.
+      duplicate_customer_daily_share: 0.0008
+      # Casing and stray whitespace in a free-text field. Nothing in a varchar rejects
+      # " jan  KOWALSKI" and nothing should.
+      text_dirt_daily_share: 0.0004
+      # A KYC status the account behind it contradicts: the review lapsed and nobody froze the
+      # account the same day. Every value is legal and the combination is wrong in a way only a
+      # business rule can see, which replaces the income band inconsistent with occupation that
+      # spec 004 named — neither of those columns exists.
+      lapsed_kyc_daily_share: 0.0003
+      # A nullable column left null where the business expects a value: a bounced email removed
+      # and never replaced.
+      cleared_contact_daily_share: 0.0002
+
+    deletes:
+      # A duplicate is found and dealt with. The candidate set is customers with no dependent
+      # row of any kind, which the loaded ci book contains none of, so it is an exact
+      # description of a duplicate the dirt phase created and nothing has attached to.
+      duplicate_resolution_daily_hazard: 0.08
+      # Of those, the share purged outright rather than tombstoned. Small, because most systems
+      # tombstone — and it exists at all because M7's primary-key reconciler needs one real
+      # instance of the condition it is written to detect.
+      physical_purge_share: 0.15
+      # Authorisations and declines a back office voids. None of them ever moved money: a
+      # posted transaction is reversed rather than deleted, because invariant 4 filters on
+      # is_posted and not on is_deleted.
+      void_transaction_daily_hazard: 0.004
+      void_max_age_days: 30
+      # Applications the funnel finished with and no loan was drawn against.
+      clear_application_daily_hazard: 0.01
+
     lifecycle:
       # Account status transitions reuse the monthly hazards in `attrition`, divided by the
       # length of the simulated month, so the tick and the historical load move accounts at one

@@ -545,6 +545,62 @@ the original alone. Both rows stay posted, both are in the ledger, and the net b
 zero — which is what a real ledger does. Nothing in the source populated that column before this
 milestone.
 
+### Dirt, and what a constrained source can and cannot produce
+
+`core` has foreign keys, check constraints and not-null constraints. An orphan in it is not
+something the generator declines to produce, it is something the source **cannot express** —
+the same shape of argument as ADR 0008, where bronze immutability is a property of key
+construction rather than of restraint. Genuine schema and type violations belong to the file and
+API feeds at M4, where they can actually occur.
+
+So a tick produces what a well-constrained system still emits. **Duplicate customer records**
+are the valuable one: the same person entered twice, under a name one edit away, sharing a date
+of birth and usually one contact detail. Four kinds of edit, and two of them differ in a way
+that matters downstream — a diacritic normalises back to its Latin letter and a Cyrillic
+confusable does not, so a pipeline that casefolds and strips accents resolves one and not the
+other. Beside them: casing and stray whitespace, a KYC status the account activity contradicts,
+and a nullable column left null where the business expects a value.
+
+**A value can be malformed by the domain's rules while conforming to the column's.**
+`core.payments.counterparty_iban` is checked against a shape and nothing validates the mod-97
+checksum — the generated IBANs carry none, which this document already recorded as an
+unrealism. That is a real validation failure for a contract to catch at M4, produced by a source
+that violates no constraint, and a `varchar` cannot express the rule that would catch it.
+
+### The verdict follows the score, not the truth
+
+A tick reads a fraud alert out of the database and cannot know whether the transaction behind it
+was fraudulent. Nothing in `core` records that, and nothing should: a bank does not store which
+of its transactions were really fraud, it stores which alerts its analysts confirmed.
+
+So the disposition is the posterior of the two score distributions the detector draws from,
+against a prior that is itself derived from the detector — recall times the fraud rate, over
+that plus the false alert rate times everything else, which is 0.596 at the stated parameters
+and sits inside the `confirmed_fraud_rate_among_alerts` band. It reproduces the historical
+precision by construction rather than by a second parameter, because the scores it reads were
+drawn from those same two distributions, and it gives a high-scoring alert a higher chance of
+being confirmed: 0.016 at a score of 0.2, 0.698 at 0.6, 0.955 at 0.8.
+
+### One physical delete, and why it exists at all
+
+`architecture.md` records that watermark extraction cannot detect a `DELETE` and schedules a
+primary-key reconciliation at M7 to find the resulting orphans in silver. If nothing in the
+source ever deleted a row, that reconciler could never be demonstrated against a known
+positive — which is worse than not having it, because an untested control reads as a working
+one.
+
+The source therefore purges a duplicate customer record that no other row references, at a small
+share of the duplicates it resolves; the rest are tombstoned with `is_deleted`, which is what
+most systems do. The candidate list of referencing tables is read from `pg_constraint` rather
+than written down, and measured on the loaded `ci` book no customer has no dependent row at all,
+so "dependent-free customer" is an exact description of a duplicate nothing has attached to.
+Every purged key is written to `platform.tick_deleted_keys` individually, so M7 has an expected
+answer rather than a count.
+
+A posted transaction is never soft deleted. Invariant 4 filters on `is_posted` and not on
+`is_deleted`, so a soft-deleted posting is a fork with no good branch: reverse the balance and
+the invariant fails, leave it and the source says money moved while silver says it did not.
+
 ## Deliberately unrealistic
 
 Everything below is wrong on purpose, or wrong and accepted. It is listed so that nobody has to
