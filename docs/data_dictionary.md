@@ -50,6 +50,11 @@ value lists below are free to be written for people.
 | `login_sessions` | `core` | Digital | One row per session | Incremental on `updated_at`, high volume | Device fingerprint, IP country, channel and authentication outcome. Source of the unrecognised-device measure in question 19. |
 | 29 reference tables | `ref` | Reference | One row per code, or per rate key | Incremental on `updated_at`, deactivation not deletion | Listed below with the dimension that consumes each. |
 | `column_classifications` | `platform` | Platform metadata | One row per column in the source database | Generated from this file by `make schema-apply` | Read by the extraction layer at M4 to decide what to tokenise. |
+| `simulation_state` | `platform` | Platform metadata | Exactly one row | Written by `make seed` and by every tick | Where the simulation has been advanced to, and the bound invariant 11 asserts audit timestamps against. |
+| `tick_log` | `platform` | Platform metadata | One row per tick | Written by every tick | The reconciliation control: what the source says it changed on a given business day. Carries real time, not simulated time. |
+| `tick_table_counts` | `platform` | Platform metadata | One row per tick and table | Written by every tick | Per-table counts by operation class, which M4 reconciles bronze against. |
+| `tick_deleted_keys` | `platform` | Platform metadata | One row per physically deleted key | Written by a tick that performs a physical delete | The known positive set M7's primary-key reconciliation validates against. |
+| `drift_log` | `platform` | Platform metadata | One row per fired drift event | Written by the tick that fires the event | What `make schema-check` adds to the committed dictionary to compute the expected schema. |
 
 ### Entity decisions
 
@@ -452,6 +457,77 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | `column_name` | character varying(63) | no | `non-personal` | The classified column. | - |
 | `classification` | character varying(20) | no | `non-personal` | One of identifier, quasi-identifier, sensitive or non-personal. | - |
 | `rationale` | text | no | `non-personal` | Why the column carries that classification, taken from its description in the data dictionary. | - |
+| `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
+| `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
+
+#### platform.drift_log
+
+| Column | Type | Nullable | Classification | Description | Consumed by |
+|---|---|---|---|---|---|
+| `drift_log_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `event_name` | character varying(100) | no | `non-personal` | The drift event from the timeline in generator/drift/, unique so an event cannot fire twice. | schema-check |
+| `drift_type` | character varying(40) | no | `non-personal` | What kind of change the event made. Closed value list, enforced by a check constraint: column_added, type_widened. | schema-check |
+| `target_schema` | character varying(63) | no | `non-personal` | Schema the event changed. | schema-check |
+| `target_table` | character varying(63) | no | `non-personal` | Table the event changed. | schema-check |
+| `target_column` | character varying(63) | no | `non-personal` | Column the event added or retyped. | schema-check |
+| `simulated_date` | date | no | `non-personal` | The simulated date the event was scheduled for and fired on. | - |
+| `tick_sequence` | integer | no | `non-personal` | The tick that applied it. | - |
+| `applied_at` | timestamp with time zone | no | `non-personal` | Real time the DDL ran. A platform table records when it actually happened, not the date it simulates. | - |
+| `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
+| `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
+
+#### platform.simulation_state
+
+| Column | Type | Nullable | Classification | Description | Consumed by |
+|---|---|---|---|---|---|
+| `simulation_state_id` | bigint | no | `non-personal` | Surrogate primary key. The table holds exactly one row, enforced by a unique index on a constant. | - |
+| `profile` | character varying(20) | no | `non-personal` | The profile the source was seeded at, one of ci, dev or full. | - |
+| `seed` | bigint | no | `non-personal` | The run seed the source was generated under, and the seed every tick derives its substream from. | - |
+| `anchor_date` | date | no | `non-personal` | The date the historical load ended on. make seed resets simulated_date to it. | - |
+| `simulated_date` | date | no | `non-personal` | The date the source has been advanced to, and the upper bound invariant 11 asserts audit timestamps against. Equal to anchor_date before the first tick. | Invariant 11 |
+| `tick_sequence` | integer | no | `non-personal` | Ticks completed since the last seed. Zero before the first tick. | - |
+| `last_tick_completed_at` | timestamp with time zone | yes | `non-personal` | Real time the last tick committed. Null before the first tick. | - |
+| `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
+| `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
+
+#### platform.tick_deleted_keys
+
+| Column | Type | Nullable | Classification | Description | Consumed by |
+|---|---|---|---|---|---|
+| `tick_deleted_key_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `tick_log_id` | bigint | no | `non-personal` | The tick that performed the delete. | - |
+| `table_name` | character varying(63) | no | `non-personal` | The core table the row was removed from. | M7 reconciliation |
+| `deleted_key` | bigint | no | `pseudonymous_key` | The primary key that no longer exists in the source, so that M7's primary-key reconciliation has a known positive set rather than a count. Classified as a pseudonymous key because the only physical delete the source performs is of a dependent-free duplicate customer, so the value is a customer_id: retained unchanged, never tokenised. | M7 reconciliation |
+| `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
+| `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
+
+#### platform.tick_log
+
+| Column | Type | Nullable | Classification | Description | Consumed by |
+|---|---|---|---|---|---|
+| `tick_log_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `tick_sequence` | integer | no | `non-personal` | Position of this tick in the sequence since the last seed, unique so a sequence number cannot be reused. | - |
+| `simulated_date` | date | no | `non-personal` | The business day this tick advanced the source to. Its change window is this date to the next, and acceptance criterion 9 reconciles the counts against rows whose updated_at falls inside it. | M4 reconciliation |
+| `profile` | character varying(20) | no | `non-personal` | The profile in force when the tick ran. | - |
+| `seed` | bigint | no | `non-personal` | The run seed the tick derived its substream from, so a tick can be replayed from the log alone. | - |
+| `started_at` | timestamp with time zone | no | `non-personal` | Real time the tick began. A platform table records when it actually happened, not the date it simulates. | - |
+| `completed_at` | timestamp with time zone | no | `non-personal` | Real time the tick committed. | - |
+| `duration_ms` | integer | no | `non-personal` | How long the tick took, in milliseconds, which is what acceptance criterion 13 is measured from. | - |
+| `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
+| `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
+
+#### platform.tick_table_counts
+
+| Column | Type | Nullable | Classification | Description | Consumed by |
+|---|---|---|---|---|---|
+| `tick_table_count_id` | bigint | no | `non-personal` | Surrogate primary key. | - |
+| `tick_log_id` | bigint | no | `non-personal` | The tick these counts belong to. | M4 reconciliation |
+| `table_name` | character varying(63) | no | `non-personal` | The core table the counts describe. | M4 reconciliation |
+| `rows_inserted` | integer | no | `non-personal` | Rows the tick inserted into this table. | M4 reconciliation |
+| `rows_updated` | integer | no | `non-personal` | Rows the tick changed in place. | M4 reconciliation |
+| `rows_soft_deleted` | integer | no | `non-personal` | Rows the tick marked is_deleted. A subset of rows_updated, since setting the flag is an update. | M4 reconciliation |
+| `rows_late_arriving` | integer | no | `non-personal` | Rows inserted by this tick whose business timestamp is earlier than its simulated date. A subset of rows_inserted rather than a fourth disjoint class, because the row is both. | M4 reconciliation |
+| `rows_deleted` | integer | no | `non-personal` | Rows the tick physically removed. The only physical delete the source performs is of a dependent-free duplicate customer record, so that M7's reconciliation control has a real instance of the condition it detects. | M7 reconciliation |
 | `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
 | `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |
 
