@@ -827,3 +827,46 @@ ingestion DAG.
 `make bronze-pii-scan` joins the targets in section 11. Criterion 8 asks for a scan of every
 Parquet file and does not say what runs it; a make target is what the other eighteen criteria
 have.
+
+### 2026-09-22 — a source day's landed count is the largest a batch reported, not the last
+
+The first complete sixty-day backfill reported nine entities on the drift day as landing a
+handful of rows against a claim of hundreds, and the discrepancy was the bookkeeping rather
+than the data.
+
+The resume after the halt clears and re-runs the failed day. For the entity that failed, the
+watermark never moved, so its new batch reads the whole day again and its count is the day's
+count. For the fifteen that succeeded, the watermark *did* move, so their new batches read
+from it and see only a tail — and the reconciliation's upsert replaced the day's count with
+the tail's.
+
+`ops.source_reconciliation.rows_landed` now keeps the **largest** count any batch reported for
+that source day, and the difference is recomputed from the surviving counts. The first batch
+to cover an interval always contains the whole source day, because its window starts before
+the day begins, so "largest" and "first" coincide; "largest" also survives a case where a
+later batch genuinely sees more.
+
+### 2026-09-22 — replaying history across a drift boundary needs the contract of the time
+
+A consequence of the halt-and-bump procedure, found when the acceptance run was repeated with
+the resolved contract in place, and recorded because it will recur at every feed.
+
+Once `payments` is bumped to version 2 to accept `character varying(280)`, that contract is
+wrong for every day **before** the widening fired: the source is still 140 there, and a source
+narrower than the contract is a type change like any other. A backfill of the whole history
+with the resolved contract in the tree therefore fails on its first day. Reproducing the run
+means checking out the contract as it stood before the bump for the first leg, letting the
+halt happen, and restoring the bumped version for the resume — which is what the commit
+sequence records.
+
+`meta.contract_version` already stores the version in force per entity and when, so the
+mechanism that would fix this is to select the contract by the batch's interval rather than
+from the working tree. That is not built here. It belongs with the file feeds at
+specification 006, which will have the same problem the first time a settlement file format
+changes, and it is listed in that specification's inputs rather than left to be rediscovered.
+
+The narrower alternative — treating a source narrower than the contract as acceptable, since
+every value it produces fits — was considered and not taken. It is true for a widened
+character type and not obviously true across every type pair the dictionary uses, and a gate
+that is right about `varchar` and wrong about `numeric` is worse than one that is strict about
+both.
