@@ -76,6 +76,19 @@ instrument, which looked like the defect it was; after the other boundary fixes 
 instrument read 1.20, which looked like an over-correction and was nothing of the kind. Both
 readings were the population and the calendar.
 
+**The instrument was wrong in two separate ways before it was right, and the original 0.90 was
+two errors cancelling.** The two contaminants are independent and neither fix removes the
+other: the book's own growth comes out by measuring a mix, and the calendar comes out only by
+dividing by the seasonal expectation, so removing one and keeping the other yields a third
+wrong number rather than a right one. The size of the cancellation is arithmetic on the figures
+above. The clean instruments put the post-fix ratio at 1.005 while the contaminated one read
+1.20, so that instrument runs about 1.20 times high — the two contaminants compounding, 1.10 by
+1.10 — which puts the real pre-fix card-purchase ratio near 0.75. A quarter of the volume was
+missing and the instrument reported a tenth of it, because the defect and the bias pointed
+opposite ways. That is the more instructive half: a contaminated instrument does not merely add
+noise to a defect, it can make a severe one look mild, and the magnitude of what is being
+measured is not recoverable until the instrument is.
+
 Continuity is now measured as a mix, or per open account against the seasonal expectation, with
 a stated tolerance of five per cent that every series is inside. The card share of the
 transaction mix across the anchor, one instrument either side of the change:
