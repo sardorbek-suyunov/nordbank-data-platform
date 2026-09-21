@@ -692,6 +692,89 @@ A posted transaction is never soft deleted. Invariant 4 filters on `is_posted` a
 `is_deleted`, so a soft-deleted posting is a fork with no good branch: reverse the balance and
 the invariant fails, leave it and the source says money moved while silver says it did not.
 
+## Profile coverage, and what a green `ci` run does not prove
+
+The three profiles differ in three values and nothing else: `customers`, `history_months` and
+`assert_statistical_bands`. No generator code branches on the profile name. The consequence is
+easy to state and easy to forget: **a behaviour whose precondition is a duration longer than the
+profile's history cannot occur at that profile, however correct the code that would produce it
+is.** The `ci` profile carries six months. Several things this document specifies take longer
+than six months to happen, so `ci` never reaches them, and a test suite that is green against
+`ci` has said nothing about them.
+
+This is not hypothetical. Bounding a card's terminal date by its expiry looked redundant when it
+was written, because no card expires at `ci`; over three years cards do expire, and without the
+bound a card transacted past its expiry — 1,766 rows, which invariant 2 refused at `dev` while
+`ci` stayed green through the same code.
+
+### Measured
+
+Both profiles at anchor 2026-09-18, seed 42, immediately after `make seed` with no tick run.
+The `full` column is arithmetic on `history_months` and `generator/profiles.yml`, not a
+measurement: that profile has not been run, and `docs/project_state.md` records why measuring it
+is re-gated on M6.
+
+| Behaviour | `ci` (500 customers, 6 months) | `dev` (5,000, 36 months) | `full` (30,000, 60 months) |
+|---|---|---|---|
+| A card reaches its expiry date | **0 of 341.** Validity is four years and the oldest card in the book was issued 30 months before the anchor, so the earliest expiry is 2028-03-27, eighteen months past it | 403 of 4,189. Earliest expiry 2025-09-25, a year before the anchor | Every card issued in the first year expires inside the window, so the issue, expire and reissue cycle completes there for the first time |
+| A loan reaches maturity | **0 of 11.** The shortest term is 12 months, loans originate inside the history window, and the window is 6, so no loan can mature. Earliest maturity 2027-05-08 | 56 of 724. Terms of 12, 24 and 36 months mature | Adds terms of 48 and 60. Terms of 72 and 84 mature at no profile, because no profile carries a seven-year history |
+| A loan defaults | **0.** The seasoning curve is 0.00 in the origination month and 0.25 by month six, over a book of 11 loans | 3 | About 30 by the same arithmetic, which is still too few to measure a rate over |
+| A loan is written off | **0.** Write-off is six months after default, so the earliest possible write-off is later than the whole `ci` history | 3 | As above |
+| A loan closes | **0** | 54 | — |
+| `loan_application_status` reaches `expired`, `withdrawn` or `referred` | **0, 0, 0** | 40, 42, 1 | — |
+| `decision_reason` reaches `affordability`, `credit_history`, `customer_withdrew` or `expired_no_response` | **0, 0, 0, 0** | 76, 77, 42, 40 | — |
+| An account is more than twelve months old | 113 of 566, 20 per cent, and all of them belong to the quarter of the book that predates the window | 4,565 of 6,587, 69 per cent | — |
+| A signup cohort has a twelve-month observation horizon | 19 cohort months holding 89 customers between them, and those customers have almost no activity to retain: the book carries 3 to 13 transactions a month before 2026-03 against thousands after it | 49 cohort months over the whole book | — |
+| A full calendar year of the month-of-year multiplier is exercised | **7 of 12.** The `ci` window runs March to October, so November, December, January and February are never applied at volume | 12 of 12, over 37 months | — |
+| A loan installment schedule is followed to depth | 26 installments paid, the deepest being number 5 | 9,453 paid, the deepest being number 35 | — |
+| Invariant 9's statistical band | **Not asserted.** `assert_statistical_bands` is false, and the invariant reports the sample size and the interval half-width that justify the suspension instead | Asserted | Asserted |
+
+Two consequences of that table are worth naming rather than deriving.
+
+**Everything Q7, Q8 and Q9 measure is unreachable at `ci`.** Delinquency buckets, the
+vintage-conditioned default rate and the loan lifecycle all need a book that has seasoned, and
+the `ci` book has eleven loans none of which has defaulted, matured, closed or been written off.
+A credit model that compiled and ran against `ci` would have been exercised against a population
+in which the measured quantity is identically zero.
+
+**`default_rate_overall` cannot hold at `ci`.** The band is 0.004 to 0.075 and the measured rate
+at `ci` is exactly zero, below the minimum. Nothing asserts that band today, which is the only
+reason a green run is possible; when M7 asserts it, it has to be conditioned on the profile the
+way invariant 9's band already is.
+
+### Two codes no profile reaches, for a different reason
+
+These are not profile coverage and are listed here so the two cases are not confused.
+
+- **`loan_statuses.arrears` is written only by the mutation engine**, in the lifecycle phase.
+  The historical load never produces it, so it is zero at both profiles immediately after a
+  seed, and reaching it needs ticks rather than a longer history.
+- **`account_statuses.pending` is written by nothing at all.** No generator path assigns it at
+  any profile. It is a vocabulary code with no producer, which M4's contract will carry and
+  nothing will ever populate.
+
+### What CI's green badge does not prove
+
+The `stack` workflow seeds `ci` and runs `make tick-to DATE=2026-09-30`. The anchor is
+2026-09-18, so that is twelve ticks, not sixty. Everything in the table above is therefore
+outside what CI exercises, and three further things are too.
+
+- **Only one of the two scripted drift events fires.** The additive column is at anchor plus 12
+  and the type widening at anchor plus 37. CI stops at plus 12, so the widening has never run in
+  CI and never will under this workflow. A green badge is not evidence that anything downstream
+  handles a type change; that evidence comes from the sixty-tick local acceptance run.
+- **The sixty-tick sequence, the replay determinism comparison and the thirty-tick `dev` run are
+  local acceptance tests.** Spec 004's amendment says so deliberately, on runtime grounds. The
+  consequence is that determinism across a long sequence, and every measurement that needs `dev`
+  scale, are asserted by a person running a target rather than by a merge gate.
+- **Invariant 9's band is suspended for the whole CI run**, because CI runs `ci`.
+
+The honest summary is that CI proves the wiring: that the stack starts, the schema applies
+idempotently, the load is deterministic against the committed manifest, twelve ticks reconcile
+against their own windows, one drift event fires with `schema-check` still green, and the unit,
+DAG and in-stack integration suites pass. It does not prove that the bank the generator models
+behaves correctly over a period long enough for its slower mechanisms to run.
+
 ## Deliberately unrealistic
 
 Everything below is wrong on purpose, or wrong and accepted. It is listed so that nobody has to
