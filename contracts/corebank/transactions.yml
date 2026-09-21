@@ -1,0 +1,98 @@
+# Data contract for core.transactions.
+#
+# Bootstrapped from docs/data_dictionary.md once, then hand-authored. It is not
+# regenerated on every run: the dictionary records what the source is, this records
+# what the platform has agreed to accept, and the lag between them is what makes
+# drift visible at ingest (spec 005 section 2).
+#
+# `make contracts-diff` reports divergence from the dictionary and names the
+# revision this file was pinned to. Bump `contract_version` deliberately, in a
+# commit, when the platform decides to accept something new.
+source_system: corebank
+source_schema: core
+entity: transactions
+contract_version: 1
+watermark_column: updated_at
+primary_key: transaction_id
+dictionary_revision: sha256:e5d088874e5b22e7
+columns:
+- name: transaction_id
+  type: bigint
+  nullable: false
+  classification: non-personal
+- name: transaction_reference
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: account_id
+  type: bigint
+  nullable: false
+  classification: pseudonymous_key
+- name: card_id
+  type: bigint
+  nullable: true
+  classification: pseudonymous_key
+- name: merchant_id
+  type: bigint
+  nullable: true
+  classification: non-personal
+- name: agent_location_id
+  type: bigint
+  nullable: true
+  classification: non-personal
+- name: transaction_type_code
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: channel_code
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: transaction_status_code
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: authorisation_outcome_code
+  type: character varying(40)
+  nullable: true
+  classification: non-personal
+- name: booked_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: value_date
+  type: date
+  nullable: false
+  classification: non-personal
+- name: transaction_amount
+  type: numeric(18,4)
+  nullable: false
+  classification: non-personal
+- name: transaction_currency_code
+  type: character(3)
+  nullable: false
+  classification: non-personal
+- name: is_card_present
+  type: boolean
+  nullable: true
+  classification: non-personal
+- name: reversal_of_transaction_id
+  type: bigint
+  nullable: true
+  classification: non-personal
+- name: counterparty_reference
+  type: character varying(140)
+  nullable: true
+  classification: identifier
+- name: created_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: updated_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: is_deleted
+  type: boolean
+  nullable: false
+  classification: non-personal

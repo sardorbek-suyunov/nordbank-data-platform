@@ -77,6 +77,16 @@ warehouse-apply: ## Apply the warehouse operational schema (runs inside the stac
 	@echo "warehouse-apply: running inside airflow-scheduler, where the warehouse volume is"
 	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/warehouse_apply.py"
 
+contracts-bootstrap: ## Write a contract from the dictionary for any entity that has none
+	uv run python scripts/contracts_bootstrap.py
+
+contracts-diff: ## Report contract divergence from the dictionary (CHECK=1 fails on it)
+ifdef CHECK
+	uv run python scripts/contracts_diff.py --check
+else
+	uv run python scripts/contracts_diff.py
+endif
+
 seed: ## Generate and load the historical dataset (NORDBANK_ENV, _SEED, _ANCHOR_DATE)
 	uv run python -m generator
 

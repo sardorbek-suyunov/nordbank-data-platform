@@ -1,0 +1,70 @@
+# Data contract for core.login_sessions.
+#
+# Bootstrapped from docs/data_dictionary.md once, then hand-authored. It is not
+# regenerated on every run: the dictionary records what the source is, this records
+# what the platform has agreed to accept, and the lag between them is what makes
+# drift visible at ingest (spec 005 section 2).
+#
+# `make contracts-diff` reports divergence from the dictionary and names the
+# revision this file was pinned to. Bump `contract_version` deliberately, in a
+# commit, when the platform decides to accept something new.
+source_system: corebank
+source_schema: core
+entity: login_sessions
+contract_version: 1
+watermark_column: updated_at
+primary_key: login_session_id
+dictionary_revision: sha256:e5d088874e5b22e7
+columns:
+- name: login_session_id
+  type: bigint
+  nullable: false
+  classification: non-personal
+- name: session_reference
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: customer_id
+  type: bigint
+  nullable: false
+  classification: pseudonymous_key
+- name: channel_code
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: login_outcome_code
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: started_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: ended_at
+  type: timestamp with time zone
+  nullable: true
+  classification: non-personal
+- name: device_fingerprint
+  type: character varying(128)
+  nullable: false
+  classification: identifier
+- name: ip_address
+  type: character varying(45)
+  nullable: false
+  classification: identifier
+- name: ip_country_code
+  type: character(2)
+  nullable: true
+  classification: quasi-identifier
+- name: created_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: updated_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: is_deleted
+  type: boolean
+  nullable: false
+  classification: non-personal
