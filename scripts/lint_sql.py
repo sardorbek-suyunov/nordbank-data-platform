@@ -1,24 +1,37 @@
-"""Lint the SQL in the dbt project, or state that there is nothing to lint.
+"""Lint the DuckDB SQL in the repository, or state that there is nothing to lint.
 
-The dbt project is created at M4. Until then the tree holds no SQL, and this reports a skip
-instead of a pass so that an empty run is not mistaken for a clean run.
+Two trees hold DuckDB SQL: the warehouse operational schema, which exists from M4, and the dbt
+project, which is created in M4's later half. Both are the `duckdb` dialect `.sqlfluff`
+configures. The source database's DDL under `infra/docker/postgres-source/` is deliberately not
+linted here: it is PostgreSQL, and linting it against a DuckDB dialect would report differences
+between two engines as style defects.
+
+A tree with no SQL reports a skip rather than a pass, so an empty run is not mistaken for a
+clean one.
 """
 
 import subprocess
 import sys
 from pathlib import Path
 
-DBT_DIR = Path(__file__).resolve().parent.parent / "dbt"
+ROOT = Path(__file__).resolve().parent.parent
+TREES = (ROOT / "infra" / "warehouse", ROOT / "dbt")
 
 
 def main() -> int:
-    sql_files = sorted(DBT_DIR.rglob("*.sql"))
-    if not sql_files:
-        print("sqlfluff skipped: no .sql files under dbt/ (the dbt project arrives at M4)")
-        return 0
+    targets = []
+    for tree in TREES:
+        found = sorted(tree.rglob("*.sql"))
+        relative = tree.relative_to(ROOT).as_posix()
+        if found:
+            print(f"sqlfluff: linting {len(found)} file(s) under {relative}/")
+            targets.append(str(tree))
+        else:
+            print(f"sqlfluff skipped: no .sql files under {relative}/")
 
-    print(f"sqlfluff: linting {len(sql_files)} file(s) under dbt/")
-    return subprocess.call(["sqlfluff", "lint", str(DBT_DIR)])
+    if not targets:
+        return 0
+    return subprocess.call(["sqlfluff", "lint", *targets])
 
 
 if __name__ == "__main__":
