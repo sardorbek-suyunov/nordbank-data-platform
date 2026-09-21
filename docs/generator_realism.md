@@ -524,6 +524,42 @@ band this measurement can support at `ci` — a day holds a few hundred transact
 sampling noise alone is a couple of per cent — and a departure worth finding is larger than a
 departure worth arguing about.
 
+### A measured band is comparable to a stated one only when the window admits it
+
+The disposition lag is the second place this milestone met the same class of error, and the
+general rule belongs here rather than in one acceptance criterion.
+
+An alert raised in the last fourteen ticks of a run cannot yet have exhibited a fourteen-day
+lag: the run ended before its disposition was due. Averaging over every alert therefore reports
+a mean below the stated one however correct the model is, and the shorter the run the further
+below. The comparable figure conditions on alerts raised early enough for the whole support of
+the distribution to fit inside the run, and the unconditioned figure is reported beside it,
+because the gap between them is the size of the censoring.
+
+**Conditioning it is also what found a defect the censoring was hiding.** At `dev` over thirty
+ticks the unconditioned mean read 4.40 days against a stated one to fourteen, which censoring
+plausibly explains. Conditioned, it read 4.81 — barely different — and the maximum over
+forty-two fully observable alerts was nine days. Forty-two draws from a uniform one-to-fourteen
+distribution exceed nine with probability one minus (9/14) to the forty-second, which is about
+one in thirty million, so the lag being produced was not the lag being stated.
+
+The cause was that the lag was drawn from a stream keyed on the simulated date, so every tick
+drew a *new* lag for the same alert and the alert disposed on the first day a fresh draw
+happened to have elapsed. A lag redrawn each tick is realised as the minimum over repeated
+draws. **A hazard may be redrawn each tick; a lag must not**, and the two now come from
+different streams: `TickContext.stream` is keyed on the day and `TickContext.entity_stream` on
+the entity. The decision and disbursement lags in the lending funnel had the same defect and the
+same fix.
+
+**The rule: a measured band is comparable to a stated one only when the observation window
+admits the full support of the distribution. Where it does not, condition the measurement on the
+part of the window that does, and report both.** This is the same error the default rate makes
+when it is not conditioned on vintage — a growing book shows a falling default rate with no
+change in underwriting, because its denominator's seasoning changes every month — which
+`metric_definitions.md` already resolves the same way. It will recur wherever a lagged quantity
+is measured over a window shorter than its own lag, which at M7 is every freshness and
+resolution-time measure the quality framework reports.
+
 ## What a tick changes
 
 The mutation engine advances the source one simulated day at a time. Its volumes are not

@@ -682,3 +682,29 @@ windows thirty days apart differ by a month of the book's own growth, about ten 
 and by a month of seasonality, another ten per cent between August and October. Continuity is
 measured as a mix, or per open account against the seasonal expectation, with a stated tolerance
 of five per cent. `docs/generator_realism.md` carries both the method and the figures.
+
+### 2026-09-21 — A lag is drawn from a stream keyed on the entity, not on the day
+
+Section 1 requires an alert raised on day D to be dispositioned on a stated lag, and criterion 7
+measures the result against it. Measured at `dev` over thirty ticks, the realised lag had a mean
+of 4.40 days and never exceeded nine over forty-two fully observable alerts, against a stated one
+to fourteen. Forty-two uniform draws on that range exceed nine with probability about one in
+thirty million, so the distribution being produced was not the one being stated.
+
+The cause was the stream. `TickContext.stream` is keyed on the simulated date — correctly, because
+that is what a daily hazard needs — and the disposition drew its lag from it, so every tick drew a
+*new* lag for the same alert and the alert disposed on the first day a fresh draw happened to have
+elapsed. **A lag redrawn each tick is realised as the minimum over repeated draws.**
+
+`TickContext.entity_stream` is keyed on the entity alone and is what a lag draws from. The
+decision lag and the disbursement lag in the lending funnel had the same defect and take the same
+fix. Nothing in the schema records when a case is due, and adding a column would put a simulation
+detail in the bank's data, so the lag stays a pure function of the seed and the entity's key and
+is recomputed identically on every tick that asks.
+
+Criterion 7 is also reported two ways from here on, conditioned and unconditioned. An alert raised
+in the last `disposition_lag_days_max` ticks of a run cannot yet have exhibited a long lag, so the
+unconditioned mean sits below the stated one however correct the model is. The general rule — a
+measured band is comparable to a stated one only when the observation window admits the full
+support of the distribution — is in `docs/generator_realism.md`, because it recurs wherever a
+lagged quantity is measured over a window shorter than its own lag.

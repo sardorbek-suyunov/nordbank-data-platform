@@ -60,7 +60,9 @@ def run(context: TickContext) -> None:
     dismissed: set[int] = set()
 
     for alert_id, alerted_at, score in candidates:
-        rng = context.stream("disposition", alert_id)
+        # Keyed on the alert, not on the day: a lag redrawn each tick is realised as
+        # the minimum over repeated draws. See `TickContext.entity_stream`.
+        rng = context.entity_stream("disposition", alert_id)
         # Due today or overdue. Overdue covers the backlog the historical load left open at the
         # anchor, which a simulation that never worked it would carry for ever.
         if alerted_at + dt.timedelta(days=rng.randint(lag_min, lag_max)) > day_end:

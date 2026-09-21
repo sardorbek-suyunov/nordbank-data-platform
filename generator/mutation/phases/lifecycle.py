@@ -636,7 +636,9 @@ def _decide_applications(context: TickContext) -> None:
     decisions: tuple[list[int], list[str]] = ([], [])
 
     for application_id, risk_band, applied_at, requested in context.cursor.fetchall():
-        rng = context.stream("lifecycle.decision", application_id)
+        # Keyed on the application rather than the day, so the decision lag is one draw
+        # rather than the first of many to elapse. See `TickContext.entity_stream`.
+        rng = context.entity_stream("lifecycle.decision", application_id)
         lag = rng.randint(
             int(lending["decision_lag_hours_min"]), int(lending["decision_lag_hours_max"])
         )
@@ -747,7 +749,7 @@ def _disburse_approved(context: TickContext) -> None:
         decided_at,
         account_id,
     ) in context.cursor.fetchall():
-        rng = context.stream("lifecycle.disbursement", application_id)
+        rng = context.entity_stream("lifecycle.disbursement", application_id)
         if not bernoulli(rng, float(lending["disbursement_share"])):
             continue
         lag = rng.randint(
