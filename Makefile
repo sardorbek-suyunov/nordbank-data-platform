@@ -4,7 +4,7 @@ SHELL := bash
 
 .PHONY: help install init-env lint format test test-dags test-integration up down nuke health \
 	logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap \
-	contracts-diff extract backfill bronze-stats seed seed-verify seed-manifest tick tick-to \
+	contracts-diff extract backfill bronze-stats bronze-pii-scan seed seed-verify seed-manifest tick tick-to \
 	tick-status tick-acceptance dbt-build dbt-docs dq clean
 
 help: ## List the available targets
@@ -96,6 +96,9 @@ backfill: ## Tick and ingest one day at a time (FROM=YYYY-MM-DD TO=YYYY-MM-DD), 
 
 bronze-stats: ## Landed and quarantined counts by entity and ingest date (ALL=1 for every status)
 	docker compose exec -T -e ALL=$(ALL) airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_stats.py"
+
+bronze-pii-scan: ## Scan every registered bronze object for a cleartext identifier
+	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_pii_scan.py"
 
 seed: ## Generate and load the historical dataset (NORDBANK_ENV, _SEED, _ANCHOR_DATE)
 	uv run python -m generator

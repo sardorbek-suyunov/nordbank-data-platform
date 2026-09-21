@@ -22,6 +22,18 @@ made.
 state rather than from an argument, so re-invoking it over a range it has already finished
 changes nothing, and invoking it after a halt continues from the day that stopped it.
 
+**The whole window must lie in the past**, and that is Airflow's constraint rather than this
+loop's. The scheduler refuses to schedule task instances for a run whose logical date is in
+the future — `Logical date is in future` — and it refuses in silence: the run sits `running`
+with no task instance ever queued, for ever. Since a run's logical date *is* the simulated day
+here, a simulated day ahead of the real clock cannot be ingested at all.
+
+`docs/project_state.md` already recorded that the simulated clock is free to run ahead of the
+real one and that the anchor should be chosen deliberately. This is the second thing that
+depends on the choice, after the FX feed, and it is the stricter of the two: choose the anchor
+so that the last day of the backfill is on or before today. The check below fails fast and
+says so, because the failure it prevents is a hang rather than an error.
+
 It runs on the host, because the tick is a host package and the Airflow CLI and the registry
 are both in the container, and nothing can reach all three from one place.
 """
@@ -208,6 +220,16 @@ def main(argv: list[str]) -> int:
     end = dt.date.fromisoformat(arguments.end)
     if end < start:
         raise SystemExit("backfill: TO is before FROM")
+
+    today = dt.datetime.now(dt.UTC).date()
+    if end > today:
+        raise SystemExit(
+            f"backfill: TO is {end}, which is after today ({today}). Airflow will not schedule "
+            "a run whose logical date is in the future, and it declines in silence: the run "
+            "stays `running` with no task instance ever queued. A run's logical date is the "
+            "simulated day here, so seed with an anchor far enough back that the last day of "
+            "the backfill is on or before today."
+        )
 
     db.require_stack()
     anchor, _simulated, _sequence = simulation_state()

@@ -806,3 +806,24 @@ any application's loopback connection can hold it. Measured: a local signing ser
 shadowed one, every host-side tool timed out while `make health` stayed green, and a forced
 recreate failed on the bind. The remedy is the range rather than the number, and
 `docs/runbook.md` now says so. ADR 0012 is corrected alongside it.
+
+### 2026-09-21 — the backfill's window must lie in the past, and `bronze-pii-scan` is a target
+
+Section 9 does not bound the range `make backfill` accepts, and the first sixty-day attempt
+wedged on its fourth day for a reason that produces no error: **Airflow will not schedule a
+run whose logical date is in the future**. The scheduler logs `Logical date is in future` and
+queues nothing, so the run sits `running` with no task instance ever created. A run's logical
+date is the simulated day here, so a simulated day ahead of the real clock cannot be ingested
+at all.
+
+`docs/project_state.md` recorded at M3 that the simulated clock may run ahead of the real one
+and that the anchor should be chosen deliberately; it named the FX feed as what depended on
+the choice. This is the second thing, and it is stricter. `make backfill` now refuses a range
+ending after today, with that explanation, and `docs/runbook.md` carries the rule: a sixty-day
+backfill needs an anchor at least sixty days in the past. The `ci` anchor pinned in the
+`stack` workflow is unaffected, because that workflow ticks the source and never runs an
+ingestion DAG.
+
+`make bronze-pii-scan` joins the targets in section 11. Criterion 8 asks for a scan of every
+Parquet file and does not say what runs it; a make target is what the other eighteen criteria
+have.

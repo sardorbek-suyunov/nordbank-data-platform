@@ -105,6 +105,28 @@ it readable as a Postgres port.
 If you need a different port, change `POSTGRES_SOURCE_PORT` in `.env` and run
 `make down && make up`. Only the host side moves.
 
+### The anchor must be chosen so the simulated window stays behind the real clock
+
+`docs/project_state.md` recorded at M3 that the simulated clock is free to run ahead of the
+real one, and that either the anchor is chosen so the extracted window stays behind real time
+or the FX feed synthesises rates for simulated-future dates. M4 found a second thing that
+depends on the same choice, and it is the stricter one.
+
+**Airflow will not schedule a run whose logical date is in the future, and it declines in
+silence.** The scheduler logs `Logical date is in future` and queues nothing; the run sits
+`running` with no task instance ever created, indefinitely. A run's logical date is the
+simulated day in this platform, so a simulated day ahead of the real clock cannot be ingested
+at all — not slowly, not with a warning, not at all.
+
+So: **seed with an anchor far enough back that the last day of the backfill is on or before
+today.** A sixty-day backfill needs an anchor at least sixty days in the past. `make backfill`
+checks this before it starts anything and refuses with that explanation, because the failure
+it prevents is a hang rather than an error, and a hang is the expensive kind to diagnose.
+
+The `ci` anchor pinned in the `stack` workflow is a separate matter and is unaffected: that
+workflow ticks the source and never runs an ingestion DAG, so nothing there depends on the
+simulated date being in the past.
+
 The warehouse is deliberately not reachable from the host: it lives on a named volume, so
 probes and tests run inside a container. Connections are environment-defined and therefore
 invisible in the UI and to `airflow connections list`; read them back with
