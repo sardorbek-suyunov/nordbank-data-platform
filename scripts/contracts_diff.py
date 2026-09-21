@@ -12,8 +12,20 @@ version 2 of spec 005 and rejected, because a record-level rejection for a soft 
 expectation produces permanent population loss rather than a quality signal; the reasoning is
 in `docs/architecture.md` with the bronze contract.
 
-It reads no database. The dictionary and the contracts are both committed files, so this runs
-on a clean checkout with nothing started.
+**A contract that has accepted a scripted drift event is not divergent.** The dictionary
+records the source's committed shape and a tick changes the live source without editing it,
+which is why `make schema-check` compares against the dictionary *plus the deltas of the
+events that have fired*. The same problem arrives here one step later: once a breaking drift
+is resolved by bumping a contract, that contract permanently disagrees with the committed
+dictionary, and the disagreement is the correct state rather than a defect. So a divergence
+that matches a declared event's delta is reported as accepted drift and does not fail. Any
+other divergence does.
+
+This reads the timeline rather than the drift log, so it needs no database and still runs on a
+clean checkout with nothing started. The weaker question it answers as a result — "is this one
+of the shapes the source can legitimately take" rather than "is this the shape it has right
+now" — is the right one for a committed file: a contract is reviewed in a pull request, where
+no database is in scope.
 """
 
 from __future__ import annotations
@@ -27,13 +39,37 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from data_contract import SOURCE_SYSTEM, dictionary_revision, load_all  # noqa: E402
 from schema_contract import read_dictionary  # noqa: E402
 
+sys.path.insert(0, str(ROOT))
+from generator import drift  # noqa: E402
+from generator.drift import timeline  # noqa: E402
+
 DICTIONARY = ROOT / "docs" / "data_dictionary.md"
 CONTRACTS = ROOT / "contracts" / SOURCE_SYSTEM
 EXTRACTED_SCHEMAS: tuple[str, ...] = ("core", "ref")
 
 
-def differences(contract, documented: dict[str, object]) -> list[str]:
-    found = []
+def accepted_drift(contract) -> dict[str, tuple[str, str]]:
+    """Per column, the shape a declared drift event would give it, and the event's name.
+
+    An additive event contributes the column it adds; a widening contributes the type it
+    widens to. A contract carrying either has accepted that event.
+    """
+    out: dict[str, tuple[str, str]] = {}
+    for event in drift.events():
+        if event.target_schema != contract.source_schema or event.target_table != contract.entity:
+            continue
+        if event.drift_type == timeline.COLUMN_ADDED and event.added is not None:
+            out[event.target_column] = (event.added.data_type, event.name)
+        elif event.drift_type == timeline.TYPE_WIDENED:
+            out[event.target_column] = (event.widened_to, event.name)
+    return out
+
+
+def differences(contract, documented: dict[str, object]) -> tuple[list[str], list[str]]:
+    """Divergences that are findings, and divergences that are accepted drift."""
+    found: list[str] = []
+    accepted: list[str] = []
+    drifted = accepted_drift(contract)
     contracted = {column.name: column for column in contract.columns}
 
     for name in sorted(set(contracted) | set(documented)):
@@ -43,12 +79,24 @@ def differences(contract, documented: dict[str, object]) -> list[str]:
             found.append(f"column {name} is in the dictionary and not in the contract")
             continue
         if described is None:
-            found.append(f"column {name} is in the contract and not in the dictionary")
+            expected = drifted.get(name)
+            if expected and expected[0] == held.data_type:
+                accepted.append(f"column {name} accepts drift event {expected[1]}")
+            else:
+                found.append(f"column {name} is in the contract and not in the dictionary")
             continue
         if held.data_type != described.data_type:
-            found.append(
-                f"column {name} type {held.data_type!r} against dictionary {described.data_type!r}"
-            )
+            expected = drifted.get(name)
+            if expected and expected[0] == held.data_type:
+                accepted.append(
+                    f"column {name} accepts drift event {expected[1]}: "
+                    f"{described.data_type} widened to {held.data_type}"
+                )
+            else:
+                found.append(
+                    f"column {name} type {held.data_type!r} against dictionary "
+                    f"{described.data_type!r}"
+                )
         if held.is_nullable != described.is_nullable:
             found.append(
                 f"column {name} nullable {held.is_nullable} against dictionary "
@@ -59,7 +107,7 @@ def differences(contract, documented: dict[str, object]) -> list[str]:
                 f"column {name} classification {held.classification!r} against dictionary "
                 f"{described.classification!r}"
             )
-    return found
+    return found, accepted
 
 
 def main(argv: list[str]) -> int:
@@ -74,6 +122,7 @@ def main(argv: list[str]) -> int:
     revision = dictionary_revision(DICTIONARY)
 
     diverged = 0
+    accepted_count = 0
     stale_pins = 0
     missing = []
 
@@ -89,9 +138,17 @@ def main(argv: list[str]) -> int:
             print(f"  {contract.source_schema}.{entity}: not in the dictionary at all")
             diverged += 1
             continue
-        found = differences(contract, by_entity[key])
+        found, accepted = differences(contract, by_entity[key])
         if contract.dictionary_revision != revision:
             stale_pins += 1
+        if accepted:
+            accepted_count += 1
+            print(
+                f"  {contract.source_schema}.{entity}: contract version "
+                f"{contract.contract_version} has accepted drift"
+            )
+            for line in accepted:
+                print(f"    {line}")
         if found:
             diverged += 1
             pinned = contract.dictionary_revision
@@ -105,7 +162,8 @@ def main(argv: list[str]) -> int:
 
     print(
         f"contracts-diff: {len(contracts)} contract(s), {len(by_entity)} documented entity(ies), "
-        f"{diverged} diverging, {len(missing)} uncontracted, dictionary at {revision}"
+        f"{diverged} diverging, {accepted_count} carrying accepted drift, "
+        f"{len(missing)} uncontracted, dictionary at {revision}"
     )
     if stale_pins:
         print(

@@ -8,10 +8,18 @@
 # `make contracts-diff` reports divergence from the dictionary and names the
 # revision this file was pinned to. Bump `contract_version` deliberately, in a
 # commit, when the platform decides to accept something new.
+#
+# Version 2, 2026-09-21. The scheme widened `remittance_reference` from 140 characters to
+# 280, which the ingest gate classified as breaking drift and refused: the whole batch was
+# quarantined, the batch marked failed, the watermark left where it was, and `make backfill`
+# halted naming this entity and this column. A wider free-text field accepts everything the
+# narrower one did, so the platform accepts it, and this is the deliberate decision the halt
+# asked a person to take. The generator writes thirteen characters into the column at every
+# profile, so nothing in the data changes; what changed is the source's declared shape.
 source_system: corebank
 source_schema: core
 entity: payments
-contract_version: 1
+contract_version: 2
 watermark_column: updated_at
 primary_key: payment_id
 dictionary_revision: sha256:e5d088874e5b22e7
@@ -73,7 +81,7 @@ columns:
   nullable: true
   classification: non-personal
 - name: remittance_reference
-  type: character varying(140)
+  type: character varying(280)
   nullable: true
   classification: quasi-identifier
 - name: created_at
