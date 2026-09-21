@@ -8,6 +8,10 @@ Consequence added: 2026-09-18, discovered by ADR 0010, which decided that sancti
 resolves tokens through the vault. The vault is therefore also the only path to a sanctions
 screen, and erasure also destroys the ability to re-screen a subject. The decision, its
 context and its alternatives are unchanged.
+Consequence added: 2026-09-21, discovered by specification 005, which built the vault. The
+vault stores the raw value with no second encryption layer over it, and the deployment
+difference that follows is stated below. The decision, its context and its alternatives are
+unchanged.
 
 ## Context
 
@@ -109,3 +113,44 @@ needs to be freely readable by engineers debugging a pipeline.
 **Encrypt the identifier columns in place with a per-subject key.** Functionally close to the
 chosen approach, and rejected mainly for mechanics: encrypted values are not stable join
 keys, and the per-subject key store would be the same vault with extra steps.
+
+**Encrypt the vault's raw value at rest, under a second key.** Considered at M4 when the vault
+was built, and deferred rather than rejected; see the consequence below, which carries the
+measurement.
+
+## Added at M4: the vault holds the raw value in the clear, and what that costs
+
+Specification 005 built the vault and had to decide whether the raw value is encrypted inside
+it. It is not, and the reason matters more than the decision, because the reason first given
+was wrong.
+
+The argument as first written was that a second layer would be key-management theatre, since
+the ciphertext and its key would share one database and one credential. **That is not true of
+this stack, and it was measured.** DuckDB 1.5.5 supports transparent file encryption through
+`ATTACH … (ENCRYPTION_KEY …)`: a known string written into an encrypted database is absent
+from the file's bytes, and opening the file without the key is refused with a catalogue error.
+The key would come from the environment, exactly as `PII_TOKEN_SALT` already does, and would
+not be in the database at all.
+
+The reason that survives the measurement is narrower and still sufficient. The runtime holds
+the warehouse file and the environment together, so a layer inside that file defends against
+one thing: **offline exfiltration of the warehouse file** — a copied volume, a backup, an
+export. It does not defend against a compromise of the process, which has both. Against that
+one threat it adds a second irreversible-loss mode, because a vault that cannot be decrypted
+is a vault whose tokens resolve to nobody, which is erasure applied to everybody at once.
+
+**The mitigation that addresses the threat is a separate store with separate credentials, and
+that is the deployment difference.** A real deployment would place the vault outside the
+warehouse, reachable by a credential the transformation layer does not hold, so that reading
+bronze and reading the vault are two different grants rather than one. This deployment does
+not, because `conventions.md` and `architecture.md` both fix `meta` as a schema of the single
+warehouse file, and every reader of that file can read every schema in it.
+
+**The measured alternative is deferred to M8 rather than rejected.** Putting the vault in its
+own encrypted DuckDB database, attached only by the tasks that need it, is a separate store
+with a separate credential and it works today, at the cost of one `ATTACH` clause. It also
+gives a property the current arrangement cannot: a task that never attaches the vault file
+cannot read the vault at all, which is stronger than a schema in a file everything opens. It
+is not done at M4 because it is an access-control decision and M8 is where access control
+lives, and because moving `meta` out of the warehouse file contradicts two documents that
+would have to change with it.
