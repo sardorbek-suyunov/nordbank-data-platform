@@ -437,9 +437,14 @@ them — so the clause is dropped rather than satisfied by an invented sensor.
 
 Every target that touches the warehouse runs inside a container, because the
 warehouse file is on a named volume and is not reachable from the host by
-design. `pyarrow` and `boto3` become host dependencies in `pyproject.toml`: they
-are present in the Airflow image already, and `make extract` needs them outside
-it.
+design. `extract` is one of them: "outside Airflow" means outside the scheduler
+and its pools, not outside the image.
+
+`pyarrow`, `boto3` and `pytz` become host dependencies in `pyproject.toml`'s
+`dev` group. They are in the Airflow image already, where extraction runs; they
+are needed on the host because `make test` exercises the Parquet writer, the
+lake client and the registry's timestamp binding without Airflow and without a
+running stack.
 
 ### 12. Tests
 - Unit: contract validation per failure mode, including the two breaking drift
@@ -678,8 +683,12 @@ running stack rather than from reading.
   `bronze.quarantine_<entity>` tables.
 - Section 5: `_source_file` keeps its name for a relational source and carries
   the qualified relation, documented rather than inferred.
-- Section 1 and section 11: warehouse-touching targets run inside a container;
-  `pyarrow` and `boto3` become host dependencies.
+- Section 1 and section 11: warehouse-touching targets run inside a container,
+  `make extract` among them, since "outside Airflow" means outside the scheduler
+  and its pools rather than outside the image. `pyarrow`, `boto3` and `pytz`
+  become host dev dependencies, for the unit tests rather than for extraction:
+  `make test` exercises the Parquet writer, the lake client and the registry's
+  timestamp binding with no Airflow and no stack.
 - Section 1: `ops.source_reconciliation`'s landed count is scoped by the row's
   `updated_at` date and is not the registry's batch count, because a batch spans
   the overlap window and a source day does not. Conflating them would make
