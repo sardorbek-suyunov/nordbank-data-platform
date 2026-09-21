@@ -65,7 +65,17 @@ make verify-dag    # trigger the health-check DAG from the CLI and verify it
 make schema-apply  # source DDL, reference seeds and the column classifications
 make seed          # generate and load the synthetic operating history
 make seed-verify   # the fourteen coherence invariants, against what was loaded
+
+make warehouse-apply      # the warehouse operational schema, applied inside the stack
+make contracts-bootstrap  # a data contract per source entity, from the data dictionary
+make backfill FROM=.. TO=..   # tick one day, ingest it, repeat; resumable
+make bronze-stats         # landed and quarantined counts by entity and ingest date
 ```
+
+The backfill's range has to end on or before today, and the seed's anchor has to be far
+enough back for that: a run's logical date is the simulated day, and Airflow will not schedule
+a run whose logical date is in the future. `docs/runbook.md` explains what that looks like when
+you get it wrong.
 
 The first `make up` takes about 6 minutes, most of it building the Airflow image and pulling
 images. After that it is about 40 seconds from a `make nuke` and about 35 seconds from a
