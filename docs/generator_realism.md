@@ -655,8 +655,15 @@ and a nullable column left null where the business expects a value.
 **A value can be malformed by the domain's rules while conforming to the column's.**
 `core.payments.counterparty_iban` is checked against a shape and nothing validates the mod-97
 checksum — the generated IBANs carry none, which this document already recorded as an
-unrealism. That is a real validation failure for a contract to catch at M4, produced by a source
-that violates no constraint, and a `varchar` cannot express the rule that would catch it.
+unrealism. It is a real validation failure produced by a source that violates no constraint,
+and a `varchar` cannot express the rule that would catch it.
+
+Spec 005 measured the share and placed the rule, and the placement is not where this paragraph
+originally assumed. **6,875 of the 6,949 payments in the `ci` book fail the checksum**, which is
+what a random two-digit check number produces. A contract rule at the ingest gate would
+therefore quarantine 98.9 per cent of the entity, which is an outage rather than a control. It
+is a `dq` check of severity `warn` at M7, reported as a measured share against the whole
+population.
 
 ### The verdict follows the score, not the truth
 
@@ -691,6 +698,34 @@ answer rather than a count.
 A posted transaction is never soft deleted. Invariant 4 filters on `is_posted` and not on
 `is_deleted`, so a soft-deleted posting is a fork with no good branch: reverse the balance and
 the invariant fails, leave it and the source says money moved while silver says it did not.
+
+### The rule, as refined by its second instance
+
+"A control with nothing to catch is worse than none" has now been applied twice and the two
+cases pull in opposite directions, so the rule needs an ordering rather than a single move.
+
+The first instance was invariant 13. It required every active customer to have logged in within
+ninety days, and satisfying it would have meant constructing an unrealism, because dormancy is
+exactly the state of being active and not logging in. The fix was to correct the invariant: it
+became a coverage share, which is the thing actually worth asserting.
+
+The second was specification 005's quarantine path. The core banking source cannot produce a
+malformed record, so the ingest gate had nothing to catch, and the proposed fix was to make the
+contract stricter than the source — declare `core.customers.email` non-nullable and quarantine
+the rows the dirt phase clears. That would have produced traffic and permanent population loss
+with it: a cleared email is never repopulated, so the customer fails on that day and on every
+later day their row moves, stops reaching bronze, and silver's history for them truncates. The
+fix was to correct the gate's aim: an ingest gate rejects records that cannot be trusted as
+records, and an expectation about field content is a `dq` measurement.
+
+**So the rule is ordered. When a control has nothing to catch, ask first whether the control is
+aimed at the right thing, and only then whether the source should produce the condition.** The
+first question is cheap and its answer is often that the control was wrong. The second question
+changes the data, and changing data to feed a control is how an unrealism or a defect gets
+built to make a check go green. A third answer is legitimate and was the right one at 005: the
+control is correctly aimed, the source correctly cannot produce the condition, and the real
+positive cases belong to a source that has not arrived yet. Saying that is better than
+manufacturing traffic to hide it.
 
 ## Profile coverage, and what a green `ci` run does not prove
 

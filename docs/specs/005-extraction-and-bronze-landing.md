@@ -72,27 +72,18 @@ control.
 - `make contracts-diff` reports divergence between each contract and the current
   dictionary, and names the dictionary revision each contract was pinned to, so
   "the dictionary moved" and "the contract was edited" are distinguishable.
-- `make contracts-diff CHECK=1` exits non-zero on **structural divergence** and
-  runs in the existing `docs` CI job. It does not become a fifth required check.
+- `make contracts-diff CHECK=1` exits non-zero on any divergence and runs in the
+  existing `docs` CI job. It does not become a fifth required check.
 
-**Structural divergence and declared strictness are different findings.**
-
-- *Structural divergence* is a type change, a column present in one and absent
-  from the other, or a different primary key. It is a finding and `CHECK=1`
-  fails on it.
-- *Declared strictness* is the contract narrowing what the source permits: a
-  column the source declares nullable that the contract declares non-nullable.
-  It is intentional, it carries a stated reason in the contract file, and
-  `CHECK=1` passes it. A contract is an agreement about what the platform will
-  accept, not a mirror of the source, so it is allowed to expect more.
-
-**One column is declared strict in this specification.**
-`core.customers.email` is nullable in the source and non-nullable in the
-contract, with the reason recorded in the contract file: a customer the bank
-cannot contact is a record the platform declines to accept, and the source's
-back-office correction that removes a bounced email and never replaces it
-(`generator/mutation/phases/dirt.py`) is exactly the condition the expectation
-exists to catch. Section 7 states what it costs.
+**No contract declares an expectation stricter than the source.** A contract
+that narrowed what the source permits — a column the source allows null that the
+contract declares non-nullable — was considered and rejected, for the reason
+section 7 gives. Every contract at this specification therefore describes the
+source's own shape, and `contracts-diff` has one kind of finding rather than
+two. If a feed at specification 006 needs an expectation its format cannot
+carry — a CSV field the format allows blank that the platform requires — it is
+introduced there, with that need as its justification, and the machinery to
+express it is built then rather than speculatively now.
 
 `platform.column_classifications` is **read** by the extractor to decide what to
 tokenise. It is not landed and has no contract. Nothing in the `platform` schema
@@ -283,17 +274,42 @@ looking better tested than it is.
 | Failure mode | Reachable from this source |
 |---|---|
 | Value fails its declared type | **No.** Postgres enforces it. The scripted widening of `core.payments.remittance_reference` from 140 to 280 characters is detectable at the schema level only: every value the generator writes is exactly 13 characters, so no row ever exceeds the narrower declaration |
-| Null in a non-nullable column | **Yes, through declared strictness only.** `core.customers.email` is the declared case. Measured at `ci`: the historical load carries 9 nulls out of 500 customers, and sixteen ticks added 5 more |
+| Null in a non-nullable column | **No.** Every column a contract declares non-nullable is non-nullable in the source, which enforces it, and no contract declares more |
 | Primary key null or duplicated within the batch | **No.** Every `core` and `ref` table has a single-column primary key that is unique and not null, and one windowed read returns each key once |
 
-**The cost of declared strictness is permanent exclusion, and it is accepted
-rather than discovered.** A cleared email is never repopulated, so a customer
-whose email the source nulls fails the contract on that day and on every
-subsequent day their row moves. Those customers stop reaching bronze, and silver
-will have an entity whose history ends mid-stream. That is what a quarantine
-decision means, it is visible in `dq.quarantine_log` rather than silent, and it
-is the first real population M7's reconciliation has to explain. One column is
-declared strict rather than two, so the cost stays bounded and attributable.
+**What the ingest gate is for.** The gate rejects records that cannot be trusted
+as records: a missing or duplicated primary key, a value that cannot be parsed
+as its declared type, a structurally malformed record. Expectations about field
+*content* are data quality concerns, measured and reported downstream, and never
+ingest gates. Rejecting a whole record for a soft expectation trades a visible
+quality signal for invisible population loss. `architecture.md` carries the
+principle with the bronze contract, because it is general rather than a property
+of this source.
+
+The concrete case that settles it, because it was proposed and withdrawn rather
+than merely imagined. `core.customers.email` is nullable in the source and the
+dirt phase clears it — a bounced address removed and never replaced — so a
+contract declaring it non-nullable would give the quarantine path real traffic:
+measured at `ci`, 9 nulls in the historical load of 500 customers and 5 more
+over sixteen ticks. It would also lose those customers. A cleared email is never
+repopulated, so the record fails on the day it is cleared and on every later day
+the row moves; the customer stops reaching bronze, silver carries an entity
+whose history truncates mid-stream, and Q1, Q2 and Q6 undercount with nothing
+reporting that they do. That is a data-loss defect in the costume of a control,
+and it is worse than the gap it was meant to close. An uncontactable customer is
+a measured share in `dq` at M7, not a deleted row at ingest.
+
+**Quarantine from the core banking source therefore fires only by injection at
+this specification, and that is a property of the source rather than a gap in
+the control.** A source behind foreign keys, check constraints and not-null
+constraints cannot express a malformed record: there is no value it can hold
+that fails its declared type, no null it can place in a column declared not
+null, and no missing or duplicated primary key. The control's real positive
+cases arrive at specification 006, from the file and API feeds, where a
+malformed record is precisely what a third party sends. The standing rule that a
+control with nothing to catch is worse than none is satisfied at M4's scope; it
+is not satisfied at this specification's, and stating that is better than
+manufacturing traffic to hide it.
 
 **The mod-97 checksum stays out of the ingest gate.** `core.payments`
 counterparty IBANs fail the checksum on 6,875 of 6,949 rows, because the
@@ -384,9 +400,18 @@ not yet produced.
 **A deployed platform would run `ingest_core_banking` daily at `0 4 * * *`
 UTC**, after the source's own overnight batch has finished — the simulated
 source runs its status sweep at 02:00 and lands its last movements at 23:45 —
-extracting the previous day, with `ingest_reference_data` an hour ahead of it.
-That schedule is stated so the omission reads as a decision rather than an
-oversight.
+extracting the previous day, with `ingest_reference_data` at `0 3 * * *`, an
+hour ahead of it. That schedule is stated so the omission reads as a decision
+rather than an oversight.
+
+It is consistent with the freshness SLA rather than merely plausible.
+`metric_definitions.md` expects core banking by **06:00 UTC** with a **two-hour
+grace**, measured from the batch's end time in `ops`. A 04:00 start therefore
+budgets two hours for the run itself before the expectation is missed, and the
+grace to 08:00 is the budget for one retry on top of that. The two numbers are
+the run budget and the retry budget, and neither is the other: a run that took
+longer than two hours would be late by the SLA even though it succeeded, which
+is the signal `mart_ops_freshness` exists to raise at M7.
 
 One asset per entity, emitted by the register step. Pools as described in
 section 3. Task-level retries with exponential backoff. An `on_failure_callback`
@@ -421,8 +446,7 @@ it.
   kinds the scripted timeline cannot reach; tokenisation determinism across
   entity, column and batch; batch id sequencing including the already-registered
   case, the reused-unregistered case and the cleared case; watermark arithmetic
-  including the overlap; quarantine routing; drift classification; declared
-  strictness distinguished from structural divergence.
+  including the overlap; quarantine routing; drift classification.
 - Integration: a single interval end to end; the idempotency cases in section 4;
   the overlap re-reading a row that shares the watermark instant; both drift
   behaviours; an empty reference batch registering cleanly; reconciliation
@@ -443,9 +467,8 @@ change in the generator's drift timeline, a later milestone.
 1. `make warehouse-apply` creates every table idempotently; running it twice
    changes nothing.
 2. Contracts exist for all forty-five source entities, sixteen in `core` and
-   twenty-nine in `ref`; `make contracts-diff` reports zero structural
-   divergence at the current commit, and reports the one declared strictness
-   with its stated reason.
+   twenty-nine in `ref`; `make contracts-diff` reports zero divergence at the
+   current commit and `CHECK=1` exits zero.
 3. One extraction run lands Parquet at the specified key and records landed and
    quarantined counts in the registry.
 4. The watermark advances only on registration. Prove it by failing the register
@@ -472,11 +495,11 @@ change in the generator's drift timeline, a later milestone.
    `payments.counterparty_iban`.
 10. The vault holds exactly one row per distinct identifier value, keyed on the
     token, with the entity, column and batch that first saw it.
-11. Declared strictness quarantines real records: the nulled
-    `core.customers.email` rows are quarantined with their reason, and the counts
-    are reported as observed rather than injected. An injected violation covers
-    the failure modes this source cannot reach, and an identifier column's
-    offending value is quarantined as a token, never raw.
+11. An injected contract violation quarantines that record with its reason, and
+    an identifier column's offending value is quarantined as a token, never raw.
+    Injection is the only quarantine evidence at this specification, for the
+    structural reason in section 7, and it covers every failure mode the gate
+    declares.
 12. Additive drift lands the batch, omits the unknown column from bronze, and
     logs the observation.
 13. Breaking drift quarantines the whole batch, marks it `failed`, leaves the
@@ -486,7 +509,10 @@ change in the generator's drift timeline, a later milestone.
     column and the changed primary key are proven by unit test only, and the
     evidence says so.
 14. Landed plus quarantined equals rows read from source, for every batch in a
-    sixty-day backfill.
+    sixty-day backfill. **Trivially satisfied here, with zero quarantined rows
+    in every batch**, because the source cannot produce a malformed record
+    (section 7). It is reported as trivially satisfied, with that reason, rather
+    than dressed up, and it becomes a real assertion at specification 006.
 15. Reconciliation against `platform.tick_log` is exact for every tick in the
     backfill, per entity.
 16. Late-arriving rows land in the ingest-date partition of their arrival, not
@@ -523,7 +549,19 @@ running stack rather than from reading.
 - `platform.column_classifications` is stated to be read and not landed, so that
   the simulation's own bookkeeping is visibly outside the extraction boundary.
 
+**Acceptance criteria.**
+- There are twenty-one rather than nineteen. Ruling 4 created a resumability
+  surface and ruling 10 created a second DAG; each is an obligation a reader has
+  to be able to check, and folding either into an existing criterion would hide
+  it. Criterion 20 is the halt, the contract bump in a commit, the resume and
+  the idempotent re-invocation. Criterion 21 is the reference DAG running ahead
+  of core and the empty batch registering as a correct outcome.
+
 **Orchestration.**
+- Section 10: the `0 4 * * *` deployed schedule is cross-checked against the
+  freshness SLA in `metric_definitions.md` rather than left as a plausible hour.
+  Core banking is expected by 06:00 UTC with a two-hour grace, so the 04:00
+  start is a two-hour run budget and the grace to 08:00 is a one-retry budget.
 - Section 10: `schedule=None` and `catchup=False`, driven by explicit runs. A
   backfill against a paused DAG was measured to leave its runs `queued`
   indefinitely, and unpausing a `catchup=True` DAG with a past start date was
@@ -575,16 +613,29 @@ running stack rather than from reading.
   report the column the check proves nothing about.
 
 **Validation and quarantine.**
-- Section 2: `contracts-diff` distinguishes structural divergence from declared
-  strictness, and `CHECK=1` fails only on the former, folded into the existing
-  `docs` job. A contract is an agreement about what the platform will accept,
-  not a mirror of the source.
-- Section 7: `core.customers.email` is declared non-nullable, so the quarantine
-  path has real traffic. Measured, version 1's quarantine counts would have been
-  zero for every batch of the backfill: Postgres enforces every type, every
-  primary key is unique and not null, and the scripted widening produces no
-  value longer than the narrower declaration. A control with nothing to catch is
-  worse than none. The permanent-exclusion cost of the declaration is stated.
+- Section 7: what the ingest gate is for is stated as a principle, and
+  `architecture.md` carries it with the bronze contract. The gate rejects
+  records that cannot be trusted as records — a missing or duplicated primary
+  key, a value that cannot be parsed as its declared type, a structurally
+  malformed record — and expectations about field content are measured
+  downstream instead. A review round proposed declaring `core.customers.email`
+  non-nullable so that the quarantine path would have real traffic, and it was
+  withdrawn on the finding that a record-level rejection for a soft field
+  expectation produces permanent population loss: the customer stops reaching
+  bronze on the day the source clears the address and on every later day their
+  row moves, silver's history for them truncates, and Q1, Q2 and Q6 undercount
+  silently.
+- Section 7: version 1 asserted three failure modes without saying which the
+  source can reach. Version 2 measures each, concludes that quarantine fires
+  only by injection here, gives the structural reason — a source behind foreign
+  keys, check constraints and not-null constraints cannot express a malformed
+  record — and names specification 006 as where the real positive cases arrive.
+  Criterion 14 is marked trivially satisfied with zero quarantined rows rather
+  than reported as though it had asserted something.
+- Section 2: no contract declares an expectation stricter than the source, so
+  `contracts-diff` has one kind of finding rather than two and `CHECK=1` fails
+  on any divergence. The machinery for a stricter declaration is built at 006 if
+  a feed needs it, not speculatively here.
 - Section 7: the mod-97 IBAN rule is explicitly excluded from the ingest gate
   and assigned to M7. Measured: 6,875 of 6,949 payments would fail it.
 - Section 8 and criterion 13: two of the three breaking drift kinds are

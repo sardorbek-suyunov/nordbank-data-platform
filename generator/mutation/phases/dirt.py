@@ -24,14 +24,18 @@ So what a tick produces is what a well-constrained system still emits:
   constraint notices, and the combination is wrong in a way only a business rule can see. This
   replaces the income band inconsistent with occupation that spec 004 section 2 named, because
   neither of those columns exists.
-- **A nullable column left null where business logic expects a value**: an email or a phone
-  cleared on an account that is plainly active.
+- **A nullable column left null where business logic expects a value**: `core.customers.email`
+  cleared on a customer who is plainly active. Email only, not phone: `_cleared_contact` writes
+  one column, and a comment naming two would be a second source for a fact the code already
+  states.
 
 **A value can be malformed by the domain's rules while conforming to the column's.**
 `core.payments.counterparty_iban` is checked against a shape, and nothing validates the mod-97
-checksum — the generated IBANs carry none. That is a real validation failure for a contract to
-catch at M4, produced by a source that violates no constraint, and it is the example to name
-because a `varchar` cannot express the rule that would catch it.
+checksum — the generated IBANs carry none. It is produced by a source that violates no
+constraint, and it is the example to name because a `varchar` cannot express the rule that
+would catch it. Spec 005 measured the share and placed the rule: 6,875 of 6,949 payments fail
+the checksum, so enforcing it at the ingest gate would quarantine the entity rather than
+control it. It is a `dq` check of severity `warn` at M7, reported as a measured share.
 
 **This phase only edits rows that existed before the tick began.** A row inserted and then
 updated in one tick would be counted twice by the tick log and once by the window acceptance
