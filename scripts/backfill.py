@@ -110,34 +110,73 @@ def interval_state(day: dt.date, expected: int) -> dict:
     return json.loads(payload.strip().splitlines()[-1])
 
 
-def trigger_and_wait(dag_id: str, day: dt.date) -> str:
-    """Trigger one run for one logical date and wait for it to reach a terminal state.
+def existing_run(dag_id: str, day: dt.date) -> dict | None:
+    stamp = f"{day.isoformat()}T00:00:00+00:00"
+    listed = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
+    for row in listed:
+        if row["logical_date"] == stamp:
+            return row
+    return None
 
-    `airflow dags trigger --logical-date` rather than `airflow backfill create`, and that is
-    measured rather than chosen: `backfill create` refuses a DAG whose schedule is not
-    periodic — `DagNonPeriodicScheduleException` — and these DAGs are deliberately unscheduled,
-    because the source's clock is simulated and a wall-clock schedule has no meaning against
-    it. The phases read `logical_date` and never the data interval, which a manual run fills
-    with the wall clock at trigger time.
+
+def trigger_and_wait(dag_id: str, day: dt.date) -> str:
+    """Start one run for one logical date and wait for it to reach a terminal state.
+
+    Two Airflow constraints shape this and both were measured rather than assumed.
+
+    `airflow dags trigger --logical-date` rather than `airflow backfill create`:
+    `backfill create` refuses a DAG whose schedule is not periodic —
+    `DagNonPeriodicScheduleException` — and these DAGs are deliberately unscheduled, because
+    the source's clock is simulated and a wall-clock schedule has no meaning against it. The
+    phases read `logical_date` and never the data interval, which a manual run fills with the
+    wall clock at trigger time.
+
+    **A dag has at most one run per logical date.** `dag_run` carries a unique constraint on
+    `(dag_id, logical_date)`, so a second trigger for a day that already ran fails on it. Re-
+    running an interval therefore means **clearing** the existing run, not creating another —
+    which is exactly why the registry's sequence rule reads its own status and not the run id:
+    a cleared run keeps its id and increments `try_number`, so it is indistinguishable from a
+    retry by run identity and the registry has to be the thing that tells them apart.
     """
+    held = existing_run(dag_id, day)
+    if held is not None:
+        print(f"backfill: clearing the existing run of {dag_id} for {day}")
+        airflow(
+            "tasks",
+            "clear",
+            dag_id,
+            "--yes",
+            "--start-date",
+            day.isoformat(),
+            "--end-date",
+            day.isoformat(),
+        )
+        return wait_for(dag_id, held["run_id"])
+
     listed = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
     before = {row["run_id"] for row in listed}
     airflow("dags", "trigger", dag_id, "--logical-date", f"{day.isoformat()}T00:00:00+00:00")
 
     deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
-    run_id = None
     while time.monotonic() < deadline:
         runs = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
-        if run_id is None:
-            fresh = [row for row in runs if row["run_id"] not in before]
-            if fresh:
-                run_id = sorted(fresh, key=lambda row: row["run_after"])[-1]["run_id"]
-        if run_id is not None:
-            for row in runs:
-                if row["run_id"] == run_id and row["state"] in TERMINAL:
-                    return row["state"]
+        fresh = [row for row in runs if row["run_id"] not in before]
+        if fresh:
+            return wait_for(dag_id, sorted(fresh, key=lambda row: row["run_after"])[-1]["run_id"])
         time.sleep(POLL_SECONDS)
-    raise SystemExit(f"backfill: {dag_id} for {day} did not finish within {RUN_TIMEOUT_SECONDS}s")
+    raise SystemExit(f"backfill: {dag_id} for {day} never appeared")
+
+
+def wait_for(dag_id: str, run_id: str) -> str:
+    deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        for row in json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]"):
+            if row["run_id"] == run_id and row["state"] in TERMINAL:
+                return row["state"]
+        time.sleep(POLL_SECONDS)
+    raise SystemExit(
+        f"backfill: {dag_id} run {run_id} did not finish within {RUN_TIMEOUT_SECONDS}s"
+    )
 
 
 def tick_to(day: dt.date) -> None:
