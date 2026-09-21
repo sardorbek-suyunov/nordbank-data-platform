@@ -126,17 +126,25 @@ defaults:
       dbt_comm: 0.035
       crd_comm: 0.015
     validity_years: 4
-    # A card is reissued as a new row rather than updated, so a share of cards reach one of the
-    # terminal statuses during the history.
+    # The status a card carries at the anchor. A card that is not active reached that state on
+    # some day during the history, and the generator draws that day too so the card stops
+    # authorising there rather than at the anchor — see `usable_until` in
+    # `generator/entities/deposits.py`.
     #
-    # `expired` is deliberately absent. Expiry is a function of the expiry date and is derived
-    # from it, not drawn: a card whose status said `expired` while its expiry date was years
-    # away is incoherent, and measured at `ci` every one of the 33 such cards had a future
-    # expiry date. A four-year validity over a six-month history means no card expires at `ci`
-    # or `dev`, which is the honest answer rather than a status nothing in the data supports.
+    # Two statuses are deliberately absent, for the same reason in both cases: the load would be
+    # claiming something the data does not support.
+    #
+    # `expired` is derived from the expiry date rather than drawn. Measured at `ci`, every one
+    # of the 33 cards the mix marked expired had an expiry date years in the future. A four-year
+    # validity over a six-month history means no card expires at `ci` or `dev`, and reporting
+    # none is the honest answer.
+    #
+    # `replaced` means a successor card exists, and the historical load does not issue one. The
+    # mutation engine does — the lifecycle phase replaces a blocked card and issues its
+    # successor in the same tick — so the status stays in the vocabulary and is produced by the
+    # thing that models the event.
     status_mix:
-      active: 0.892
-      replaced: 0.054
+      active: 0.946
       blocked: 0.027
       cancelled: 0.027
 
