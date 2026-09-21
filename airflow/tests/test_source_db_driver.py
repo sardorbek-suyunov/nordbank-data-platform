@@ -17,7 +17,7 @@ from source_db_driver import resolve as resolve_settings
 
 ENV = """
 POSTGRES_SOURCE_DB=nordbank
-POSTGRES_SOURCE_PORT=55432
+POSTGRES_SOURCE_PORT=15432
 SOURCE_APP_USER=nordbank_app
 SOURCE_APP_PASSWORD=secret
 """
@@ -45,7 +45,7 @@ def _clear_overrides(monkeypatch):
 
 def test_the_file_supplies_the_host_default_and_the_published_port(env_file):
     settings = resolve_settings(env_file)
-    assert (settings.host, settings.port) == ("localhost", 55432)
+    assert (settings.host, settings.port) == ("localhost", 15432)
     assert settings.user == "nordbank_app"
 
 

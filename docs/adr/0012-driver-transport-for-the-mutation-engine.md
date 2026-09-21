@@ -2,6 +2,12 @@
 
 Status: Accepted
 Date: 2026-09-20
+Corrected: 2026-09-21. This record said the committed default in `.env.example` stays at
+5432 and that only the local `.env` was moved. That is wrong: the committed default was
+already 55432 when this was written, and `docs/runbook.md` explained it. The default is
+15432 from M4, for a reason measured then and recorded in the runbook: 55432 is inside the
+Windows dynamic port range, so any application's loopback connection can hold it and the
+container then comes up with no published port at all. The transport decision is unchanged.
 
 ## Context
 
@@ -92,10 +98,10 @@ ps` reported `0.0.0.0:5432->5432/tcp` while a native PostgreSQL 18 Windows servi
 reached the other server and failed authentication. Docker publishes no warning for this.
 
 The mitigation is the identity assertion and the error text, not a claim that it will not
-happen again. The committed default in `.env.example` stays at 5432: moving it would force an
-`.env` edit on every existing machine to fix a collision that only some machines have, and an
-error message that explains itself covers the rest. The local `.env` on the machine this was
-built on is set to 55432.
+happen again. The committed default in `.env.example` is not 5432, and the sentence that stood here said
+it was; see the correction above. It is a non-standard port precisely so that the collision
+with a native PostgreSQL installation does not happen on most machines, and the identity
+assertion covers the machines where any default would collide.
 
 **A second Airflow connection.** `nordbank_source_db` authenticates as `nordbank_reader`, which
 is SELECT-only by design, so the tick cannot use it. `ops_source_tick` needs its own connection
