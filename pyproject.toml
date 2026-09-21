@@ -20,6 +20,17 @@ dev = [
     "pytest>=9.1.1",
     "pre-commit>=4.6.2",
     "duckdb==1.5.5",
+    # duckdb's Python API needs pytz to bind a timezone-aware datetime to a timestamptz
+    # column, and every timestamp in this platform is timezone-aware (conventions.md). The
+    # Airflow image already carries it, so this is the host half of a dependency the container
+    # half already has; without it the registry unit tests cannot bind a watermark.
+    "pytz>=2025.2",
+    # The extraction path writes Parquet with PyArrow and reaches MinIO with boto3, and both
+    # are in the Airflow image, where extraction runs. They are here because the unit tests
+    # exercise the Parquet writer and the lake client on the host, in `make test`, which needs
+    # neither Airflow nor a running stack.
+    "pyarrow>=21.0.0",
+    "boto3>=1.40.0",
 ]
 # Airflow is a separate group: it does not import on every host this project is developed on,
 # so `uv sync` must not put a broken installation in the default environment. CI installs it
