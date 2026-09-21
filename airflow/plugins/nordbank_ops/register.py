@@ -29,7 +29,7 @@ import io
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import registry
+from nordbank_ops import registry
 
 
 @dataclass

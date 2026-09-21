@@ -24,9 +24,9 @@ import io
 from dataclasses import dataclass, field
 from typing import Any
 
-from .schema_drift import DriftReport, classify
-from .tokenise import Tokeniser
-from .validation import Rejection, project, validate
+from nordbank_ops.schema_drift import DriftReport, classify
+from nordbank_ops.tokenise import Tokeniser
+from nordbank_ops.validation import Rejection, project, validate
 
 AUDIT_COLUMNS: tuple[str, ...] = ("_ingested_at", "_source_file", "_batch_id", "_source_system")
 
@@ -317,7 +317,7 @@ def extract_entity(
     )
 
     bronze_columns = contract.column_names + AUDIT_COLUMNS
-    from .registry import bronze_prefix, quarantine_prefix
+    from nordbank_ops.registry import bronze_prefix, quarantine_prefix
 
     bronze_key = (
         bronze_prefix(

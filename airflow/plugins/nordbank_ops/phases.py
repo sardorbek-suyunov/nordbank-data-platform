@@ -40,7 +40,7 @@ for _candidate in ("/opt/airflow", "/opt/airflow/scripts"):
 def _contracts(source_schema: str) -> dict:
     from data_contract import load_all
 
-    from .ingest import CONTRACT_DIR, SOURCE_SYSTEM
+    from nordbank_ops.ingest import CONTRACT_DIR, SOURCE_SYSTEM
 
     everything = load_all(Path(CONTRACT_DIR) / SOURCE_SYSTEM)
     return {e: c for e, c in everything.items() if c.source_schema == source_schema}
@@ -121,7 +121,7 @@ def open_phase(*, source_schema: str, context: dict) -> list[dict]:
 def extract_phase(*, source_schema: str, batch: dict, context: dict) -> dict:
     """Read one entity's window and write it. No warehouse access of any kind."""
     from nordbank_ops import clients
-    from nordbank_ops.extract import BreakingDriftError, extract_entity
+    from nordbank_ops.extract import extract_entity
     from nordbank_ops.tokenise import Tokeniser
 
     contract = _contracts(source_schema)[batch["entity"]]
@@ -153,8 +153,28 @@ def extract_phase(*, source_schema: str, batch: dict, context: dict) -> dict:
         f"quarantined {report.rows_quarantined}, status {report.status}"
     )
     if report.status == "failed":
-        raise BreakingDriftError(f"{report.entity}: {report.failure_reason}")
+        raise _fail_without_retrying(f"{report.entity}: {report.failure_reason}")
     return payload
+
+
+def _fail_without_retrying(message: str) -> Exception:
+    """The exception to raise for a verdict rather than a mishap.
+
+    A breaking drift will be breaking on the retry as well, so retrying it costs the backoff
+    twice per entity per day and changes nothing. `AirflowFailException` fails the task without
+    consuming a retry. The same reasoning made `ops_source_tick` set `retries: 0` at M3: a
+    refusal is a state-machine answer rather than a transient failure.
+
+    Falls back to the plain error where Airflow is not importable, so the extract phase stays
+    callable from `make extract` and from a test.
+    """
+    from nordbank_ops.extract import BreakingDriftError
+
+    try:
+        from airflow.exceptions import AirflowFailException
+    except ImportError:
+        return BreakingDriftError(message)
+    return AirflowFailException(message)
 
 
 def register_phase(*, source_schema: str, context: dict) -> dict:
@@ -236,6 +256,6 @@ def gate_phase(summary: dict) -> None:
 
 
 def _extract_lag() -> dt.timedelta:
-    from .ingest import extract_lag
+    from nordbank_ops.ingest import extract_lag
 
     return extract_lag()
