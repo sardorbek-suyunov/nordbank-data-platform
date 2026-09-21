@@ -81,3 +81,64 @@ def test_the_simulation_writes_through_a_connection_of_its_own() -> None:
     source = (DAG_FOLDER / "ops_source_tick.py").read_text(encoding="utf-8")
     assert "nordbank_source_simulator" in source
     assert "nordbank_source_db" not in source.split('"""', 2)[2]
+
+
+INGEST_DAGS = ("ingest_core_banking", "ingest_reference_data")
+
+# The entity counts spec 005 fixes: sixteen in `core`, twenty-nine in `ref`.
+EXPECTED_ENTITIES = {"ingest_core_banking": 16, "ingest_reference_data": 29}
+
+
+@pytest.mark.parametrize("dag_id", INGEST_DAGS)
+def test_only_the_pooled_phases_hold_the_warehouse_pool(dag_id: str) -> None:
+    """Spec 005 section 3, and the trap the DAG factory carries a comment about.
+
+    Setting `pool` in `default_args` would hand `warehouse_access` to every mapped extract task
+    and serialise the whole extraction through one slot. The measured behaviour is that a task
+    with no declared pool takes `default_pool`, so the assertion is on both directions rather
+    than only on the pooled pair.
+    """
+    dag = _dagbag().dags[dag_id]
+    pooled = {task.task_id for task in dag.tasks if task.pool == "warehouse_access"}
+    assert pooled == {"open_batches", "register"}, f"{dag_id} pools: {pooled}"
+    for task in dag.tasks:
+        if task.task_id not in pooled:
+            assert task.pool == "default_pool", f"{task.task_id} holds pool {task.pool}"
+
+
+@pytest.mark.parametrize("dag_id", INGEST_DAGS)
+def test_register_and_gate_run_on_all_done(dag_id: str) -> None:
+    """One entity's breaking drift must not stop the other forty-four from registering."""
+    dag = _dagbag().dags[dag_id]
+    assert str(dag.get_task("register").trigger_rule) == "TriggerRule.ALL_DONE"
+    assert str(dag.get_task("gate").trigger_rule) == "TriggerRule.ALL_DONE"
+
+
+@pytest.mark.parametrize("dag_id", INGEST_DAGS)
+def test_the_ingestion_dags_are_unscheduled_with_catchup_off(dag_id: str) -> None:
+    """The source's clock is simulated, so a wall-clock schedule has no meaning against it.
+
+    Measured before it was decided: unpausing a `catchup=True` DAG with a past start date
+    creates and runs one scheduled run per elapsed interval at once, which would race the
+    backfill loop and register batches for days the tick had not produced.
+    """
+    dag = _dagbag().dags[dag_id]
+    assert dag.schedule is None, f"{dag_id} is scheduled: {dag.schedule}"
+    assert dag.catchup is False
+
+
+@pytest.mark.parametrize("dag_id", INGEST_DAGS)
+def test_one_asset_is_emitted_per_entity(dag_id: str) -> None:
+    dag = _dagbag().dags[dag_id]
+    outlets = dag.get_task("register").outlets
+    assert len(outlets) == EXPECTED_ENTITIES[dag_id]
+    names = {getattr(outlet, "name", None) for outlet in outlets}
+    assert all(name and name.startswith(f"{dag_id}/") for name in names), names
+
+
+@pytest.mark.parametrize("dag_id", INGEST_DAGS)
+def test_the_extract_task_is_mapped_over_the_open_step(dag_id: str) -> None:
+    dag = _dagbag().dags[dag_id]
+    extract = dag.get_task("extract")
+    assert extract.upstream_task_ids == {"open_batches"}
+    assert "register" in extract.downstream_task_ids
