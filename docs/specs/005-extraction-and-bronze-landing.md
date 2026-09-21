@@ -699,3 +699,110 @@ running stack rather than from reading.
 - Section 2: entity names are unique across `core` and `ref`, so the contract
   directory stays flat, and the bootstrap refuses a collision rather than
   leaving it to be found in the lake.
+
+## Amendments
+
+Appended during implementation. The scope text above is left as issued; the protocol is in
+`docs/specs/README.md`. Every entry below is a departure the build made from what version 2
+specified, and most of them are departures a measurement forced.
+
+### 2026-09-21 — `ingest_date` is the run's logical date, not the wall clock
+
+Section 5 says `ingest_date` is "the date the batch ran". Taken literally that is the wall
+clock, and in this deployment it is the wrong date: all sixty-one runs of a backfill happen on
+one real afternoon, so the whole backfill would land in a single partition and exercise
+nothing that partitioning exists for.
+
+The logical date is used instead. In this deployment it *is* the day the batch is for, because
+the source's clock is simulated, and in a daily deployment the two coincide. `_ingested_at`
+remains the real clock reading at open time, so audit time stays real while the partition
+stays logical, and the two are visibly different columns rather than one column doing both
+jobs.
+
+### 2026-09-21 — the backfill triggers by logical date and re-runs by clearing
+
+Section 9 does not name a mechanism for "trigger `ingest_core_banking` for that day", and the
+two obvious ones both turned out to be unavailable.
+
+`airflow backfill create` **refuses a DAG whose schedule is not periodic** —
+`DagNonPeriodicScheduleException` — and section 10 makes both DAGs unscheduled. So the loop
+uses `airflow dags trigger --logical-date`. That works because the phases read `logical_date`
+and never the data interval, which a manual run fills with the wall clock at trigger time.
+
+**A DAG has at most one run per logical date.** `dag_run` carries a unique constraint on
+`(dag_id, logical_date)`, so a second trigger for a day that already ran is refused by the
+metadata database. Re-running an interval therefore means **clearing** the existing run rather
+than creating another, and the loop does that when it finds one.
+
+This is the third mechanism measured to be indistinguishable from the others by run identity:
+a cleared run keeps its run id and increments `try_number`, exactly as a retry and a backfill
+reprocess do. Section 4's rule — read the registry's status and nothing else — is what makes
+all three correct, and it would have been wrong under any rule that keyed on the run.
+
+### 2026-09-21 — a batch whose extract task never reported is failed by the register step
+
+Section 3 has the register step mark failed batches from what the extract tasks report, and
+criterion 17 asks that every batch end `registered` or explicitly `failed`. A task that dies
+before reporting satisfies neither: it leaves a batch `open` with no report at all.
+
+The extract task pushes its report to XCom and then raises, so a breaking drift is both a
+reported batch and a failed task. For anything else, the register step marks any batch still
+`open` for the interval as `failed`, with the reason "the extract task did not report". No
+batch is left `open` after a run.
+
+### 2026-09-21 — the engine is bounded to its container, and the register step stops recomputing
+
+The first run of the initial load failed with `OutOfMemoryException` in the register step, and
+three things came out of it.
+
+**DuckDB sizes its thread pool from the host's CPU count and its memory limit from the
+container's cgroup**, and the two disagree: measured here, 32 threads against a 1.5 GiB limit
+derived from the scheduler's 2 GiB. Every warehouse open now sets four threads, matching
+`AIRFLOW__CORE__PARALLELISM`, and a 1 GB limit.
+
+**The vault insert went through one parameter list per value.** It registers an Arrow table
+and inserts in one statement instead, deduplicated on the token first so a value repeated
+inside a batch cannot conflict with itself. The identifier re-read is a `select distinct` at
+the source rather than a distinct in Python.
+
+**The reconciliation's per-day landed count read every bronze object back** to count rows by
+their own `updated_at`. The extract phase already had those rows in memory, so it reports the
+histogram and the register step reads it. Section 1's distinction between the registry's batch
+count and the reconciliation's source-day count is unchanged; what changed is which phase pays
+for the second one.
+
+### 2026-09-21 — the source's control total is three-valued
+
+Section 1 says `ops.source_reconciliation` records "counts claimed by the source". The first
+backfill reported a 441-row discrepancy across the twenty-nine reference entities on its first
+tick day, and the discrepancy was the instrument.
+
+`platform.tick_log` is the tick engine's control total and the tick engine covers the sixteen
+`core` tables, writing a row only for the tables a tick touched. For a `core` entity its
+silence is a claim of zero. For a `ref` entity it makes no claim at all, and reading that
+silence as zero turned a correct overlap re-read of the reference book into a discrepancy of
+exactly the size of the reference book.
+
+The claim is now a number, or zero for a `core` entity a tick ran and did not log, or null
+when no tick ran that day or the entity is not one the tick engine covers. A null difference
+says "not claimed"; a zero difference says "claimed nothing and nothing arrived".
+
+### 2026-09-21 — two tables and one column beyond section 1
+
+`ops.task_failure` holds one row per failed task instance, written by the `on_failure_callback`
+section 10 asks for. It is not in section 1's list because section 10 did not say where the
+callback writes.
+
+`ops.batch_registry` carries `rows_read` beside `rows_landed` and `rows_quarantined`. Section
+7's identity is an assertion about three numbers and storing two of them would have left the
+third to be recomputed by every reader who wanted to check it.
+
+### 2026-09-21 — the source database's published port moves to 15432
+
+Not a change to this specification's scope, and recorded here because this milestone found it.
+`POSTGRES_SOURCE_PORT` defaulted to 55432, which is inside the Windows dynamic port range, so
+any application's loopback connection can hold it. Measured: a local signing service held
+55431 and 55432, the container came up with **no published port at all** rather than a
+shadowed one, every host-side tool timed out while `make health` stayed green, and a forced
+recreate failed on the bind. The remedy is the range rather than the number, and
+`docs/runbook.md` now says so. ADR 0012 is corrected alongside it.
