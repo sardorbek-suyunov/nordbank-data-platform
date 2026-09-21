@@ -140,7 +140,7 @@ def trigger_and_wait(dag_id: str, day: dt.date) -> str:
     """
     held = existing_run(dag_id, day)
     if held is not None:
-        print(f"backfill: clearing the existing run of {dag_id} for {day}")
+        print(f"backfill: clearing the existing run of {dag_id} for {day}", flush=True)
         airflow(
             "tasks",
             "clear",
@@ -188,9 +188,12 @@ def tick_to(day: dt.date) -> None:
 
 
 def halt(day: dt.date, failed: list[dict]) -> int:
-    print(f"\nbackfill: halted at {day}. {len(failed)} batch(es) failed and were not registered.")
+    print(
+        f"\nbackfill: halted at {day}. {len(failed)} batch(es) failed and were not registered.",
+        flush=True,
+    )
     for batch in failed:
-        print(f"  {batch['entity']}: {batch['failure_reason']}")
+        print(f"  {batch['entity']}: {batch['failure_reason']}", flush=True)
     print(f"\n{RESOLUTION}")
     return 1
 
@@ -226,12 +229,12 @@ def main(argv: list[str]) -> int:
         # On a resume the tick for the failed day has already run and must not run twice.
         _anchor, simulated, _sequence = simulation_state()
         if day > anchor and simulated < day:
-            print(f"backfill: ticking the source to {day}")
+            print(f"backfill: ticking the source to {day}", flush=True)
             tick_to(day)
 
-        print(f"backfill: {day}: {REFERENCE_DAG}")
+        print(f"backfill: {day}: {REFERENCE_DAG}", flush=True)
         trigger_and_wait(REFERENCE_DAG, day)
-        print(f"backfill: {day}: {CORE_DAG}")
+        print(f"backfill: {day}: {CORE_DAG}", flush=True)
         trigger_and_wait(CORE_DAG, day)
 
         state = interval_state(day, EXPECTED[CORE_DAG] + EXPECTED[REFERENCE_DAG])
@@ -243,7 +246,8 @@ def main(argv: list[str]) -> int:
 
     print(
         f"\nbackfill: {arguments.start} to {arguments.end} complete: {processed} day(s) "
-        f"processed, {skipped} already complete, {total} in range"
+        f"processed, {skipped} already complete, {total} in range",
+        flush=True,
     )
     return 0
 
