@@ -130,6 +130,29 @@ cannot extend. They are check constraints on the column that holds them, not tab
 | `ref.account_types.product_class_code` | `current`, `savings`, `loan`, `card_settlement`, `internal` |
 | `ref.transaction_types.direction`, `ref.payment_types.direction` | `debit`, `credit` |
 
+### Two ways a transaction can be undone, and they are not the same thing
+
+The source expresses both, and a model that conflated them would count money twice or not at
+all.
+
+**A voided authorisation** carries `transaction_status_code = 'reversed'`. It never posted:
+`ref.transaction_statuses.is_posted` is false for that code, so it contributes nothing to
+`accounts.current_balance_amount`, it has no rows in `core.gl_entries`, and spec 003 invariants
+4 and 6 both hold without special-casing it. This is what the historical load produces, and a
+tick may soft delete such a row because deleting it changes no balance.
+
+**A reversed posting** is undone by a second transaction that carries
+`reversal_of_transaction_id` pointing at the first. Both rows are posted, both reach the ledger,
+and the pair nets to zero — which is what a real ledger does, because a posting that has been
+reported cannot be unposted. The two entries carry the posting dates on which each was
+recognised, so a reversal of a September posting made in October appears on both months' GL
+totals and nets across them rather than restating September. This is what the M3 mutation engine
+produces; nothing in the historical load populates the column.
+
+Silver's deduplication sees two distinct business keys and keeps both. Q15's settlement
+reconciliation and Q16's daily GL integrity both read the ledger, so both see the two entries on
+their two posting dates; neither nets them within a day unless they fell on the same day.
+
 ## Exceptions
 
 **`ref.interchange_rates` has no `code` column.** Design rule 7 requires one of every lookup
@@ -434,14 +457,14 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | `agent_location_id` | bigint | yes | `non-personal` | The partner location, for a cash-in or cash-out. Null otherwise. | - |
 | `transaction_type_code` | character varying(40) | no | `non-personal` | What kind of transaction this is. The customer-initiated flag is derived from this through ref.transaction_types, not from a list held in code. | Customer-initiated rule, Q1, Q6, Q11 |
 | `channel_code` | character varying(40) | no | `non-personal` | The channel the transaction came through. | Structuring, Q11; Q19 |
-| `transaction_status_code` | character varying(40) | no | `non-personal` | Current status. Posted and settled are the statuses that count as posted. | Active account rule, Q1 |
+| `transaction_status_code` | character varying(40) | no | `non-personal` | Current status. Posted and settled are the statuses that count as posted. `reversed` means this authorisation was voided before it posted, so it never moved money and has no ledger entries; a transaction that did post is undone by a separate reversing row carrying `reversal_of_transaction_id`, not by changing this column. | Active account rule, Q1 |
 | `authorisation_outcome_code` | character varying(40) | yes | `non-personal` | Outcome of the card authorisation. Null for anything not authorised through the card rails. Closed value list, enforced by a check constraint: approved, declined_funds, declined_fraud, referred, timeout. | - |
 | `booked_at` | timestamp with time zone | no | `non-personal` | When the transaction hit the account. | Active account rule, Q1; structuring, Q11 |
 | `value_date` | date | no | `non-personal` | The date the transaction takes effect for interest, which can differ from the booking date. | - |
 | `transaction_amount` | numeric(18,4) | no | `non-personal` | Amount in the transaction currency, signed by direction. | fct_transactions, Q4, Q6, Q11 |
 | `transaction_currency_code` | character(3) | no | `non-personal` | Currency of transaction_amount. | fct_transactions, Q4, Q6, Q11 |
 | `is_card_present` | boolean | yes | `non-personal` | Whether the card was physically presented. Decided per card authorisation, not derived from the channel: a mobile wallet tap at a terminal is card present and an ecommerce purchase from the same handset is not. Null exactly when card_id is null, because presentment is meaningless without a card authorisation. | fct_transactions, Q10, Q19 |
-| `reversal_of_transaction_id` | bigint | yes | `non-personal` | The transaction this one reverses. Null unless this is a reversal, and never itself. | - |
+| `reversal_of_transaction_id` | bigint | yes | `non-personal` | The transaction this one reverses. Null unless this is a reversal, and never itself. Both rows stay posted and both reach the ledger, on the two dates they were recognised; the pair nets to zero. Not to be confused with `transaction_status_code = 'reversed'`, which is a voided authorisation that never posted. | Q15, Q16 |
 | `counterparty_reference` | character varying(140) | yes | `identifier` | Counterparty account or descriptor as the scheme sent it. Classified identifier because it can carry an IBAN. | - |
 | `created_at` | timestamp with time zone | no | `non-personal` | When the row was inserted. An audit column: no business timestamp may take this name. | - |
 | `updated_at` | timestamp with time zone | no | `non-personal` | When the row last changed, set by the core.set_updated_at trigger and never by application code. The watermark the extraction layer reads. | - |

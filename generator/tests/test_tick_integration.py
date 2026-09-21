@@ -174,3 +174,52 @@ def test_the_platform_tables_carry_real_time_while_core_carries_simulated(seeded
             "a platform row carries the simulated date; the clock was not cleared before it"
         )
     assert completed_at >= started_at
+
+
+def test_the_two_ways_a_transaction_is_undone_stay_distinct(seeded, profile):
+    """`reversed` is a voided authorisation; `reversal_of_transaction_id` is a reversing posting.
+
+    The data dictionary states the difference and the invariants depend on it: invariant 4 sums
+    `is_posted`, which excludes the first and includes the second, and invariant 6 requires a
+    ledger batch for the second and none for the first. A model that conflated them would count
+    the money twice or not at all, so the source is asserted to keep them apart.
+    """
+    with connect() as connection:
+        # Enough ticks to produce at least one reversal at the ci rate.
+        for _ in range(12):
+            tick_module.run(connection, requested_date=None, profile=profile)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                  (select count(*) from core.transactions
+                    where reversal_of_transaction_id is not null) as reversals,
+                  (select count(*) from core.transactions r
+                     join ref.transaction_statuses s on s.code = r.transaction_status_code
+                    where r.reversal_of_transaction_id is not null and not s.is_posted)
+                    as unposted_reversals,
+                  (select count(*) from core.transactions r
+                     join core.transactions o
+                       on o.transaction_id = r.reversal_of_transaction_id
+                     join ref.transaction_statuses s on s.code = o.transaction_status_code
+                    where r.reversal_of_transaction_id is not null and not s.is_posted)
+                    as reversals_of_unposted,
+                  (select count(*) from core.transactions t
+                    where t.transaction_status_code = 'reversed'
+                      and exists (select 1 from core.gl_transactions g
+                                   where g.source_entity_code = 'transaction'
+                                     and g.source_entity_id = t.transaction_id))
+                    as voided_with_a_ledger_batch,
+                  (select count(*) from core.transactions t
+                    where t.transaction_status_code = 'reversed'
+                      and t.reversal_of_transaction_id is not null) as both_at_once
+                """
+            )
+            reversals, unposted, of_unposted, voided_with_batch, both = cursor.fetchone()
+        connection.rollback()
+
+    assert reversals > 0, "no reversal was written, so nothing here was exercised"
+    assert unposted == 0, "a reversing transaction that is not posted moves no money"
+    assert of_unposted == 0, "a reversal of something that never posted undoes nothing"
+    assert voided_with_batch == 0, "a voided authorisation reached the ledger"
+    assert both == 0, "a row is a voided authorisation or a reversing posting, never both"

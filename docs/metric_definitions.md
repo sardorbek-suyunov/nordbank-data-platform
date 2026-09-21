@@ -101,6 +101,14 @@ directions, never decided in a model: `ref.transaction_statuses.is_posted` for t
 because the balance reconciliation needed a rule for the payment side and settling it in loader
 code would have put it where dbt cannot read it.
 
+*A reversal is a movement of its own and is counted like any other.* The source undoes a posting
+by writing a second posted transaction that carries `reversal_of_transaction_id`, not by
+changing the first one's status, so both are `is_posted` and both belong in the balance; the
+pair nets to zero on whatever dates each was recognised. `transaction_status_code = 'reversed'`
+is a different thing entirely — an authorisation voided before it posted — and `is_posted` is
+false for it, so this rule already excludes it without a special case.
+`docs/data_dictionary.md` states the distinction where the columns are defined.
+
 **Source columns.** `fct_account_balance_daily.balance_amount`,
 `fct_account_balance_daily.balance_date`, `dim_account.product_class`,
 `dim_account.currency_code`, `dim_account.account_type`,
