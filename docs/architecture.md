@@ -137,6 +137,30 @@ of the erasure workflow and are treated as warehouse data, not as a debugging sc
 The source row count is therefore always reconstructable as landed rows plus quarantined rows,
 for every batch.
 
+**What the ingest gate is for, and what it is not for.** The gate rejects records that cannot
+be trusted as records: a missing or duplicated primary key, a value that cannot be parsed as
+its declared type, a structurally malformed record. Expectations about field *content* are
+data quality concerns, measured and reported downstream in `dq`, and never ingest gates.
+
+The reason is that the two failure modes are not symmetric. A record rejected for being
+malformed is a record nothing could have used. A record rejected for a soft expectation — a
+customer whose email address the source has cleared, say — is a usable record removed from the
+population, and because the condition usually persists, the same record is removed on every
+subsequent day it changes. The entity stops reaching bronze, silver carries a history that
+truncates mid-stream, and every count built on it is quietly low. Rejecting a whole record for
+a soft expectation trades a visible quality signal for invisible population loss, which is a
+data-loss defect in the costume of a control. The expectation belongs in `dq`, where an
+uncontactable customer is a measured share rather than a deleted row.
+
+**No partial load is a guarantee at entity grain, not at run grain.** One entity failing its
+contract or hitting breaking drift leaves that entity's batch quarantined, marked `failed` and
+its watermark unmoved; the entities that extracted cleanly in the same run are still
+registered. The alternative — refusing to register anything when any entity fails — would let
+one entity's drift stop every other entity's pipeline from that day forward, and the watermarks
+would not advance for any of them. The run still fails, through a terminal gate task, so the
+failure is not swallowed; what does not happen is fifteen healthy entities being held hostage
+by the sixteenth.
+
 Beyond typing, bronze applies nothing: no renaming past casing, no joins, no business rules,
 no deduplication except on the exact replay of a batch. Bronze is append-only and immutable
 once a partition is registered; a correction is a new batch, never an edit. Every row carries
