@@ -165,3 +165,65 @@ def test_a_re_run_replaces_the_reconciliation_row_rather_than_doubling_it(connec
         "select rows_landed, batch_id, difference from ops.source_reconciliation"
     ).fetchall()
     assert rows == [(210, "a-02", 0)]
+
+
+# --- the source's claim --------------------------------------------------------------------
+
+
+class FakeSourceCursor:
+    """Answers the two queries `claimed_by_source` issues."""
+
+    def __init__(self, ticks: set[dt.date], logged: dict[tuple[dt.date, str], int]):
+        self.ticks = ticks
+        self.logged = logged
+        self._result = None
+
+    def execute(self, sql, parameters):
+        if "count(*) from platform.tick_log" in " ".join(sql.split()):
+            self._result = (1 if parameters[0] in self.ticks else 0,)
+        else:
+            self._result = (self.logged.get((parameters[0], parameters[1]), 0),)
+
+    def fetchone(self):
+        return self._result
+
+
+class FakeContract:
+    def __init__(self, entity: str, source_schema: str):
+        self.entity = entity
+        self.source_schema = source_schema
+
+
+def test_no_tick_that_day_means_no_claim():
+    """The initial load of the historical book. Nothing claimed is not nothing changed."""
+    from nordbank_ops.register import claimed_by_source
+
+    cursor = FakeSourceCursor(ticks=set(), logged={})
+    assert claimed_by_source(cursor, FakeContract("accounts", "core"), SOURCE_DATE) is None
+
+
+def test_a_reference_entity_is_never_claimed():
+    """The tick engine covers the sixteen core tables and never touches `ref`.
+
+    Reading its silence as a claim of zero made twenty-nine reference entities look like a
+    441-row discrepancy on the first day of the first backfill.
+    """
+    from nordbank_ops.register import claimed_by_source
+
+    cursor = FakeSourceCursor(ticks={SOURCE_DATE}, logged={})
+    assert claimed_by_source(cursor, FakeContract("currencies", "ref"), SOURCE_DATE) is None
+
+
+def test_a_core_entity_the_tick_did_not_log_is_claimed_as_zero():
+    """The tick writes a row only for the tables it touched, so silence is a claim of zero."""
+    from nordbank_ops.register import claimed_by_source
+
+    cursor = FakeSourceCursor(ticks={SOURCE_DATE}, logged={})
+    assert claimed_by_source(cursor, FakeContract("agent_locations", "core"), SOURCE_DATE) == 0
+
+
+def test_a_core_entity_the_tick_logged_is_claimed_at_its_count():
+    from nordbank_ops.register import claimed_by_source
+
+    cursor = FakeSourceCursor(ticks={SOURCE_DATE}, logged={(SOURCE_DATE, "accounts"): 210})
+    assert claimed_by_source(cursor, FakeContract("accounts", "core"), SOURCE_DATE) == 210
