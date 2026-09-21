@@ -35,6 +35,7 @@ sys.path.insert(0, "/opt/airflow/scripts")
 from data_contract import Contract, ContractColumn, load_all  # noqa: E402
 from nordbank_ops import clients, extract, register, registry, warehouse  # noqa: E402
 from nordbank_ops.tokenise import Tokeniser  # noqa: E402
+from nordbank_ops.validation import Rejection  # noqa: E402
 
 CONTRACTS = Path("/opt/airflow/contracts/corebank")
 SYSTEM = "corebank"
@@ -460,3 +461,76 @@ def test_an_empty_reference_batch_registers_cleanly(contracts, cursor, lake, war
     )
     registry.mark_registered(warehouse_file, batch["batch_id"], dt.datetime.now(dt.UTC))
     assert registry.batch(warehouse_file, batch["batch_id"])["status"] == "registered"
+
+
+# --- section 7: an injected violation, through the real path -------------------------------
+
+
+def test_an_injected_violation_quarantines_real_records(contracts, cursor, lake, warehouse_file):
+    """Criterion 11, against rows the source really holds.
+
+    Injection is the only quarantine evidence at this specification and the reason is
+    structural: a source behind foreign keys, check constraints and not-null constraints
+    cannot produce a malformed record. The injection here is a contract that declares
+    `core.customers.email` non-nullable — which no committed contract does, for the reason in
+    `docs/architecture.md` — so the rows the dirt phase has nulled are refused by the real
+    gate, written to the real quarantine prefix and indexed in `dq.quarantine_log`.
+    """
+    full = contracts["customers"]
+    strict = Contract(
+        source_system=full.source_system,
+        source_schema=full.source_schema,
+        entity=full.entity,
+        contract_version=full.contract_version,
+        watermark_column=full.watermark_column,
+        primary_key=full.primary_key,
+        dictionary_revision=full.dictionary_revision,
+        columns=tuple(
+            c if c.name != "email" else ContractColumn(c.name, c.data_type, False, c.classification)
+            for c in full.columns
+        ),
+    )
+    cursor.execute("select count(*) from core.customers where email is null")
+    nulled = cursor.fetchone()[0]
+    if nulled == 0:
+        pytest.skip("this book has no customer with a cleared email")
+
+    _allocation, batch = open_batch(warehouse_file, strict, interval(11))
+    report = run_extract(cursor, lake, strict, batch)
+
+    assert report.rows_quarantined == nulled
+    assert report.rows_landed + report.rows_quarantined == report.rows_read
+    assert report.quarantine_keys, "nothing was written to the quarantine prefix"
+
+    client, bucket = lake
+    loaded = register.load_quarantine(warehouse_file, client, bucket, report.quarantine_keys)
+    assert loaded == nulled
+
+    reasons = warehouse_file.execute(
+        "select distinct column_name, reason, value_is_tokenised from dq.quarantine_log"
+    ).fetchall()
+    assert reasons == [("email", "null in a non-nullable column", True)]
+
+
+def test_a_quarantined_identifier_is_stored_as_a_token(contracts, cursor, lake, warehouse_file):
+    """Criterion 11's second half, on a value rather than on a null.
+
+    Quarantine sits beside bronze rather than inside it, so a cleartext identifier here would
+    be personal data in a place the vault does not cover. The offending value of an identifier
+    column is therefore the token.
+    """
+    rejected = [
+        ({"customer_id": 1}, Rejection("email", "type", "someone@example.invalid", 1)),
+    ]
+    produced = extract.quarantine_rows(
+        rejected,
+        tokeniser(),
+        ("email",),
+        batch_id="customers-test",
+        system=SYSTEM,
+        entity="customers",
+        quarantined_at=dt.datetime.now(dt.UTC),
+    )
+    assert produced[0]["value_is_tokenised"] is True
+    assert produced[0]["offending_value"] == tokeniser().token("someone@example.invalid")
+    assert "someone@example.invalid" not in str(produced[0])
