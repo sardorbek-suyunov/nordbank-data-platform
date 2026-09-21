@@ -45,6 +45,12 @@ class ExtractReport:
     watermark_to: dt.datetime | None = None
     bronze_keys: list[str] = field(default_factory=list)
     quarantine_keys: list[str] = field(default_factory=list)
+    # Landed rows counted by the source day their own watermark falls on, which is what
+    # `ops.source_reconciliation` records. Computed here, where the rows are already in
+    # memory, rather than by reading the Parquet back in the register step: the re-read cost
+    # the register transaction its memory limit at the initial load and bought nothing, since
+    # this phase has the same rows and has already paid for them.
+    landed_by_source_date: dict[str, int] = field(default_factory=dict)
     drift: list[dict] = field(default_factory=list)
     failure_reason: str | None = None
 
@@ -60,6 +66,7 @@ class ExtractReport:
             "watermark_to": self.watermark_to.isoformat() if self.watermark_to else None,
             "bronze_keys": self.bronze_keys,
             "quarantine_keys": self.quarantine_keys,
+            "landed_by_source_date": self.landed_by_source_date,
             "drift": self.drift,
             "failure_reason": self.failure_reason,
         }
@@ -294,6 +301,12 @@ def extract_entity(
         for column in identifiers:
             if column in row:
                 row[column] = tokeniser.token(row[column])
+
+    for row in landed:
+        stamp = row.get(contract.watermark_column)
+        if stamp is not None:
+            day = stamp.date().isoformat()
+            report.landed_by_source_date[day] = report.landed_by_source_date.get(day, 0) + 1
 
     decorate(
         landed,

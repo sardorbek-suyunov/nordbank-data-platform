@@ -66,6 +66,10 @@ def read_identifier_values(
 
     Bounded on both sides. The lower bound is the window the extract task actually read and the
     upper bound is the maximum it observed, so this sees the same rows it did and no others.
+
+    `select distinct` is done by Postgres rather than in Python. The vault only ever wanted the
+    distinct values, and at the initial load the difference is tens of thousands of rows over
+    the wire against a few thousand.
     """
     if not identifiers or watermark_to is None:
         return []
@@ -78,7 +82,7 @@ def read_identifier_values(
         clause = f'"{contract.watermark_column}" >= %s and ' + clause
         parameters.insert(0, watermark_from)
 
-    sql = f"select {columns} from {relation} where {clause}"  # noqa: S608 - contracted identifiers
+    sql = f"select distinct {columns} from {relation} where {clause}"  # noqa: S608 - contracted
     cursor.execute(sql, tuple(parameters))
 
     values: list[str] = []
@@ -113,29 +117,44 @@ def upsert_vault(
     """
     if not values:
         return 0
-    before = connection.execute("select count(*) from meta.pii_vault").fetchone()[0]
-    connection.executemany(
-        """
-        insert into meta.pii_vault (
-            token, raw_value, classification, first_seen_source_system, first_seen_entity,
-            first_seen_column, first_seen_batch_id, created_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?)
-        on conflict (token) do nothing
-        """,
-        [
-            [
-                tokeniser.token(value),
-                value,
-                classification,
-                source_system,
-                entity,
-                column,
-                batch_id,
-                now,
-            ]
-            for value in values
-        ],
+
+    import pyarrow as pa
+
+    # Registered as an Arrow table and inserted with one statement, rather than an
+    # `executemany` over one parameter list per value. Measured at the initial load: the
+    # parameter-list form exhausted DuckDB's memory limit inside the register transaction.
+    # Deduplicated on the token first, because two raw values colliding inside one batch would
+    # make the insert conflict with itself rather than with the table.
+    seen: dict[str, tuple] = {}
+    for value in values:
+        token = tokeniser.token(value)
+        if token is not None:
+            seen.setdefault(token, (token, value))
+
+    incoming = pa.table(
+        {
+            "token": [row[0] for row in seen.values()],
+            "raw_value": [row[1] for row in seen.values()],
+            "classification": [classification] * len(seen),
+            "first_seen_source_system": [source_system] * len(seen),
+            "first_seen_entity": [entity] * len(seen),
+            "first_seen_column": [column] * len(seen),
+            "first_seen_batch_id": [batch_id] * len(seen),
+            "created_at": [now] * len(seen),
+        }
     )
+    before = connection.execute("select count(*) from meta.pii_vault").fetchone()[0]
+    connection.register("_incoming_vault", incoming)
+    try:
+        connection.execute(
+            """
+            insert into meta.pii_vault
+            select * from _incoming_vault
+            on conflict (token) do nothing
+            """
+        )
+    finally:
+        connection.unregister("_incoming_vault")
     after = connection.execute("select count(*) from meta.pii_vault").fetchone()[0]
     return int(after - before)
 
@@ -217,33 +236,18 @@ def claimed_by_source(cursor: Any, entity: str, source_date: dt.date) -> int | N
     return int(row[0])
 
 
-def landed_on_day(
-    connection: Any,
-    client: Any,
-    bucket: str,
-    keys: list[str],
-    watermark_column: str,
-    source_date: dt.date,
-) -> int:
+def landed_on_day(report: dict, source_date: dt.date) -> int:
     """How many landed rows carry a watermark on that source day.
+
+    Taken from the extract task's own count rather than by reading the Parquet back. The
+    re-read was the first thing to exhaust the register transaction's memory limit at the
+    initial load, and it recomputed a number the phase that wrote the rows already had.
 
     Scoped by the row's own `updated_at` and not by the batch, because the batch spans the
     overlap window and a source day does not. The registry's `rows_landed` is the other number
     and neither substitutes for the other.
     """
-    if not keys:
-        return 0
-
-    import pyarrow.parquet as pq
-
-    landed = 0
-    for key in keys:
-        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
-        for row in pq.read_table(io.BytesIO(body)).to_pylist():
-            stamp = row.get(watermark_column)
-            if stamp is not None and stamp.date() == source_date:
-                landed += 1
-    return landed
+    return int(report.get("landed_by_source_date", {}).get(source_date.isoformat(), 0))
 
 
 def write_reconciliation(
@@ -424,14 +428,7 @@ def register_run(
                 entity=entity,
                 source_date=source_date,
                 rows_claimed=claimed_by_source(cursor, entity, source_date),
-                rows_landed=landed_on_day(
-                    connection,
-                    client,
-                    bucket,
-                    entry.get("bronze_keys", []),
-                    contract.watermark_column,
-                    source_date,
-                ),
+                rows_landed=landed_on_day(entry, source_date),
                 rows_quarantined=entry["rows_quarantined"],
                 batch_id=batch["batch_id"],
                 now=now,
