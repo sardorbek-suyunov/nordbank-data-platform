@@ -203,7 +203,7 @@ def main(argv: list[str]) -> int:
         day += dt.timedelta(days=1)
 
     print(
-        f"\nbackfill: {arguments.start} to {arguments.end} complete — {processed} day(s) "
+        f"\nbackfill: {arguments.start} to {arguments.end} complete: {processed} day(s) "
         f"processed, {skipped} already complete, {total} in range"
     )
     return 0

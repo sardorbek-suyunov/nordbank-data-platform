@@ -203,7 +203,7 @@ def load_quarantine(connection: Any, client: Any, bucket: str, keys: list[str]) 
 # --- reconciliation ---------------------------------------------------------------------------
 
 
-def claimed_by_source(cursor: Any, entity: str, source_date: dt.date) -> int | None:
+def claimed_by_source(cursor: Any, contract, source_date: dt.date) -> int | None:
     """What the source says it changed on a day, from its own control total.
 
     `platform.tick_log` is the simulated source system's batch trailer: a real core banking
@@ -211,10 +211,27 @@ def claimed_by_source(cursor: Any, entity: str, source_date: dt.date) -> int | N
     not land it, which is the line between reading a source's claim and ingesting its
     bookkeeping.
 
-    None means no tick wrote that day — the initial load of the historical book, or a date the
-    simulation never reached — and the reconciliation row records a null rather than a zero,
-    because "nothing changed" and "nothing claimed" are different facts.
+    Three answers, and collapsing any two of them was a defect the first backfill found.
+
+    - A number, when a tick ran that day and logged this entity.
+    - **Zero**, when a tick ran that day and did not log this entity, but only for a `core`
+      entity: the tick engine covers all sixteen and writes a row only for the tables it
+      touched, so silence from it is a claim of zero. `generator/mutation/reconcile.py` reads
+      it the same way.
+    - **None**, when no tick ran that day — the initial load of the historical book — or when
+      the entity is a `ref` table, which the tick engine never touches and makes no claim
+      about. A null difference says "not claimed"; a zero difference says "claimed nothing and
+      nothing arrived", and reporting the second where the first is true made twenty-nine
+      reference entities look like a 441-row discrepancy on the first day of the backfill.
     """
+    cursor.execute(
+        "select count(*) from platform.tick_log where simulated_date = %s", (source_date,)
+    )
+    if cursor.fetchone()[0] == 0:
+        return None
+    if contract.source_schema != "core":
+        return None
+
     cursor.execute(
         """
         select coalesce(sum(c.rows_inserted + c.rows_updated), 0)
@@ -222,18 +239,9 @@ def claimed_by_source(cursor: Any, entity: str, source_date: dt.date) -> int | N
           join platform.tick_table_counts c on c.tick_log_id = l.tick_log_id
          where l.simulated_date = %s and c.table_name = %s
         """,
-        (source_date, entity),
+        (source_date, contract.entity),
     )
-    row = cursor.fetchone()
-    if row is None:
-        return None
-
-    cursor.execute(
-        "select count(*) from platform.tick_log where simulated_date = %s", (source_date,)
-    )
-    if cursor.fetchone()[0] == 0:
-        return None
-    return int(row[0])
+    return int(cursor.fetchone()[0])
 
 
 def landed_on_day(report: dict, source_date: dt.date) -> int:
@@ -427,7 +435,7 @@ def register_run(
                 source_system=batch["source_system"],
                 entity=entity,
                 source_date=source_date,
-                rows_claimed=claimed_by_source(cursor, entity, source_date),
+                rows_claimed=claimed_by_source(cursor, contract, source_date),
                 rows_landed=landed_on_day(entry, source_date),
                 rows_quarantined=entry["rows_quarantined"],
                 batch_id=batch["batch_id"],
