@@ -117,7 +117,7 @@ its area.
 | [business_questions.md](business_questions.md) | The nineteen questions gold is measured against, and the coverage rule in both directions |
 | [data_dictionary.md](data_dictionary.md) | Every column of every source table: type, nullability, classification, description and consumer. Generated from it: `platform.column_classifications` and the `make schema-check` comparison |
 | [traceability.md](traceability.md) | Every column named in the metric definitions and the model inventory, mapped to the source column that supplies it or the layer that derives it |
-| [generator_realism.md](generator_realism.md) | Every distribution the generator draws from, its parameters, the justification, and the explicit list of what is deliberately unrealistic. The contract bands it states are checked against `generator/profiles.yml` |
+| [generator_realism.md](generator_realism.md) | Every distribution the generator draws from, its parameters, the justification, the explicit list of what is deliberately unrealistic, and which behaviours each profile is long enough or large enough to reach. The contract bands it states are checked against `generator/profiles.yml` |
 
 ## Specifications and decision records
 
