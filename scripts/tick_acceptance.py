@@ -294,14 +294,40 @@ def _late_arrivals(cursor, anchor: dt.date) -> None:
 
 
 def _dispositions(cursor, config: RunConfig, anchor: dt.date) -> None:
+    """Criterion 7, reported both censored and uncensored.
+
+    **The unconditioned mean is an artefact of the observation window, not of the model.** An
+    alert raised in the last `disposition_lag_days_max` ticks of a run cannot yet have exhibited
+    a long lag: the run ended before its disposition was due. Averaging over every alert
+    therefore reports a mean below the stated one however correct the model is, and the shorter
+    the run the further below. It is the same shape of error as an unconditioned default rate,
+    which `metric_definitions.md` replaces with a vintage-conditioned one for the same reason.
+
+    So the comparable figure conditions on alerts raised early enough for the whole support of
+    the lag distribution to fit inside the run. The unconditioned figure is reported beside it,
+    because the gap between the two is the size of the censoring.
+    """
     _heading("Criterion 7: fraud alert disposition lag, measured against stated")
     fraud = config.profile.params["fraud"]
     stated_min = int(fraud["disposition_lag_days_min"])
     stated_max = int(fraud["disposition_lag_days_max"])
 
-    for label, predicate in (
-        ("alerts raised by a tick", "f.alerted_at::date > %s"),
-        ("alerts inherited from the history", "f.alerted_at::date <= %s"),
+    rows = query(cursor, "select max(simulated_date) from platform.tick_log")
+    last_tick = rows[0][0] if rows and rows[0][0] else anchor
+    uncensored_before = last_tick - dt.timedelta(days=stated_max)
+    print(
+        f"  run ends {last_tick}; an alert raised after {uncensored_before} cannot yet have "
+        f"shown a lag of {stated_max} days"
+    )
+
+    for label, predicate, params in (
+        (
+            "alerts raised by a tick, uncensored window",
+            "f.alerted_at::date > %s and f.alerted_at::date <= %s",
+            (anchor, uncensored_before),
+        ),
+        ("alerts raised by a tick, all", "f.alerted_at::date > %s", (anchor,)),
+        ("alerts inherited from the history", "f.alerted_at::date <= %s", (anchor,)),
     ):
         rows = query(
             cursor,
@@ -313,8 +339,8 @@ def _dispositions(cursor, config: RunConfig, anchor: dt.date) -> None:
               from core.fraud_alerts f
               join ref.fraud_dispositions d on d.code = f.fraud_disposition_code
              where d.is_final and f.dispositioned_at is not null and {predicate}
-            """,  # noqa: S608 - predicate is one of the two literals above
-            (anchor,),
+            """,  # noqa: S608 - predicate is one of the three literals above
+            params,
         )
         low, mean, high, count = rows[0]
         if not count:

@@ -143,16 +143,22 @@ class TickContext:
         """A random stream for `name` at `key`, scoped to this tick's date."""
         return self.streams.stream(f"tick.{name}", self.simulated_date.isoformat(), *key)
 
-    def month_stream(self, name: str, *key: object):
-        """A random stream stable for the whole simulated month rather than for one day.
+    def entity_stream(self, name: str, *key: object):
+        """A random stream for an entity, the same on every tick that looks at it.
 
-        Per-account context lives here: the small set of merchants an account uses regularly,
-        its recurring mandates, whether the customer picked up a new device. Keying those on
-        the day would reshuffle them every tick, which would destroy the fraud model's
-        unfamiliar-merchant context and Q19's device signal. The historical load keys the same
-        context on account and month, so this keeps the two halves of the book consistent.
+        **A hazard may be redrawn each tick; a lag must not.** `stream` is keyed on the
+        simulated date, so a value drawn from it is a fresh draw every day — which is what a
+        daily hazard wants and is exactly wrong for the length of time something takes. A lag
+        redrawn each tick is realised as the *minimum* over repeated draws: an alert whose
+        disposition lag was drawn from `stream` disposed on the first day a fresh draw happened
+        to have elapsed, so a stated one-to-fourteen-day lag measured at a mean of 4.4 days and
+        never once exceeded nine over forty-two observations.
+
+        Nothing in the schema records when a case is due, and adding a column would put a
+        simulation detail in the bank's data, so the lag is a pure function of the seed and the
+        entity's key and is recomputed identically on every tick that asks.
         """
-        return self.streams.stream(f"tick.{name}", self.simulated_date.strftime("%Y-%m"), *key)
+        return self.streams.stream(f"tick.{name}", *key)
 
     @property
     def window(self) -> tuple[dt.datetime, dt.datetime]:
