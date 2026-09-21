@@ -171,11 +171,34 @@ bronze model filters to batch ids registered as successful in `ops`. Reading the
 without that filter is a defect: the files are there, they look complete, and nothing about
 them says the run that wrote them died.
 
-*Schema drift.* An additive change is accepted: a new source column is loaded, and its
-appearance is recorded in `meta` with the batch that introduced it. A type change, a removed
-column, or a change to the primary key is not accepted: the whole batch is quarantined and
-the ingestion gate fails, so a partially conforming load never reaches bronze. Resolving the
-drift means a new contract version and an explicit rerun.
+*Schema drift.* An additive change is accepted: a new source column is noticed, its appearance
+is recorded in `meta` with the batch that introduced it, and it is **not** written to bronze,
+because bronze carries what the contract describes and an unknown column is noticed rather
+than silently absorbed. A type change, a removed column, or a change to the primary key is not
+accepted: that entity's whole batch is quarantined and the ingestion gate fails, so a partially
+conforming load never reaches bronze. Resolving the drift means a new contract version and an
+explicit rerun.
+
+One consequence of the additive case reaches silver and is recorded here rather than
+discovered there. A source row can be updated in a way that changes only the column the
+contract omits, and bronze then receives a version in which every contract-described column
+equals its predecessor's. Silver must expect a version with no visible differences and must
+not treat it as a defect or deduplicate it away. The generator produces exactly this after its
+scripted additive event: `core.merchants` rows are revised only in `merchant_risk_score`.
+
+**The contract and the data dictionary record two different facts, and neither is a copy of
+the other.** `docs/data_dictionary.md` records what the source *is*, and `make schema-check`
+proves the live schema matches it. A contract under `contracts/` records what the platform has
+*agreed to accept*. They are bootstrapped equal, once, and the lag between them afterwards is
+the mechanism by which drift becomes visible at all: a contract regenerated from the dictionary
+on every run would describe the source perfectly and detect nothing.
+
+This is not one fact maintained in two places, and the standing rule in `docs/specs/README.md`
+is not being bent. It must not be described as a duplication either, because a reader who
+believes it is will delete a copy and remove the control. `make contracts-diff` reports how far
+each contract has drifted from the dictionary and names the dictionary revision it was pinned
+to, so "the dictionary moved" and "the contract was edited" are distinguishable; `CHECK=1`
+fails on any divergence and runs in CI.
 
 **Silver guarantees** one row per business entity per version. It applies deduplication on the
 business key, resolves late arrivals by `updated_at`, applies soft deletes, converts amounts

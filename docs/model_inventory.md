@@ -147,13 +147,34 @@ operational marts, which is the exception to gold reading only silver.
 | Object | Schema | Grain | Written by | Milestone |
 |---|---|---|---|---|
 | `batch_registry` | `ops` | One row per extraction batch | Ingestion DAGs | M4 |
-| `watermarks` | `ops` | One row per source entity | Ingestion DAGs | M4 |
+| `extract_watermark` | `ops` | One row per source system and entity | Ingestion DAGs | M4 |
+| `source_reconciliation` | `ops` | One row per source system, entity and source day | Ingestion DAGs | M4 |
+| `task_failure` | `ops` | One row per failed task instance | `on_failure_callback` | M4 |
 | `freshness_sla` | `ops` | One row per source | Configuration, from `quality/` | M7 |
 | `check_results` | `dq` | One row per check run | Quality gates | M7 |
-| `quarantine_<entity>` | `bronze` | One row per rejected source row | Ingestion DAGs | M4 |
-| `pii_vault` | `meta` | One row per token | Extraction tasks | M4 |
-| `contract_versions` | `meta` | One row per contract version | Ingestion DAGs | M4 |
+| `quarantine_log` | `dq` | One row per rejected source record | Ingestion DAGs | M4 |
+| `pii_vault` | `meta` | One row per distinct identifier value, keyed on its token | Extraction tasks | M4 |
+| `contract_version` | `meta` | One row per entity and contract version | Ingestion DAGs | M4 |
+| `schema_drift_log` | `meta` | One row per drift observation | Ingestion DAGs | M4 |
 | `erasure_log` | `meta` | One row per erasure request | `gov_erasure` | M8 |
+
+Four of these names moved at M4 and the specification's names won, so this table is the one
+that changed. `ops.watermarks` became `ops.extract_watermark`; `meta.contract_versions` became
+`meta.contract_version`; and sixteen `bronze.quarantine_<entity>` tables became one
+`dq.quarantine_log`, because `dq` is where quality results live by `conventions.md` and
+sixteen tables of one shape is sixteen places for a schema to drift apart. `meta.pii_vault` is
+keyed on the token rather than on the token with its entity and column: one raw value occurs
+in more than one entity — measured, 949 payments in the `ci` book carry a `counterparty_name`
+equal to some customer's `full_name` — and keying on the triple would hold two rows for one
+person.
+
+**One consequence of additive drift belongs to silver and is recorded here because this is
+where its models are declared.** After the generator's scripted additive event fires, a
+`core.merchants` row can be revised in `merchant_risk_score` alone, which is the column the
+contract omits. `br_corebank__merchants` therefore receives a version in which every
+contract-described column equals its predecessor's. `sl_merchants` must expect a version with
+no visible differences: it is a real source update, not a duplicate, and deduplicating it away
+would lose the fact that the row moved.
 
 ## Derived flags
 

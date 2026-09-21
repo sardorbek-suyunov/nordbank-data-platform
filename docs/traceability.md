@@ -117,9 +117,13 @@ coverage check is complete in both directions.
 
 | Reference | Supplied by | Note |
 |---|---|---|
-| `ops.batch_registry.source` | Derived, `ops` | Written by ingestion DAGs at M4 |
+| `ops.batch_registry.source_system` | Derived, `ops` | Written by ingestion DAGs at M4. Named `source` here until M4; the delivered column matches the `_source_system` audit column on every bronze record, so the two cannot be read as different things |
 | `ops.batch_registry.ended_at` | Derived, `ops` | M4 |
 | `ops.batch_registry.status` | Derived, `ops` | M4 |
+| `ops.extract_watermark.watermark_at` | Derived, `ops` | M4. `model_inventory.md` called this table `ops.watermarks` until M4 |
+| `ops.source_reconciliation.rows_claimed` | `platform.tick_log` and `platform.tick_table_counts` | M4. The source's own control total, read and not landed. Null where the tick engine makes no claim: a day it did not run, or a `ref` entity it never touches |
+| `dq.quarantine_log.reason` | Derived, `dq` | M4. One table rather than the sixteen `bronze.quarantine_<entity>` tables the inventory named |
+| `meta.pii_vault.token` | Derived, `meta` | M4. The primary key; the raw value it resolves to is the only cleartext identifier left after ingestion |
 | `ops.freshness_sla.window_hours` | Derived, `ops` | Configuration from `quality/` at M7 |
 | `dq.check_results.check_name` | Derived, `dq` | Written by quality gates at M7 |
 | `dq.check_results.severity` | Derived, `dq` | M7 |

@@ -20,8 +20,11 @@ exactly this header:
 
 The parser validates the header before reading a single row and refuses to read a table whose
 header has drifted, because reading rows positionally out of a changed table would load
-confident nonsense. `Nullable` is `yes` or `no`. `Classification` is one of `identifier`,
-`quasi-identifier`, `sensitive` or `non-personal`. `Description` may not be empty, and it is
+confident nonsense. `Nullable` is `yes` or `no`. `Classification` is one of the five classes
+`pii_classification.md` defines: `identifier`, `quasi-identifier`, `pseudonymous_key`,
+`sensitive` or `non-personal`. This sentence named four of them until M4, while the parser and
+the loaded classification table carried five; the fifth, `pseudonymous_key`, is the one the
+extraction layer must never tokenise. `Description` may not be empty, and it is
 what the classification table stores as its rationale. A malformed row aborts
 `make schema-apply` with the file, the line number and the line, and nothing is loaded.
 

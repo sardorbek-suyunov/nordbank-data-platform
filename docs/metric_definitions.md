@@ -416,8 +416,10 @@ of days on which every expected batch for that source was fresh.
 | Sanctions list | 09:00 UTC each Monday | 8 days |
 | FRED macro series | 09:00 UTC on the 15th of the month | 35 days |
 
-**Source columns.** `ops.batch_registry.source`, `ops.batch_registry.ended_at`,
-`ops.batch_registry.status`, `ops.freshness_sla.window_hours`.
+**Source columns.** `ops.batch_registry.source_system`, `ops.batch_registry.ended_at`,
+`ops.batch_registry.status`, `ops.freshness_sla.window_hours`. The first was named
+`ops.batch_registry.source` here until M4 built the table; the delivered column is
+`source_system`, matching the `_source_system` audit column on every bronze record.
 
 **Used by.** Q17.
 
