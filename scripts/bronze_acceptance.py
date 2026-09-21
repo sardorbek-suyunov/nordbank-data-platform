@@ -131,12 +131,20 @@ def main() -> int:
         print(f"  batches in neither a registered nor a failed state: {unresolved}")
 
         heading(16, "late arrivals, by the partition they landed in")
+        # The initial load is excluded, and excluding it is the whole point of the
+        # measurement. That batch lands the entire historical book in one partition, so every
+        # row in it has a business date earlier than its ingest date — by up to three years —
+        # and including it would drown the thing criterion 16 is about: a transaction that
+        # arrives days after the customer made it and lands in the partition of its arrival
+        # rather than of its business date. The initial load is the batch with no lower
+        # watermark, which is exactly how the registry records "this is the first read".
         prefixes = [
             row[0]
             for row in rows(
                 c,
                 "select object_prefix from ops.batch_registry "
-                "where status = 'registered' and entity = 'transactions'",
+                "where status = 'registered' and entity = 'transactions' "
+                "and watermark_from is not null",
             )
         ]
 
@@ -208,6 +216,7 @@ def _late_arrivals(prefixes: list[str]) -> None:
                 else:
                     same += 1
 
+    print("  incremental batches only; the initial load of the historical book is excluded")
     print(f"  {late} transaction row(s) landed in a partition later than their business date")
     print(f"  {same} landed in the partition of their business date")
     for lag in sorted(by_lag):

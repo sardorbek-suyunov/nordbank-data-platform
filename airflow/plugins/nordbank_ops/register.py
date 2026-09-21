@@ -271,6 +271,16 @@ def write_reconciliation(
     now: dt.datetime,
 ) -> None:
     difference = None if rows_claimed is None else rows_landed + rows_quarantined - rows_claimed
+    # **A later batch for the same interval does not replace the day's count; the largest
+    # wins.** A re-run after registration reads from the watermark the first batch advanced,
+    # so its window is a tail of the day rather than the day, and its count is a floor on what
+    # landed rather than a measurement of it. Overwriting with it made nine entities on the
+    # drift day report a handful of rows against a claim of hundreds — a control reporting a
+    # discrepancy that only its own bookkeeping had created.
+    #
+    # The first batch to cover an interval always contains the whole source day, because its
+    # window starts before the day begins, so "largest" and "first" coincide here and
+    # "largest" also survives a case where a later batch genuinely sees more.
     connection.execute(
         """
         insert into ops.source_reconciliation (
@@ -279,10 +289,22 @@ def write_reconciliation(
         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
         on conflict (source_system, entity, source_date) do update set
             rows_claimed = excluded.rows_claimed,
-            rows_landed = excluded.rows_landed,
-            rows_quarantined = excluded.rows_quarantined,
-            difference = excluded.difference,
-            batch_id = excluded.batch_id,
+            rows_landed = greatest(source_reconciliation.rows_landed, excluded.rows_landed),
+            rows_quarantined = greatest(
+                source_reconciliation.rows_quarantined, excluded.rows_quarantined
+            ),
+            difference = case
+                when excluded.rows_claimed is null then null
+                else greatest(source_reconciliation.rows_landed, excluded.rows_landed)
+                     + greatest(
+                         source_reconciliation.rows_quarantined, excluded.rows_quarantined
+                       )
+                     - excluded.rows_claimed
+            end,
+            batch_id = case
+                when excluded.rows_landed >= source_reconciliation.rows_landed
+                then excluded.batch_id else source_reconciliation.batch_id
+            end,
             recorded_at = excluded.recorded_at
         """,
         [

@@ -148,23 +148,55 @@ def test_no_claim_records_a_null_difference_rather_than_a_zero(connection):
     )
 
 
-def test_a_re_run_replaces_the_reconciliation_row_rather_than_doubling_it(connection):
-    for landed, batch_id in ((100, "a-01"), (210, "a-02")):
-        write_reconciliation(
-            connection,
-            source_system="corebank",
-            entity="accounts",
-            source_date=SOURCE_DATE,
-            rows_claimed=210,
-            rows_landed=landed,
-            rows_quarantined=0,
-            batch_id=batch_id,
-            now=NOW,
-        )
-    rows = connection.execute(
+def reconcile(connection, landed, batch_id, claimed=210, quarantined=0):
+    write_reconciliation(
+        connection,
+        source_system="corebank",
+        entity="accounts",
+        source_date=SOURCE_DATE,
+        rows_claimed=claimed,
+        rows_landed=landed,
+        rows_quarantined=quarantined,
+        batch_id=batch_id,
+        now=NOW,
+    )
+
+
+def test_a_re_run_does_not_double_the_reconciliation_row(connection):
+    reconcile(connection, 100, "a-01")
+    reconcile(connection, 210, "a-02")
+    rows = connection.execute("select count(*) from ops.source_reconciliation").fetchall()
+    assert rows == [(1,)]
+
+
+def test_a_narrower_re_run_does_not_replace_the_day_count(connection):
+    """The defect the first sixty-day backfill produced, and the reason for `greatest`.
+
+    A re-run after registration reads from the watermark the first batch advanced, so its
+    window is a tail of the day rather than the day. Overwriting with its count made nine
+    entities on the drift day report a handful of rows against a claim of hundreds.
+    """
+    reconcile(connection, 271, "accounts-01")
+    reconcile(connection, 4, "accounts-02")
+    row = connection.execute(
         "select rows_landed, batch_id, difference from ops.source_reconciliation"
-    ).fetchall()
-    assert rows == [(210, "a-02", 0)]
+    ).fetchone()
+    assert row == (271, "accounts-01", 61)
+
+
+def test_a_wider_re_run_does_replace_it(connection):
+    reconcile(connection, 4, "accounts-01")
+    reconcile(connection, 271, "accounts-02")
+    row = connection.execute(
+        "select rows_landed, batch_id from ops.source_reconciliation"
+    ).fetchone()
+    assert row == (271, "accounts-02")
+
+
+def test_the_difference_is_recomputed_from_the_surviving_counts(connection):
+    reconcile(connection, 210, "accounts-01")
+    reconcile(connection, 2, "accounts-02")
+    assert connection.execute("select difference from ops.source_reconciliation").fetchone() == (0,)
 
 
 # --- the source's claim --------------------------------------------------------------------
