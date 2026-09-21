@@ -403,12 +403,21 @@ defect, not a configuration.
 The footprint column above is about the lake and the warehouse, which M2 does not build. The
 source database is a separate thing and these are the figures the M2 generator actually
 produced on a freshly nuked and schema-applied stack, on the machine in
-`project_state.md`:
+`project_state.md`. Re-measured at M3, after four defects at the boundary of the history window
+were fixed: `ci` is 22 per cent smaller and `dev` 6 per cent, and every row of the difference was
+an artefact one of those defects produced. The two profiles differ by so much because the worst
+of them scaled with how short the history was — a second account opens 14 to 900 days after
+signup, and over six months almost all of those dates fall past the anchor while over three years
+most do not.
+
+`dev` stays inside spec 003's band of two to four million transactions and inside its six-minute
+target, and it loads faster than it did despite four indexes the mutation engine's read path
+needed.
 
 | Profile | Customers | History | Transactions | Total `core` rows | Source database | Generate and load |
 |---|---|---|---|---|---|---|
-| `ci` | 500 | 6 months | 41,393 | 209,190 | 67 MB | 11.5 s |
-| `dev` | 5,000 | 3 years | 2,321,273 | 11,468,955 | 2,819 MB | 327.6 s |
+| `ci` | 500 | 6 months | 31,157 | 163,281 | 54 MB | 11.2 s |
+| `dev` | 5,000 | 3 years | 2,166,281 | 10,770,708 | 2,641 MB | 274.6 s |
 | `full` | 30,000 | 5 years | about 23 million, projected | about 115 million, projected | about 28 GB, projected | not run |
 
 **The `full` profile's customer count was set by this measurement.** The specification

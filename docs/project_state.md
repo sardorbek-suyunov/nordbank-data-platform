@@ -305,11 +305,20 @@ Other known gaps:
 changed, which is what M4 extracts. Three things it inherits are recorded here rather than left
 to be discovered.
 
-**The tick log's identity holds at the tick.** An extraction run at the end of simulated day D
-can assert that bronze received exactly what `platform.tick_table_counts` says changed on day D.
-Run later it cannot, because a later tick re-stamps a row an earlier one wrote and the earlier
-window loses it: measured on the historical book, `accounts` retains 6 of 210 rows in a
-six-day-old window. `generator/mutation/reconcile.py` carries the measurement and the reasoning.
+**M4's backfill must interleave tick and extract. It cannot run sixty ticks and then extract.**
+This is a sequencing requirement on the milestone, not a note about a control.
+
+The tick log reconciles exactly against `updated_at` windows only at the tick. A later tick
+re-stamps a row an earlier one wrote, and the earlier window loses it permanently — measured on
+the historical book, `accounts` retains 6 of the 210 rows that moved in a six-day-old window,
+and a single day of movements touches 466 of 736 open accounts. So an extraction of day D run
+after day D+1 has ticked reads a window that no longer holds what the log says changed on day D,
+and the assertion that bronze received exactly what the source changed cannot be made at all.
+
+The loop is therefore: tick day D, extract day D, register the batch, tick day D+1. `make tick`
+and `make tick-to` are single transactions per day precisely so that loop is available, and
+`ops_source_tick` exists so Airflow can drive it. `generator/mutation/reconcile.py` carries the
+measurement and the reasoning; spec 004 records it as an amendment.
 
 **Business date, posting date and audit time are three different dates on a late-arriving item.**
 An offline card transaction presented days late carries `booked_at` on the day of the tap,
