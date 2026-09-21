@@ -110,9 +110,9 @@ account is less seasonal than buying things.
 
 ### The edges of the window, and what they were getting wrong
 
-Three defects lived at the boundaries of the history window. None of them was visible while the
-book was a static snapshot; all three surfaced the moment the mutation engine produced a day
-after the anchor and it could be compared with the day before it.
+Four defects lived at the boundaries of the history window. None was visible while the book was
+a static snapshot; all four surfaced the moment the mutation engine produced a day after the
+anchor and it could be compared with the day before it.
 
 **A monthly rate is now scaled to the days its window actually covers.** The generator draws a
 month's activity per account and places it inside the account's window within that month. Three
@@ -136,6 +136,29 @@ the future. The status is now derived — a card is expired when its expiry date
 `expired` is out of the mix. A four-year validity over a six-month history means no card expires
 at `ci` or `dev`, and reporting none is the honest answer rather than a status the dates do not
 support.
+
+**A terminal card status has a date, and the card stops spending there rather than at the
+anchor.** This is the fourth defect of the same shape and the one the continuity comparison
+found last, because it hides behind two other effects. A card that is `blocked` at the anchor
+reached that state on some day during the history, but the status was the only thing attached to
+it, so the card went on authorising until the last day of the history and then stopped dead —
+a step in card volume on a date with no business meaning. Measured at `ci`: 327 open accounts
+held an in-date card and only 274 held an *active* one, so 53 accounts, sixteen per cent of the
+card-bearing book, spent throughout the history and could not spend after it.
+
+The generator now draws the day the card reached its terminal status, uniformly between its
+issue and the anchor, and the movement pass stops using it there. `usable_until` in
+`generator/entities/deposits.py` carries it; it is generator-internal, because the source has no
+column for when a status changed and inventing one would put a simulation detail in the bank's
+schema.
+
+`replaced` leaves the historical mix at the same time. The status means a successor card exists
+and the load does not issue one. The mutation engine does — its lifecycle phase replaces a
+blocked card and issues the successor in the same tick — so the status stays in the vocabulary
+and is produced by the thing that models the event.
+
+Measured with one instrument either side of the change, the card share of the transaction mix
+across the anchor: **0.950 before, 1.005 after.**
 
 ### Hour of day
 
@@ -468,6 +491,38 @@ version, and recorded — and a fabricated name exercises every step of that. Pu
 from a sanctions list into a portfolio repository would publish accusations about identifiable
 people to make a demonstration marginally more convincing, which is indefensible whatever the
 demonstration is worth.
+
+## Measuring continuity across the anchor
+
+The day after the anchor should look like the day before it, and saying so needs an instrument
+that measures the thing being claimed. A per-day total is not that instrument: two windows
+thirty days apart differ by a month of the book's own growth, which is about ten per cent at
+`ci`, and by a month of seasonality, which is another ten per cent between August and October.
+Both are the model working correctly, and both are large enough to hide or to manufacture a
+step of the size worth finding.
+
+The card-purchase deficit demonstrates the cost of getting this wrong in both directions. Its
+raw per-day ratio read 0.90, which looked like the defect it was; after the other three boundary
+defects were fixed the same ratio read 1.20, which looked like an over-correction and was
+nothing of the kind. Both readings were the population and the calendar, not the rate.
+
+**Continuity is therefore measured two ways, and neither is a per-day total.**
+
+- *As a mix.* The share of transactions that are card transactions is immune to the population
+  and to seasonality, because both scale the numerator and the denominator together. This is the
+  instrument for anything that is a composition question.
+- *Per open account per day, against the seasonal expectation.* For a volume, the rate is
+  divided by the accounts open on that day and then by the seasonal multiplier the two windows
+  imply. A series the model does not make seasonal — payments and background sessions — is read
+  before that second step, not after.
+
+**The tolerance is five per cent, and every series is inside it.** Measured over thirty days
+either side of the anchor at `ci`, after the four boundary fixes: the card share of the mix at
+1.005, payments per open account at 1.012, login sessions at 1.001, transactions at 0.972 of
+their seasonal expectation and ledger batches at 0.979. Five per cent is chosen as the smallest
+band this measurement can support at `ci` — a day holds a few hundred transactions and the
+sampling noise alone is a couple of per cent — and a departure worth finding is larger than a
+departure worth arguing about.
 
 ## What a tick changes
 

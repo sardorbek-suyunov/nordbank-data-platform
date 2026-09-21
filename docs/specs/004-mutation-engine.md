@@ -658,3 +658,27 @@ timestamp that is not a key at all.
 | `core.payments (initiated_at)`, `core.payments (booked_at)` | The payments that may book or settle today | A seven-day window, 1,230 ms to 16 ms |
 
 A `dev` tick is 5.5 seconds after all of it, and sixty of them are 5.6 minutes.
+
+### 2026-09-21 — A terminal card status has a date, and `replaced` leaves the historical mix
+
+Criterion 6's continuity comparison showed card purchases at 0.90 of their pre-anchor rate while
+every other series sat between 0.99 and 1.05. The cause was in the historical load rather than in
+the tick: a card that is `blocked` or `cancelled` at the anchor reached that state on some day
+during the history, but the status was the only thing attached to it, so the card went on
+authorising until the last day of the history and stopped dead at the anchor. Measured at `ci`,
+327 open accounts held an in-date card and only 274 held an active one — 53 accounts, sixteen per
+cent of the card-bearing book, spent throughout the history and could not spend after it.
+
+The generator now draws the day a card reached its terminal status and stops using it there.
+`replaced` leaves the historical mix at the same time: the status means a successor card exists
+and the load does not issue one, while the mutation engine's lifecycle phase does.
+
+Measured with one instrument either side of the change, the card share of the transaction mix
+across the anchor: 0.950 before, 1.005 after.
+
+**The instrument matters and is recorded with the result.** The raw per-day ratio that first
+showed 0.90 read 1.20 after the other boundary fixes, and neither number was the rate: two
+windows thirty days apart differ by a month of the book's own growth, about ten per cent at `ci`,
+and by a month of seasonality, another ten per cent between August and October. Continuity is
+measured as a mix, or per open account against the seasonal expectation, with a stated tolerance
+of five per cent. `docs/generator_realism.md` carries both the method and the figures.

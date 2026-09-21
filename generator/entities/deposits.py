@@ -68,6 +68,17 @@ class CardBook:
     issued_date: list[dt.date] = field(default_factory=list)
     expiry_date: list[dt.date] = field(default_factory=list)
     status_code: list[str] = field(default_factory=list)
+    # The day the card stops being able to authorise: its expiry for a card that is still
+    # active at the anchor, and the day it was blocked or cancelled for one that is not.
+    #
+    # A terminal status is a state the card reached *during* the history, and the movement pass
+    # has to know when. Without it a card blocked in March goes on spending until September and
+    # then stops dead at the anchor, because that is the only date the status is attached to —
+    # which is a step in card volume on a date with no business meaning, and it is what the
+    # mutation engine's first continuity comparison found. Generator-internal: the source has no
+    # column for when a status changed, and inventing one would put a simulation detail in the
+    # bank's schema.
+    usable_until: list[dt.date] = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.account_id)
@@ -254,6 +265,27 @@ def generate(
                 status = weighted_choice(rng, cards_params["status_mix"])
                 if expiry <= config.anchor and status == "active":
                     status = "expired"
+
+                # A card stops authorising at the earlier of two dates: its expiry, and the day
+                # it reached a terminal status. Blocked and cancelled are reached on some day
+                # between issue and the anchor, drawn uniformly because nothing in the model
+                # says a block is more likely early or late in a card's life. Expired is not
+                # drawn at all — it *is* the expiry.
+                #
+                # The `min` is load-bearing and only the `dev` profile shows it: a four-year
+                # validity over six months of `ci` history means no card ever expires, so a
+                # drawn date cannot exceed an expiry there. Over three years it can, and a card
+                # transacting past its expiry is what invariant 2 refuses — 1,766 rows of it.
+                usable_until = expiry
+                if status not in ("active", "expired"):
+                    span = (config.anchor - issued).days
+                    drawn = (
+                        issued + dt.timedelta(days=rng.randrange(1, span + 1))
+                        if span > 0
+                        else issued
+                    )
+                    usable_until = min(drawn, expiry)
+
                 card_created = at_time(issued, rng.randrange(8, 20), rng.randrange(60), 0)
 
                 cards.account_id.append(account_id)
@@ -261,6 +293,7 @@ def generate(
                 cards.issued_date.append(issued)
                 cards.expiry_date.append(expiry)
                 cards.status_code.append(status)
+                cards.usable_until.append(usable_until)
                 accounts.card_ids[-1].append(card_id)
 
                 card_rows.write(

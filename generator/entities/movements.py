@@ -479,9 +479,9 @@ def _account_month(**kw) -> None:
             if not has_card:
                 continue
             card_id = card_ids[rng.randrange(len(card_ids))]
-            issued = cards.issued_date[card_id - 1]
-            expiry = cards.expiry_date[card_id - 1]
-            if not (issued <= day < expiry):
+            # `usable_until` rather than the expiry: a card that is blocked or cancelled at the
+            # anchor stopped authorising on the day it was blocked, not on the anchor.
+            if not (cards.issued_date[card_id - 1] <= day < cards.usable_until[card_id - 1]):
                 continue
             if type_code == "atm_withdrawal":
                 band = "cash"
@@ -617,7 +617,7 @@ def _account_month(**kw) -> None:
         if not has_card:
             continue
         card_id = card_ids[0]
-        if not (cards.issued_date[card_id - 1] <= day < cards.expiry_date[card_id - 1]):
+        if not (cards.issued_date[card_id - 1] <= day < cards.usable_until[card_id - 1]):
             continue
         seq += 1
         booked_at = at_time(day, rng.randrange(2, 6), rng.randrange(60), 0)
@@ -659,7 +659,7 @@ def _account_month(**kw) -> None:
     if has_card and bernoulli(rng, min(1.0, burst_probability)) and len(merchants) > 0:
         day = window_first + dt.timedelta(days=rng.randrange(span_days))
         card_id = card_ids[rng.randrange(len(card_ids))]
-        if cards.issued_date[card_id - 1] <= day < cards.expiry_date[card_id - 1]:
+        if cards.issued_date[card_id - 1] <= day < cards.usable_until[card_id - 1]:
             start = draw_timestamp(rng, day, kw["hour_weights"])
             for step in range(int(fraud_params["velocity_burst_length"])):
                 seq += 1
