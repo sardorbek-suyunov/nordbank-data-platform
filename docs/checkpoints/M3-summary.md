@@ -27,8 +27,8 @@ will interleave with extraction; it is paused.
 
 | Profile | Book at the anchor | Ticks | Per tick, median | Per tick, max | Run |
 |---|---|---|---|---|---|
-| `ci` | 166,381 rows | 60 | 409 ms | 462 ms | 24.6 s |
-| `dev` | 10,934,878 rows | 30 | 5,455 ms | 8,194 ms | 169.0 s |
+| `ci` | 163,281 rows | 60 | 430 ms | 482 ms | 25.6 s |
+| `dev` | 10,770,708 rows | 30 | 4,901 ms | 8,292 ms | 153.4 s |
 
 Criterion 13 asks for a `ci` tick under two seconds and a `dev` tick under ten. Its two clauses
 are one budget — sixty ticks at the per-tick ceiling is exactly six hundred seconds — so the
@@ -61,19 +61,32 @@ days either side of the anchor. Each is fixed, and each moved the committed mani
   account yet.
 - Every one of the 33 cards `status_mix` marked `expired` had an expiry date years in the
   future. Expiry is now read off the date and `expired` has left the mix.
+- A terminal card status had no date, so a card blocked in March went on authorising until the
+  anchor and then stopped dead. 327 open accounts held an in-date card at `ci` and only 274 held
+  an active one: 53 accounts, sixteen per cent of the card-bearing book, spent throughout the
+  history and could not spend after it. The generator now draws the day a card reached its
+  terminal status and stops using it there, bounded by its expiry; `replaced` leaves the
+  historical mix, because it claims a successor the load does not issue.
 
-After the fixes, per-day means over the thirty days either side of the anchor:
+**The instrument for continuity matters as much as the fixes, and getting it wrong cost two
+wrong conclusions.** A per-day total compares two windows thirty days apart and embeds a month
+of the book's own growth — about ten per cent at `ci` — and a month of seasonality, another ten
+per cent between August and October. The card-purchase deficit first read 0.90 on that
+instrument, which looked like the defect it was; after the other boundary fixes the same
+instrument read 1.20, which looked like an over-correction and was nothing of the kind. Both
+readings were the population and the calendar.
 
-| Measure | History | Ticked | Ratio |
-|---|---|---|---|
-| Transactions | 248.0 | 244.4 | 0.99 |
-| Payments | 50.8 | 53.5 | 1.05 |
-| Login sessions | 159.1 | 159.7 | 1.00 |
-| Ledger batches | 272.0 | 276.6 | 1.02 |
-| Card purchases | 141.7 | 128.2 | 0.90 |
+Continuity is now measured as a mix, or per open account against the seasonal expectation, with
+a stated tolerance of five per cent that every series is inside. The card share of the
+transaction mix across the anchor, one instrument either side of the change:
 
-The card-purchase gap is accounts whose only card is blocked, cancelled or replaced. The
-lifecycle phase reissues for them, so it closes across the run.
+| Profile | Before | After |
+|---|---|---|
+| `ci` | 0.950 | 1.005 |
+| `dev` | — | 1.018 |
+
+Per open account per day at `ci`, over thirty days either side: payments 1.012, login sessions
+1.001, transactions 0.972 of their seasonal expectation, ledger batches 0.979.
 
 **A `dev` tick cost 48.9 seconds, and four indexes and a bounded sample took it to 5.5.** The
 specification's amendment estimated the budget from the write side: "a `dev` day is about 10,440
@@ -130,6 +143,34 @@ six-day-old window. The reconciliation runs per tick instead, which costs 7.8 ms
 tables and is the only form M4 depends on — an extractor running at the end of day D sees exactly
 what the log says changed on day D.
 
+**Conditioning criterion 7's lag for censoring found a defect the censoring was hiding.** An
+alert raised in the last fourteen ticks of a run cannot yet have shown a fourteen-day lag, so
+the unconditioned mean sits below the stated one however correct the model is. Conditioned on
+alerts raised early enough for the whole distribution to fit inside the run, the `dev` mean
+moved from 4.40 to 4.81 days — barely at all — and the maximum over forty-two fully observable
+alerts was nine days. Forty-two uniform draws on one to fourteen exceed nine with probability
+about one in thirty million, so the lag being produced was not the lag being stated.
+
+The cause was the stream. `TickContext.stream` is keyed on the simulated date, correctly,
+because that is what a daily hazard needs; the disposition drew its lag from it, so every tick
+drew a new lag and the alert disposed on the first day a fresh draw happened to have elapsed.
+**A lag redrawn each tick is realised as the minimum over repeated draws.** The decision and
+disbursement lags in the lending funnel had the same defect. `TickContext.entity_stream` is
+keyed on the entity alone and is what a lag draws from now. After the fix the uncensored `dev`
+mean is 6.96 days against a uniform expectation of 7.5 and a historical book that measures 7.8,
+with a maximum of 14.
+
+The general rule is in `generator_realism.md`, because it recurs: **a measured band is
+comparable to a stated one only when the observation window admits the full support of the
+distribution.** It is the same error an unconditioned default rate makes, which
+`metric_definitions.md` already resolves by conditioning on vintage, and at M7 it will apply to
+every freshness and resolution-time measure the quality framework reports.
+
+**Running both profiles caught a third card defect that `ci` cannot express.** Bounding the
+drawn terminal date by the card's expiry looked redundant at `ci`, where a four-year validity
+over six months of history means no card ever expires. Over three years cards do expire, and
+without the bound a card transacted past its expiry — 1,766 rows, which invariant 2 refused.
+
 **CI found two more, both of them a check that was not checking what it said.** Neither shows
 up on a machine that reseeds before it verifies, and CI ticks first.
 
@@ -184,13 +225,18 @@ list.
 | Commit | What changed | Tables moved | Total rows |
 |---|---|---|---|
 | `refactor: draw an account's regular context from addressable streams` | The regular credit left the per-customer stream; familiar merchants and mandates left the per-account-month stream; the `devices` key became the calendar month | 12 of 16 | 209,197 → 211,627 |
+| `fix: stop a card authorising after the day it was blocked` | A terminal card status gained a date bounded by the expiry; `replaced` left the historical mix | 9 of 16 | 166,381 → 163,281 |
 | `fix: make the book continuous across the anchor` | Partial-month scaling, the anchor clamps, the card expiry status | 14 of 16 | 211,627 → 166,381 |
 | `feat: acquire customers, open their accounts and run the lending funnel` | The address row builder draws city, postcode and street in one order for both address types | 1 of 16 | 166,381 → 166,381 |
 | `test: regenerate the ci manifest for the device count stream change` (before this session) | The device count moved to its own addressable stream | 2 of 16 | 209,190 → 209,197 |
 
-The book is 21 per cent smaller than it was at the end of M2, and every row of the difference is
-an artefact the fixes above removed: a clamped entity that should not have existed, or a
-partial month's activity compressed into the days that remained.
+The `ci` book is 22 per cent smaller than it was at the end of M2 and the `dev` book about 6 per
+cent, and every row of the difference is an artefact the fixes above removed: a clamped entity
+that should not have existed, a partial month's activity compressed into the days that remained,
+or a card that went on spending after it was blocked. The two profiles differ by so much because
+the clamp scaled with how short the history was — a second account opens 14 to 900 days after
+signup, and over six months almost all of those fall past the anchor while over three years most
+do not.
 
 ## Acceptance criteria
 
@@ -200,15 +246,15 @@ partial month's activity compressed into the days that remained.
 | 2 | A tick is one transaction; an induced failure leaves the date and all data unchanged | `generator/tests/test_tick_integration.py`, parameterised over failures after `lifecycle`, `acquisition`, `movements` and `dirt`. Each asserts the simulation state and all sixteen row counts are unchanged |
 | 3 | No row a tick writes carries a wall-clock `updated_at`; show the distribution over sixty ticks | 97,321 rows stamped after the anchor, 97,321 inside some tick's own simulated day, 0 outside every tick window. The `ci` anchor is pinned in the past and sixty ticks run past today, so a row stamped with `now()` would land before its day rather than after; the window catches either direction |
 | 4 | Replay determinism: seed, tick sixty, hash every table; repeat; identical hashes | Two full seed-and-sixty-tick runs. All sixteen tables byte-identical, 259,624 rows |
-| 5 | All fourteen invariants pass after sixty ticks on `ci` and thirty on `dev` | `ci`: fourteen of fourteen after sixty ticks. `dev`: fourteen of fourteen after thirty, with invariant 9's statistical band asserted rather than suspended — a confirmed-fraud rate of 0.6551 over 1,850 dispositioned alerts, inside the band of 0.42 to 0.78 — and invariant 13 at 0.928 over 638,011 digital transactions |
+| 5 | All fourteen invariants pass after sixty ticks on `ci` and thirty on `dev` | `ci`: fourteen of fourteen after sixty ticks. `dev`: fourteen of fourteen after thirty, with invariant 9's statistical band asserted rather than suspended — a confirmed-fraud rate of 0.6619 over 1,745 dispositioned alerts, inside the band of 0.42 to 0.78 — and invariant 13 at 0.927 over 624,361 digital transactions |
 | 6 | Every change class present and measurable; counts by table; late-arrival lag distribution | 96,278 inserts, 17,371 updates, 172 soft deletes, 69 late arrivals and 5 physical deletes over sixty `ci` ticks, broken down by table below. Late-arrival lag: 2 days 49.3%, 3 days 27.5%, 4 days 14.5%, 5 days 8.7%, mean 2.83, against a stated two to five weighted 0.44/0.29/0.17/0.10 |
-| 7 | Fraud alert dispositions lag their alerts on the stated distribution | Alerts raised by a tick, at `dev` where the sample supports it: n=64, min 1, mean 3.63, max 11 days against a stated one to fourteen. At `ci`: n=8, min 2, mean 4.25, max 6. Precision 0.655 over 1,850 dispositioned alerts at `dev`, inside the band of 0.42 to 0.78. The inherited backlog is reported separately and is not the tick's distribution: it measures how old an alert was when the tick finally closed it, and the historical load spreads its ten per cent non-final share across the whole history rather than near the anchor |
+| 7 | Fraud alert dispositions lag their alerts on the stated distribution | Reported conditioned and unconditioned, because the observation window right-censors the lag. At `dev`, alerts raised early enough to be fully observable: n=28, min 1, mean 6.96, max 14 days against a stated one to fourteen, a uniform expectation of 7.5 and a historical book of 7.8. Unconditioned: n=53, mean 6.28 — the 0.68-day gap is the censoring. Precision 0.662 over 1,745 dispositioned alerts, inside the band of 0.42 to 0.78. The inherited backlog is reported separately and is not the tick's distribution: it measures how old an alert was when the tick finally closed it |
 | 8 | Soft deletes across at least three entity types | Three: 16 customers, 153 transactions, 3 loan applications |
 | 9 | Tick log counts reconcile exactly against each tick's window, for all sixty | Asserted after every one of the sixty ticks, and after every one of the sixty `dev` ticks. Amended: the reconciliation is exact at the tick rather than after the run, for the reason measured above |
 | 10 | At least one drift event fires within sixty ticks, the schema changes, `schema-check` stays green | Both events fire: the additive column at tick 12, the type widening at tick 37. `schema-check` reports 510 columns agreeing while they are applied and 509 after a seed reverts them; `schema-apply` re-applies both |
 | 11 | Duplicate customer records present and fuzzy-matchable; how many and by what similarity | 22 candidate pairs sharing a date of birth and a country; 19 match on a trigram similarity of at least 0.55. Similarity min 0.600, mean 0.684, max 0.812. Jaccard over character trigrams, which is what `pg_trgm.similarity` computes; neither `pg_trgm` nor `fuzzystrmatch` is installed |
 | 12 | `ops_source_tick` exists, is paused, imports cleanly, succeeds when triggered | Eight DAG integrity tests pass, two of them new: that it is paused on creation and holds no warehouse pool, and that it writes through a connection of its own. `airflow dags test ops_source_tick` advances the source one day and reconciles 1,504 logged rows against 1,504 in the window |
-| 13 | Tick runtime: `ci` under 2 s, `dev` under 10 s, both measured; sixty `dev` ticks under 10 minutes | `ci` median 409 ms, maximum 462 ms over sixty ticks. `dev` median 5,455 ms, maximum 8,194 ms over thirty, which is 5.6 minutes for sixty at that rate. Both after the profiling above; before it a `dev` tick was 48.9 s |
+| 13 | Tick runtime: `ci` under 2 s, `dev` under 10 s, both measured; sixty `dev` ticks under 10 minutes | `ci` median 430 ms, maximum 482 ms over sixty ticks. `dev` median 4,901 ms, maximum 8,292 ms over thirty, which is 4.9 minutes for sixty at that rate. Both after the profiling above; before it a `dev` tick was 48.9 s |
 | 14 | All existing checks pass; delivered as a pull request with four green checks | 214 unit tests, 8 DAG integrity tests, 47 generator integration tests including the new tick suite, 23 in-stack integration tests, `ruff` clean, `check_docs` green, `schema-check` green, the committed `ci` manifest matching a fresh regeneration. Pull request #4 |
 
 Change classes by table, over sixty `ci` ticks:
@@ -279,6 +325,17 @@ is implemented rather than only here:
   was declared in `profiles.yml` and read nowhere. The substance of the ruling is unaffected —
   a posted transaction is reversed rather than soft deleted — and M3 is the first thing to
   populate the column. The orphan parameter is removed.
+
+  **The two are different mechanisms and the data dictionary now says so**, because silver's
+  deduplication and Q15 both depend on which is which. `transaction_status_code = 'reversed'` is
+  an authorisation voided before it posted: `is_posted` is false, it moved no money and it has
+  no ledger entries, so invariants 4 and 6 exclude it without a special case.
+  `reversal_of_transaction_id` is a reversing posting: both rows stay posted, both reach the
+  ledger on the dates each was recognised, and the pair nets to zero across them rather than
+  restating the first. `metric_definitions.md` states the same rule where the balance is
+  defined, and an integration test asserts the source keeps them apart — no reversing row is
+  unposted, none reverses something that never posted, no voided authorisation has a ledger
+  batch, and no row is both at once.
 
 ## Verification
 
