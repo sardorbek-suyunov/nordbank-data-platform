@@ -2,8 +2,10 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint format test test-dags test-integration up down nuke health logs \
-	verify-dag seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance dbt-build \n	dbt-docs dq clean
+.PHONY: help install init-env lint format test test-dags test-integration up down nuke health \
+	logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap \
+	contracts-diff extract backfill bronze-stats seed seed-verify seed-manifest tick tick-to \
+	tick-status tick-acceptance dbt-build dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -70,6 +72,10 @@ endif
 
 schema-check: ## Fail if the live schema and the committed data dictionary disagree
 	uv run python scripts/schema_check.py
+
+warehouse-apply: ## Apply the warehouse operational schema (runs inside the stack)
+	@echo "warehouse-apply: running inside airflow-scheduler, where the warehouse volume is"
+	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/warehouse_apply.py"
 
 seed: ## Generate and load the historical dataset (NORDBANK_ENV, _SEED, _ANCHOR_DATE)
 	uv run python -m generator
