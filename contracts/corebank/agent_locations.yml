@@ -1,0 +1,66 @@
+# Data contract for core.agent_locations.
+#
+# Bootstrapped from docs/data_dictionary.md once, then hand-authored. It is not
+# regenerated on every run: the dictionary records what the source is, this records
+# what the platform has agreed to accept, and the lag between them is what makes
+# drift visible at ingest (spec 005 section 2).
+#
+# `make contracts-diff` reports divergence from the dictionary and names the
+# revision this file was pinned to. Bump `contract_version` deliberately, in a
+# commit, when the platform decides to accept something new.
+source_system: corebank
+source_schema: core
+entity: agent_locations
+contract_version: 1
+watermark_column: updated_at
+primary_key: agent_location_id
+dictionary_revision: sha256:e5d088874e5b22e7
+columns:
+- name: agent_location_id
+  type: bigint
+  nullable: false
+  classification: non-personal
+- name: agent_location_reference
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: partner_name
+  type: character varying(200)
+  nullable: false
+  classification: non-personal
+- name: address_line
+  type: character varying(200)
+  nullable: true
+  classification: non-personal
+- name: city
+  type: character varying(120)
+  nullable: true
+  classification: non-personal
+- name: postal_code
+  type: character varying(20)
+  nullable: true
+  classification: non-personal
+- name: country_code
+  type: character(2)
+  nullable: false
+  classification: non-personal
+- name: active_from_date
+  type: date
+  nullable: false
+  classification: non-personal
+- name: active_to_date
+  type: date
+  nullable: true
+  classification: non-personal
+- name: created_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: updated_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: is_deleted
+  type: boolean
+  nullable: false
+  classification: non-personal

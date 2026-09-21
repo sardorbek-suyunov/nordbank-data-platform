@@ -62,3 +62,16 @@ jobs:
 
       - name: Check specification, ADR and README conventions
         run: python3 scripts/check_docs.py
+
+      # Folded into this job rather than becoming a fifth required check. It reads no
+      # database: the dictionary and the contracts are both committed files, so a contract
+      # cannot drift from the dictionary inside a commit without this saying so.
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+
+      - name: Install the project
+        run: uv sync
+
+      - name: Check the contracts against the data dictionary
+        run: make contracts-diff CHECK=1

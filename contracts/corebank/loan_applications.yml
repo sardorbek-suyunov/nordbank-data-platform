@@ -1,0 +1,78 @@
+# Data contract for core.loan_applications.
+#
+# Bootstrapped from docs/data_dictionary.md once, then hand-authored. It is not
+# regenerated on every run: the dictionary records what the source is, this records
+# what the platform has agreed to accept, and the lag between them is what makes
+# drift visible at ingest (spec 005 section 2).
+#
+# `make contracts-diff` reports divergence from the dictionary and names the
+# revision this file was pinned to. Bump `contract_version` deliberately, in a
+# commit, when the platform decides to accept something new.
+source_system: corebank
+source_schema: core
+entity: loan_applications
+contract_version: 1
+watermark_column: updated_at
+primary_key: loan_application_id
+dictionary_revision: sha256:e5d088874e5b22e7
+columns:
+- name: loan_application_id
+  type: bigint
+  nullable: false
+  classification: pseudonymous_key
+- name: application_reference
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: customer_id
+  type: bigint
+  nullable: false
+  classification: pseudonymous_key
+- name: loan_product_code
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: loan_application_status_code
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: risk_band_code
+  type: character varying(40)
+  nullable: true
+  classification: sensitive
+- name: decision_reason_code
+  type: character varying(40)
+  nullable: true
+  classification: sensitive
+- name: applied_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: decided_at
+  type: timestamp with time zone
+  nullable: true
+  classification: non-personal
+- name: requested_amount
+  type: numeric(18,4)
+  nullable: false
+  classification: non-personal
+- name: approved_amount
+  type: numeric(18,4)
+  nullable: true
+  classification: non-personal
+- name: application_currency_code
+  type: character(3)
+  nullable: false
+  classification: non-personal
+- name: created_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: updated_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: is_deleted
+  type: boolean
+  nullable: false
+  classification: non-personal

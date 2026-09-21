@@ -1,0 +1,66 @@
+# Data contract for core.cards.
+#
+# Bootstrapped from docs/data_dictionary.md once, then hand-authored. It is not
+# regenerated on every run: the dictionary records what the source is, this records
+# what the platform has agreed to accept, and the lag between them is what makes
+# drift visible at ingest (spec 005 section 2).
+#
+# `make contracts-diff` reports divergence from the dictionary and names the
+# revision this file was pinned to. Bump `contract_version` deliberately, in a
+# commit, when the platform decides to accept something new.
+source_system: corebank
+source_schema: core
+entity: cards
+contract_version: 1
+watermark_column: updated_at
+primary_key: card_id
+dictionary_revision: sha256:e5d088874e5b22e7
+columns:
+- name: card_id
+  type: bigint
+  nullable: false
+  classification: pseudonymous_key
+- name: card_reference
+  type: character(12)
+  nullable: false
+  classification: identifier
+- name: account_id
+  type: bigint
+  nullable: false
+  classification: pseudonymous_key
+- name: card_product_code
+  type: character varying(12)
+  nullable: false
+  classification: non-personal
+- name: card_bin
+  type: character(6)
+  nullable: false
+  classification: non-personal
+- name: card_last_four
+  type: character(4)
+  nullable: false
+  classification: non-personal
+- name: card_status_code
+  type: character varying(12)
+  nullable: false
+  classification: non-personal
+- name: issued_date
+  type: date
+  nullable: false
+  classification: non-personal
+- name: expiry_date
+  type: date
+  nullable: false
+  classification: non-personal
+- name: created_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: updated_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: is_deleted
+  type: boolean
+  nullable: false
+  classification: non-personal
