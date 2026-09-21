@@ -87,6 +87,16 @@ else
 	uv run python scripts/contracts_diff.py
 endif
 
+extract: ## Run one interval outside Airflow (DATE=YYYY-MM-DD, SCHEMA=core|ref)
+	@echo "extract: running inside airflow-scheduler, where the warehouse volume is"
+	docker compose exec -T -e DATE=$(DATE) -e SCHEMA=$(or $(SCHEMA),core) airflow-scheduler bash -c "python /opt/airflow/scripts/extract_cli.py"
+
+backfill: ## Tick and ingest one day at a time (FROM=YYYY-MM-DD TO=YYYY-MM-DD), resumable
+	uv run python scripts/backfill.py --from $(FROM) --to $(TO)
+
+bronze-stats: ## Landed and quarantined counts by entity and ingest date (ALL=1 for every status)
+	docker compose exec -T -e ALL=$(ALL) airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_stats.py"
+
 seed: ## Generate and load the historical dataset (NORDBANK_ENV, _SEED, _ANCHOR_DATE)
 	uv run python -m generator
 

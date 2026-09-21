@@ -59,14 +59,14 @@ fails with `ModuleNotFoundError: No module named 'airflow'`. CI hit exactly this
 | Airflow health | http://localhost:8080/api/v2/monitor/health | none, endpoint is public | What `make health` probes |
 | MinIO S3 API | http://localhost:9000 | `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` | The lake; `mc` is the admin path |
 | MinIO console | http://localhost:9001 | as above | Browsing objects by hand |
-| Source database | localhost:55432, database `nordbank` | `SOURCE_READ_USER` reads, `SOURCE_APP_USER` owns | Simulated core banking system |
+| Source database | localhost:15432, database `nordbank` | `SOURCE_READ_USER` reads, `SOURCE_APP_USER` owns | Simulated core banking system |
 | Airflow metadata database | localhost:5433, database `airflow` | `POSTGRES_AIRFLOW_USER` | Airflow state; not for platform data |
 | Warehouse | `/opt/warehouse/nordbank.duckdb` inside the containers | none, file permissions | DuckDB file on a named volume |
 
-### Why the source database publishes on 55432 and not 5432
+### Why the source database publishes on 15432, and not on 5432 or 55432
 
-`POSTGRES_SOURCE_PORT` defaults to 55432. That is deliberate and it is the only non-standard
-port in the stack.
+`POSTGRES_SOURCE_PORT` defaults to 15432. That is deliberate and it is the only non-standard
+port in the stack. Two collisions shaped it, and the second one moved the default.
 
 **The published port affects host-side tooling only.** Airflow, the init containers and every
 other service reach `postgres-source` by service name on the compose network, on 5432, and
@@ -85,7 +85,22 @@ authentication for a role that server had never heard of. Two defences, because 
 different failures. The non-standard default avoids the collision on most machines. The
 connection then asserts it reached the Nordbank source anyway, and every failure path names a
 port collision as a candidate cause, because a default cannot rule out a machine that happens
-to use 55432 for something else.
+to use the same port for something else.
+
+**The default moved from 55432 to 15432 at M4, and the reason is not that something claimed
+55432 by configuration.** Windows allocates dynamic ports from 49152 upward, and 55432 is
+inside that range, so *any* application's outbound or loopback connection can take it for as
+long as that connection lives. Measured on the machine in `project_state.md`: a local signing
+service held a loopback pair on 55431 and 55432, `docker compose up` brought the container up
+with **no published port at all**, `docker compose ps` printed `5432/tcp` rather than a
+mapping, and every host-side tool reported a connection timeout while `make health` stayed
+green. A forced recreate then failed outright with `bind: Only one usage of each socket
+address`.
+
+The lesson is about the range rather than the number: a port chosen for the source database
+must be **below 49152**, or the collision is not something a different default avoids, it is
+something that recurs at random. 15432 is below the range and keeps the 5432 suffix that makes
+it readable as a Postgres port.
 
 If you need a different port, change `POSTGRES_SOURCE_PORT` in `.env` and run
 `make down && make up`. Only the host side moves.
@@ -143,7 +158,7 @@ them, and the next `make up` rebuilds everything from configuration.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `make up` fails with a port already allocated | Another Postgres, MinIO or Airflow is running on 5432, 5433, 8080, 9000 or 9001 | Change the `*_PORT` value in `.env`, or stop the other service. Only the host side moves; nothing inside the compose network changes |
-| A host-side tool reports `authentication failed`, or `not the Nordbank source`, while `make health` passes | Something else holds the published port, so the container's mapping is shadowed. Docker reports the mapping either way and every in-stack probe still passes, because services reach each other over the compose network | `docker compose ps postgres-source` to confirm, then set `POSTGRES_SOURCE_PORT` in `.env` to a free port and `make down && make up`. The default is 55432 for this reason |
+| A host-side tool reports `authentication failed`, or `not the Nordbank source`, while `make health` passes | Something else holds the published port, so the container's mapping is shadowed. Docker reports the mapping either way and every in-stack probe still passes, because services reach each other over the compose network | `docker compose ps postgres-source` to confirm; a container with `5432/tcp` and no `0.0.0.0:` mapping has lost its publication entirely. Set `POSTGRES_SOURCE_PORT` in `.env` to a free port **below 49152** and `docker compose up -d --force-recreate postgres-source`. A port at or above 49152 is inside the Windows dynamic range and can be taken by any application at any time |
 | `preflight: Docker reports N GiB ... below the 6 GiB floor` | Docker Desktop is allocated less memory than the stack is validated at | Raise it in Settings, Resources. On WSL2, set `memory=` in `%UserProfile%\.wslconfig` and run `wsl --shutdown` |
 | Airflow services restart repeatedly, logs mention the Fernet key | `AIRFLOW_FERNET_KEY` is missing or not a valid 32-byte urlsafe base64 key | Generate one: `python -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())"` and put it in `.env`, then `make down && make up` |
 | `no space left on device`, or Docker Desktop reports a full disk | The WSL2 virtual disk filled with images, volumes and logs | `docker system prune`, `FORCE=1 make nuke` to drop stack volumes, and compact the WSL2 disk if it stays large |
