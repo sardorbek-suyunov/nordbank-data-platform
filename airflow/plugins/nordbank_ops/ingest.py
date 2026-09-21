@@ -69,66 +69,6 @@ def entities(source_schema: str) -> list[str]:
     return sorted(_contracts(source_schema))
 
 
-def build_ingest_dag(*, dag_id: str, source_schema: str, doc: str):
-    """Build one ingestion DAG over one source schema."""
-    from airflow.sdk import Asset, dag, task
-
-    from nordbank_ops import warehouse
-
-    known = entities(source_schema)
-    outlets = [Asset(name=f"{dag_id}/{entity}") for entity in known]
-
-    @dag(
-        dag_id=dag_id,
-        schedule=None,
-        catchup=False,
-        is_paused_upon_creation=False,
-        start_date=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
-        tags=["ingest", "bronze", source_schema],
-        # No `pool` here. See the module docstring: it would serialise every mapped extract
-        # task through the one warehouse slot.
-        default_args={
-            "owner": "platform",
-            "retries": 2,
-            "retry_delay": dt.timedelta(seconds=30),
-            "retry_exponential_backoff": True,
-        },
-        doc_md=doc,
-    )
-    def _dag() -> None:
-        @task(pool=warehouse.POOL_NAME)
-        def open_batches(**context) -> list[dict]:
-            from nordbank_ops.phases import open_phase
-
-            return open_phase(source_schema=source_schema, context=context)
-
-        @task
-        def extract(batch: dict, **context) -> dict:
-            from nordbank_ops.phases import extract_phase
-
-            return extract_phase(source_schema=source_schema, batch=batch, context=context)
-
-        @task(pool=warehouse.POOL_NAME, trigger_rule="all_done", outlets=outlets)
-        def register(**context) -> dict:
-            from nordbank_ops.phases import register_phase
-
-            return register_phase(source_schema=source_schema, context=context)
-
-        @task(trigger_rule="all_done")
-        def gate(summary: dict) -> None:
-            from nordbank_ops.phases import gate_phase
-
-            gate_phase(summary)
-
-        opened = open_batches()
-        extracted = extract.expand(batch=opened)
-        registered = register()
-        extracted >> registered
-        gate(registered)
-
-    return _dag()
-
-
 def failure_callback(context: Any) -> None:
     """Write a task failure to `ops`, and never raise while doing it.
 
@@ -164,3 +104,67 @@ def failure_callback(context: Any) -> None:
             )
     except Exception as exc:  # noqa: BLE001 - a reporting failure must not mask the real one
         print(f"on_failure_callback could not record the failure: {type(exc).__name__}: {exc}")
+
+
+def build_ingest_dag(*, dag_id: str, source_schema: str, doc: str):
+    """Build one ingestion DAG over one source schema."""
+    from airflow.sdk import Asset, dag, task
+
+    from nordbank_ops import warehouse
+
+    known = entities(source_schema)
+    outlets = [Asset(name=f"{dag_id}/{entity}") for entity in known]
+
+    @dag(
+        dag_id=dag_id,
+        schedule=None,
+        catchup=False,
+        is_paused_upon_creation=False,
+        start_date=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+        tags=["ingest", "bronze", source_schema],
+        # No `pool` here. See the module docstring: it would serialise every mapped extract
+        # task through the one warehouse slot.
+        default_args={
+            "owner": "platform",
+            "retries": 2,
+            "retry_delay": dt.timedelta(seconds=30),
+            "retry_exponential_backoff": True,
+            "on_failure_callback": failure_callback,
+        },
+        doc_md=doc,
+    )
+    def _dag() -> None:
+        @task(pool=warehouse.POOL_NAME)
+        def open_batches(**context) -> list[dict]:
+            from nordbank_ops.phases import open_phase
+
+            return open_phase(source_schema=source_schema, context=context)
+
+        @task
+        def extract(batch: dict, **context) -> dict:
+            from nordbank_ops.phases import extract_phase
+
+            return extract_phase(source_schema=source_schema, batch=batch, context=context)
+
+        @task(pool=warehouse.POOL_NAME, trigger_rule="all_done", outlets=outlets)
+        def register(**context) -> dict:
+            from nordbank_ops.phases import register_phase
+
+            return register_phase(source_schema=source_schema, context=context)
+
+        # `retries=0`: the gate's failure is a verdict on the run rather than a mishap. A run
+        # with a failed batch will still have one on the retry, so retrying only delays the
+        # answer by the backoff. `ops_source_tick` sets it to zero at M3 for the same reason.
+        @task(trigger_rule="all_done", retries=0)
+        def gate(summary: dict) -> None:
+            from nordbank_ops.phases import gate_phase
+
+            gate_phase(summary)
+
+        opened = open_batches()
+        extracted = extract.expand(batch=opened)
+        registered = register()
+        extracted >> registered
+        gate(registered)
+
+    return _dag()
