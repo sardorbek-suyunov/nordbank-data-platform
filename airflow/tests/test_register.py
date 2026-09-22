@@ -115,39 +115,6 @@ def test_a_report_with_no_per_day_counts_reconciles_to_zero():
     assert landed_on_day({}, SOURCE_DATE) == 0
 
 
-def test_the_difference_is_landed_plus_quarantined_against_the_claim(connection):
-    write_reconciliation(
-        connection,
-        source_system="corebank",
-        entity="accounts",
-        source_date=SOURCE_DATE,
-        rows_claimed=210,
-        rows_landed=209,
-        rows_quarantined=1,
-        batch_id="accounts-20260919T000000-01",
-        now=NOW,
-    )
-    assert connection.execute("select difference from ops.source_reconciliation").fetchone() == (0,)
-
-
-def test_no_claim_records_a_null_difference_rather_than_a_zero(connection):
-    """ "Nothing changed" and "nothing claimed" are different facts."""
-    write_reconciliation(
-        connection,
-        source_system="corebank",
-        entity="accounts",
-        source_date=SOURCE_DATE,
-        rows_claimed=None,
-        rows_landed=598,
-        rows_quarantined=0,
-        batch_id="accounts-20260918T000000-01",
-        now=NOW,
-    )
-    assert connection.execute("select difference from ops.source_reconciliation").fetchone() == (
-        None,
-    )
-
-
 def reconcile(connection, landed, batch_id, claimed=210, quarantined=0):
     write_reconciliation(
         connection,
@@ -162,41 +129,49 @@ def reconcile(connection, landed, batch_id, claimed=210, quarantined=0):
     )
 
 
-def test_a_re_run_does_not_double_the_reconciliation_row(connection):
-    reconcile(connection, 100, "a-01")
-    reconcile(connection, 210, "a-02")
-    rows = connection.execute("select count(*) from ops.source_reconciliation").fetchall()
-    assert rows == [(1,)]
-
-
-def test_a_narrower_re_run_does_not_replace_the_day_count(connection):
-    """The defect the first sixty-day backfill produced, and the reason for `greatest`.
-
-    A re-run after registration reads from the watermark the first batch advanced, so its
-    window is a tail of the day rather than the day. Overwriting with its count made nine
-    entities on the drift day report a handful of rows against a claim of hundreds.
-    """
-    reconcile(connection, 271, "accounts-01")
-    reconcile(connection, 4, "accounts-02")
-    row = connection.execute(
-        "select rows_landed, batch_id, difference from ops.source_reconciliation"
+def daily(connection):
+    return connection.execute(
+        "select rows_claimed, rows_landed, rows_quarantined, difference, batches "
+        "from ops.source_reconciliation_daily"
     ).fetchone()
-    assert row == (271, "accounts-01", 61)
 
 
-def test_a_wider_re_run_does_replace_it(connection):
-    reconcile(connection, 4, "accounts-01")
-    reconcile(connection, 271, "accounts-02")
-    row = connection.execute(
-        "select rows_landed, batch_id from ops.source_reconciliation"
-    ).fetchone()
-    assert row == (271, "accounts-02")
-
-
-def test_the_difference_is_recomputed_from_the_surviving_counts(connection):
+def test_one_batch_is_one_row(connection):
     reconcile(connection, 210, "accounts-01")
-    reconcile(connection, 2, "accounts-02")
-    assert connection.execute("select difference from ops.source_reconciliation").fetchone() == (0,)
+    assert connection.execute("select count(*) from ops.source_reconciliation").fetchone() == (1,)
+    assert daily(connection) == (210, 210, 0, 0, 1)
+
+
+def test_a_retry_of_the_same_batch_replaces_its_own_contribution(connection):
+    reconcile(connection, 100, "accounts-01")
+    reconcile(connection, 210, "accounts-01")
+    assert connection.execute("select count(*) from ops.source_reconciliation").fetchone() == (1,)
+    assert daily(connection) == (210, 210, 0, 0, 1)
+
+
+def test_two_batches_covering_one_day_sum_rather_than_fight(connection):
+    """The drift day, and the reason the table is keyed per batch.
+
+    Keyed per day and upserted, the narrow re-run after a halt overwrote the wide batch's
+    count and the control reported a discrepancy only its own bookkeeping had created. Keyed
+    per batch, the day is the sum: the batch before the halt landed most of it and the batch
+    after the contract bump landed the rest.
+    """
+    reconcile(connection, 267, "accounts-01")
+    reconcile(connection, 4, "accounts-02", claimed=271)
+    assert connection.execute("select count(*) from ops.source_reconciliation").fetchone() == (2,)
+    assert daily(connection) == (271, 271, 0, 0, 2)
+
+
+def test_an_unclaimed_day_keeps_a_null_difference(connection):
+    """ "Nothing changed" and "nothing claimed" are different facts."""
+    reconcile(connection, 598, "accounts-01", claimed=None)
+    assert daily(connection) == (None, 598, 0, None, 1)
+
+
+def test_quarantined_rows_count_towards_the_day(connection):
+    reconcile(connection, 209, "accounts-01", claimed=210, quarantined=1)
+    assert daily(connection) == (210, 209, 1, 0, 1)
 
 
 # --- the source's claim --------------------------------------------------------------------

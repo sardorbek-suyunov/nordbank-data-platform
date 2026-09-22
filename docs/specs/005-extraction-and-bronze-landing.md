@@ -828,23 +828,29 @@ ingestion DAG.
 Parquet file and does not say what runs it; a make target is what the other eighteen criteria
 have.
 
-### 2026-09-22 — a source day's landed count is the largest a batch reported, not the last
+### 2026-09-22 — `ops.source_reconciliation` is keyed per batch, and the day is a sum
 
 The first complete sixty-day backfill reported nine entities on the drift day as landing a
 handful of rows against a claim of hundreds, and the discrepancy was the bookkeeping rather
 than the data.
 
 The resume after the halt clears and re-runs the failed day. For the entity that failed, the
-watermark never moved, so its new batch reads the whole day again and its count is the day's
-count. For the fifteen that succeeded, the watermark *did* move, so their new batches read
-from it and see only a tail — and the reconciliation's upsert replaced the day's count with
-the tail's.
+watermark never moved, so its new batch reads the whole day again. For the fifteen that
+succeeded, the watermark *did* move, so their new batches read from it and see only a tail.
+Section 1 keyed the table on entity and source day, so the two batches upserted over each
+other and the tail's count won.
 
-`ops.source_reconciliation.rows_landed` now keeps the **largest** count any batch reported for
-that source day, and the difference is recomputed from the surviving counts. The first batch
-to cover an interval always contains the whole source day, because its window starts before
-the day begins, so "largest" and "first" coincide; "largest" also survives a case where a
-later batch genuinely sees more.
+Keeping the larger count was tried first and is the wrong shape: it makes the row a contest
+between batches rather than a record of them. **The table is keyed per batch per source day**,
+and the per-day figure is `ops.source_reconciliation_daily`, a view that sums the batches. The
+drift day then reconciles as what it actually is — the batch before the halt landed most of
+the day and the batch after the contract bump landed the rest — which is also the only reading
+consistent with the halt-and-resume procedure ruling 4 established. The conflict clause
+survives for the retry case, where a batch rewrites its own contribution rather than adding to
+it.
+
+The view is a view rather than a column because a sum of rows is a derivation, and storing it
+would be a second place for one fact to live.
 
 ### 2026-09-22 — replaying history across a drift boundary needs the contract of the time
 

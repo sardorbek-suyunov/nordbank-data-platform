@@ -58,7 +58,7 @@ def main() -> int:
             c,
             """
             select count(*), count(*) filter (where difference = 0), coalesce(sum(rows_claimed), 0)
-              from ops.source_reconciliation where rows_claimed is not null
+              from ops.source_reconciliation_daily where rows_claimed is not null
             """,
         )[0]
         print(f"  {claimed[1]} of {claimed[0]} claimed entity-days reconcile exactly")
@@ -66,15 +66,18 @@ def main() -> int:
         for row in rows(
             c,
             """
-            select source_date, entity, rows_claimed, rows_landed, difference
-              from ops.source_reconciliation
+            select source_date, entity, rows_claimed, rows_landed, difference, batches
+              from ops.source_reconciliation_daily
              where rows_claimed is not null and difference <> 0
              order by source_date, entity limit 20
             """,
         ):
-            print(f"  MISMATCH {row[0]} {row[1]}: claimed {row[2]}, landed {row[3]}, {row[4]}")
+            print(
+                f"  MISMATCH {row[0]} {row[1]}: claimed {row[2]}, landed {row[3]}, "
+                f"difference {row[4]} over {row[5]} batch(es)"
+            )
         unclaimed = rows(
-            c, "select count(*) from ops.source_reconciliation where rows_claimed is null"
+            c, "select count(*) from ops.source_reconciliation_daily where rows_claimed is null"
         )[0][0]
         print(f"  {unclaimed} entity-day(s) carry no claim, which is the initial load and `ref`")
 
@@ -130,6 +133,23 @@ def main() -> int:
         )[0][0]
         print(f"  batches in neither a registered nor a failed state: {unresolved}")
 
+        heading(15, "the drift day, reconciled as the sum of its batches")
+        for row in rows(
+            c,
+            """
+            select d.entity, d.rows_claimed, d.rows_landed, d.difference, d.batches
+              from ops.source_reconciliation_daily d
+             where d.source_date = (
+                select min(interval_start)::date from ops.batch_registry where status = 'failed'
+             ) and d.batches > 1
+             order by d.rows_landed desc limit 8
+            """,
+        ):
+            print(
+                f"  {row[0]}: claimed {row[1]}, landed {row[2]} over {row[4]} batch(es), "
+                f"difference {row[3]}"
+            )
+
         heading(16, "late arrivals, by the partition they landed in")
         # The initial load is excluded, and excluding it is the whole point of the
         # measurement. That batch lands the entire historical book in one partition, so every
@@ -167,7 +187,7 @@ def main() -> int:
                 select r.entity, r.rows_read,
                        coalesce(s.rows_landed, 0) as rows_landed_on_own_day
                   from ops.batch_registry r
-                  left join ops.source_reconciliation s
+                  left join ops.source_reconciliation_daily s
                     on s.entity = r.entity and s.source_date = r.interval_start::date
                  where r.status = 'registered' and r.source_schema = 'core'
               ) t group by 1 having sum(rows_read - rows_landed_on_own_day) > 0
