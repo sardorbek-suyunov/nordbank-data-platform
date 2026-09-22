@@ -142,3 +142,16 @@ def test_the_extract_task_is_mapped_over_the_open_step(dag_id: str) -> None:
     extract = dag.get_task("extract")
     assert extract.upstream_task_ids == {"open_batches"}
     assert "register" in extract.downstream_task_ids
+
+
+def test_the_contract_root_resolves_in_this_layout() -> None:
+    """Whichever layout the tests run in, the DAG factory must find the contracts.
+
+    Asserted directly because the symptom of not finding them is not an error: it is two DAGs
+    with no entities, no assets and nothing to ingest, and only the asset count notices.
+    """
+    from nordbank_ops.ingest import contract_root, entities
+
+    assert contract_root().is_dir()
+    assert len(entities("core")) == EXPECTED_ENTITIES["ingest_core_banking"]
+    assert len(entities("ref")) == EXPECTED_ENTITIES["ingest_reference_data"]

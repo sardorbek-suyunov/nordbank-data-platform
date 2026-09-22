@@ -205,7 +205,20 @@ def load_all(directory: Path) -> dict[str, Contract]:
     built from. Two entities with the same name in different source schemas would collide
     there, so the collision is refused here, where it is one error message, rather than in the
     lake, where it is two sources writing one prefix.
+
+    A missing directory raises rather than returning nothing. That is not defensive
+    programming: it is the defect CI found on this milestone's pull request, where the DAG
+    factory resolved the contract root to a path that exists only inside the image, loaded
+    zero contracts on the runner, and built two ingestion DAGs with no entities, no assets and
+    nothing to do — all of it green.
     """
+    if not directory.is_dir():
+        raise ContractError(
+            f"{directory.as_posix()}: no such directory. A missing contract directory is a "
+            "configuration failure and not an empty one: returning no contracts here would "
+            "build an ingestion DAG with nothing to ingest, and it would succeed."
+        )
+
     contracts: dict[str, Contract] = {}
     for path in sorted(directory.glob("*.yml")):
         contract = load(path)

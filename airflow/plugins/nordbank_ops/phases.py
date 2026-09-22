@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
-from pathlib import Path
 
 REPORT_KEY = "report"
 EXTRACT_TASK_ID = "extract"
@@ -40,9 +39,9 @@ for _candidate in ("/opt/airflow", "/opt/airflow/scripts"):
 def _contracts(source_schema: str) -> dict:
     from data_contract import load_all
 
-    from nordbank_ops.ingest import CONTRACT_DIR, SOURCE_SYSTEM
+    from nordbank_ops.ingest import SOURCE_SYSTEM, contract_root
 
-    everything = load_all(Path(CONTRACT_DIR) / SOURCE_SYSTEM)
+    everything = load_all(contract_root() / SOURCE_SYSTEM)
     return {e: c for e, c in everything.items() if c.source_schema == source_schema}
 
 
