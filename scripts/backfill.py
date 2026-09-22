@@ -191,9 +191,35 @@ def wait_for(dag_id: str, run_id: str) -> str:
     )
 
 
-def tick_to(day: dt.date) -> None:
+def tick_one_day(day: dt.date, simulated: dt.date) -> None:
+    """Advance the simulation by exactly one day, or refuse.
+
+    **One day, never a catch-up.** `make tick-to` will happily run forty-four ticks in one
+    call, and using it here would break the invariant the whole loop exists to preserve: a
+    later tick re-stamps a row an earlier one wrote, so ticking in bulk and then extracting
+    reads a window that no longer holds what the log says changed. It would not fail; it would
+    produce a reconciliation that quietly disagrees.
+
+    Being more than one day behind is therefore refused rather than caught up. It means the
+    simulation and the registry disagree about what has happened — a reseed against a warehouse
+    that still holds an earlier run's batches is how it arises — and the honest answer is to
+    say so, because either the source or the warehouse is about to be read as evidence for
+    something it did not do.
+    """
+    if simulated >= day:
+        return
+    if simulated != day - dt.timedelta(days=1):
+        raise SystemExit(
+            f"backfill: the simulation is at {simulated} and the next day to ingest is {day}, "
+            f"which is {(day - simulated).days} tick(s) away. Catching up in bulk would break "
+            "the interleaving the reconciliation depends on: a later tick re-stamps a row an "
+            "earlier one wrote, so ticking forward and then extracting reads a window that no "
+            "longer holds what the tick log says changed. The simulation and the registry "
+            "disagree about what has happened; reseed and clear the warehouse together, or "
+            "pick a range that starts where the simulation is."
+        )
     completed = run(
-        [sys.executable, "-m", "generator.mutation", "--to", day.isoformat()], capture=False
+        [sys.executable, "-m", "generator.mutation", "--date", day.isoformat()], capture=False
     )
     if completed.returncode != 0:
         raise SystemExit(f"backfill: the tick to {day} failed")
@@ -250,9 +276,10 @@ def main(argv: list[str]) -> int:
         # The tick for a day past the anchor, and only if the simulation has not reached it.
         # On a resume the tick for the failed day has already run and must not run twice.
         _anchor, simulated, _sequence = simulation_state()
-        if day > anchor and simulated < day:
-            print(f"backfill: ticking the source to {day}", flush=True)
-            tick_to(day)
+        if day > anchor:
+            if simulated < day:
+                print(f"backfill: ticking the source to {day}", flush=True)
+            tick_one_day(day, simulated)
 
         print(f"backfill: {day}: {REFERENCE_DAG}", flush=True)
         trigger_and_wait(REFERENCE_DAG, day)

@@ -895,3 +895,22 @@ reported rather than failed, and the reaper that removes such objects is M7's.
 
 It stays because a graceful run should be able to answer the same four questions at any time,
 and because an untested control reads as a working one.
+
+### 2026-09-22 — the loop ticks one day and refuses a catch-up
+
+Section 9 says the loop ticks the source one day and ingests that day. The first
+implementation reached for `make tick-to`, which advances to a date however many ticks that
+takes, and it took forty-four in one call the first time the simulation and the registry
+disagreed about what had happened.
+
+That is the exact failure the interleaving exists to prevent, and it does not announce
+itself: a later tick re-stamps a row an earlier one wrote, so ticking forward in bulk and then
+extracting reads a window that no longer holds what the tick log says changed, and the
+reconciliation comes out quietly wrong rather than failing.
+
+The loop now advances by exactly one day, with `--date` rather than `--to`, and **refuses to
+run at all when the simulation is more than one day behind the day being ingested**. Being
+that far behind means the source and the warehouse disagree — a reseed against a warehouse
+still holding an earlier run's batches is how it arises — and the refusal says so, because
+either the source or the warehouse is about to be read as evidence for something it did not
+do.
