@@ -119,9 +119,24 @@ simulated day in this platform, so a simulated day ahead of the real clock canno
 at all — not slowly, not with a warning, not at all.
 
 So: **seed with an anchor far enough back that the last day of the backfill is on or before
-today.** A sixty-day backfill needs an anchor at least sixty days in the past. `make backfill`
-checks this before it starts anything and refuses with that explanation, because the failure
-it prevents is a hang rather than an error, and a hang is the expensive kind to diagnose.
+today.** The pattern for local work is `NORDBANK_ANCHOR_DATE = today - window`, not today:
+
+```bash
+# A sixty-day backfill, seeded sixty days back so the whole window is behind the real clock.
+NORDBANK_ENV=ci NORDBANK_SEED=42 NORDBANK_ANCHOR_DATE=$(date -u -d '60 days ago' +%F) make seed
+make backfill FROM=$(date -u -d '60 days ago' +%F) TO=$(date -u +%F)
+```
+
+`make backfill` checks the range before it starts anything and refuses one that ends after
+today. It refuses rather than warns because the failure it prevents is a hang rather than an
+error: the scheduler queues nothing, logs one line per second, and the run stays `running`
+indefinitely with no task instance to inspect. A hang with no failing task is the expensive
+kind to diagnose, and the check turns it into a sentence.
+
+This is the opposite of the M3 habit. `make tick-acceptance` seeds at an anchor and ticks
+*forward*, so an anchor at today is fine there and the simulated clock running past the real
+one is harmless. The moment ingestion enters the loop the direction reverses, because Airflow
+has an opinion about the future and the tick engine does not.
 
 The `ci` anchor pinned in the `stack` workflow is a separate matter and is unaffected: that
 workflow ticks the source and never runs an ingestion DAG, so nothing there depends on the
