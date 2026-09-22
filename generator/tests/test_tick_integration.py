@@ -156,7 +156,21 @@ def test_no_row_a_tick_writes_carries_the_wall_clock(seeded, profile):
 
 
 def test_the_platform_tables_carry_real_time_while_core_carries_simulated(seeded, profile):
-    """The standing ruling: `core` and `ref` carry the simulated clock, `platform` real time."""
+    """The standing ruling: `core` and `ref` carry the simulated clock, `platform` real time.
+
+    Asserted by bracketing the tick with the real clock rather than by comparing the
+    platform row's date against the simulated one. The comparison was the original form and
+    it aliases: it passes because the two dates happen to differ, so it fails on any day the
+    real clock reaches a date the simulation is ticking through — which it did, the first
+    morning real time caught up with the `ci` anchor's window, on a branch that had not
+    touched the tick engine. A test that depends on the calendar is a test that reports the
+    calendar.
+
+    Bracketing cannot alias. A timestamp inside the interval the tick actually ran in is real
+    time by construction, whatever the simulated date happens to be, and it stays true when
+    the two coincide. `docs/conventions.md` states the two-clock rule this asserts.
+    """
+    before = dt.datetime.now(dt.UTC)
     with connect() as connection:
         report = tick_module.run(connection, requested_date=None, profile=profile)
         with connection.cursor() as cursor:
@@ -167,11 +181,16 @@ def test_the_platform_tables_carry_real_time_while_core_carries_simulated(seeded
             )
             started_at, completed_at, created_at = cursor.fetchone()
         connection.rollback()
+    after = dt.datetime.now(dt.UTC)
 
-    simulated_day = report.simulated_date
-    for stamp in (started_at, completed_at, created_at):
-        assert stamp.date() != simulated_day, (
-            "a platform row carries the simulated date; the clock was not cleared before it"
+    for name, stamp in (
+        ("started_at", started_at),
+        ("completed_at", completed_at),
+        ("created_at", created_at),
+    ):
+        assert before <= stamp <= after, (
+            f"platform.tick_log.{name} is {stamp}, outside the {before} to {after} interval "
+            "the tick ran in; the simulation clock was not cleared before the row was written"
         )
     assert completed_at >= started_at
 
