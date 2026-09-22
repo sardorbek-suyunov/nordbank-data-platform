@@ -20,6 +20,7 @@ not a pull request comment.
 | DAG ids | `ingest_<source>`, `transform_<layer>`, `dq_<scope>`, `ops_<purpose>`, `gov_<purpose>` |
 | Surrogate keys | `_sk` suffix, hashed from business key(s); business keys keep `_id` |
 | Audit columns | bronze: `_ingested_at`, `_source_file`, `_batch_id`, `_source_system`; silver: `_valid_from`, `_valid_to`, `_is_current` on SCD2 |
+| Two clocks | `ingest_date` in a lake key is the **logical date of the ingestion run**, which in this platform is the simulated business day; `_ingested_at` on a record carries **real wall-clock time**. Never the other way round |
 | Commits | Conventional Commits, imperative mood, one logical change per commit |
 
 ## Schemas
@@ -78,6 +79,30 @@ business timestamp is named for its event: `alerted_at`, `booked_at`, `started_a
 `dq_<scope>` for quality gates, `ops_<purpose>` for maintenance, `gov_<purpose>` for
 governance work such as erasure. The DAG id, the module filename and the Airflow asset prefix
 are identical.
+
+### Two clocks, and which column carries which
+
+M3 gave the source a simulation clock: `core` and `ref` carry simulated time so that a tick
+writing a day in the past does not stamp history with today's watermark, while `platform`
+carries real time. M4 extends the same split into the lake and the warehouse, and gets it
+wrong in either direction if it is left implicit.
+
+**`ingest_date` in an object key is the logical date of the ingestion run, which in this
+platform is the simulated business day.** It is not the wall-clock date the batch happened to
+execute on. That is not a convenience: every day of a sixty-day backfill executes on one real
+afternoon, so a wall-clock partition would collapse the whole backfill into a single directory
+and exercise nothing partitioning exists for — not pruning, not retention, not the compaction
+story ADR 0008 defers. In a deployed platform running daily the two coincide, which is why the
+distinction only becomes visible under a backfill.
+
+**`_ingested_at` on a record carries real wall-clock time**, read once when the batch opens and
+stored on the batch, so a retry reproduces it. Audit time answers "when did this platform
+actually touch this row", and a simulated answer to that question would be a lie about the
+platform rather than a statement about the bank.
+
+So a bronze object written during the backfill sits under `ingest_date=2026-08-26` and every
+record in it carries an `_ingested_at` in real September. The two disagreeing is the design,
+not a defect, and a reader who reconciles them will find the simulation.
 
 ## Numeric types
 
