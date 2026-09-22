@@ -200,23 +200,33 @@ def tick_one_day(day: dt.date, simulated: dt.date) -> None:
     reads a window that no longer holds what the log says changed. It would not fail; it would
     produce a reconciliation that quietly disagrees.
 
-    Being more than one day behind is therefore refused rather than caught up. It means the
-    simulation and the registry disagree about what has happened — a reseed against a warehouse
-    that still holds an earlier run's batches is how it arises — and the honest answer is to
-    say so, because either the source or the warehouse is about to be read as evidence for
-    something it did not do.
+    **The check is two-sided, and the second side was missing for an hour.** At the moment of
+    ingesting day D the simulation must be at D, already ticked, or at D-1, about to be. A
+    simulation *ahead* of D breaks the same invariant as one behind it and was not caught by
+    the first version of this guard, because "is it behind" is the obvious question and only
+    half the property. It was found the way these things are: by reseeding the source while a
+    backfill's state was still in the warehouse, and watching the loop resume happily against
+    a source that no longer had the history the registry was recording.
     """
-    if simulated >= day:
+    if simulated == day:
         return
     if simulated != day - dt.timedelta(days=1):
+        distance = (day - simulated).days
+        behind = (
+            f"{distance} tick(s) short of it" if distance > 0 else f"{-distance} day(s) past it"
+        )
         raise SystemExit(
             f"backfill: the simulation is at {simulated} and the next day to ingest is {day}, "
-            f"which is {(day - simulated).days} tick(s) away. Catching up in bulk would break "
-            "the interleaving the reconciliation depends on: a later tick re-stamps a row an "
-            "earlier one wrote, so ticking forward and then extracting reads a window that no "
-            "longer holds what the tick log says changed. The simulation and the registry "
-            "disagree about what has happened; reseed and clear the warehouse together, or "
-            "pick a range that starts where the simulation is."
+            f"which is {behind}. Either way the interleaving the reconciliation depends on is "
+            "already broken: a later tick re-stamps a row an earlier one wrote, so extracting "
+            "day D once the simulation has moved past it reads a window that no longer holds "
+            "what the tick log says changed on D, and catching up in bulk first produces the "
+            "same thing. The simulation and the registry disagree about what has happened; "
+            "reseed and clear the warehouse together, or pick a range that starts where the "
+            "simulation is. "
+            "The usual cause is something that reseeds the source while a backfill's state is "
+            "still in the warehouse. `make test-integration` is one: its generator tests seed "
+            "the database, so running it against a loaded acceptance run destroys that run."
         )
     completed = run(
         [sys.executable, "-m", "generator.mutation", "--date", day.isoformat()], capture=False

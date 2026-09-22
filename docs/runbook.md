@@ -105,6 +105,23 @@ it readable as a Postgres port.
 If you need a different port, change `POSTGRES_SOURCE_PORT` in `.env` and run
 `make down && make up`. Only the host side moves.
 
+### `make test-integration` reseeds the source, so it destroys a loaded run
+
+The generator's integration tests seed the database before they assert anything, which is
+correct for them and destructive for anything else using it. Running `make test-integration`
+— or any single test from `generator/tests` — against a source that a backfill is part way
+through resets the simulation, reverts any fired drift event, and leaves the warehouse holding
+batches for a history the source no longer has.
+
+The symptom is not obvious. The backfill resumes without complaint and the next day's
+extraction reads a source that never produced the rows the registry says it did.
+`make backfill` now refuses when the simulation is not exactly at, or one tick short of, the
+day it is about to ingest, and names this as the usual cause; before that check existed the
+run simply produced a reconciliation that disagreed with itself.
+
+Finish or abandon a backfill before running the integration suite, and re-seed deliberately
+afterwards.
+
 ### The anchor must be chosen so the simulated window stays behind the real clock
 
 `docs/project_state.md` recorded at M3 that the simulated clock is free to run ahead of the
