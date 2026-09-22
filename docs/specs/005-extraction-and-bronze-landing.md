@@ -876,3 +876,22 @@ every value it produces fits — was considered and not taken. It is true for a 
 character type and not obviously true across every type pair the dictionary uses, and a gate
 that is right about `varchar` and wrong about `numeric` is worse than one that is strict about
 both.
+
+### 2026-09-22 — `make ingest-integrity`, written for an ungraceful kill
+
+Section 12 asks for tests and section 11 for targets, and neither anticipated the question an
+unplanned shutdown raises: is the registry still consistent with the lake and with the
+watermarks? The machine running the acceptance backfill was shut down mid-resume, which is an
+ungraceful kill rather than the halt section 9 designs for, and establishing the state needed
+a check that did not exist.
+
+`make ingest-integrity` answers four questions, each of them a failure the three-phase split
+is supposed to make impossible: whether any batch is still `open`, whether a `registered`
+batch is missing its objects, whether an orphan object sits under an unregistered batch, and
+whether any watermark is ahead of its entity's highest registered batch. It exits non-zero on
+the first, second and fourth. The third is expected and inert by design — every bronze model
+filters on the registry and the batch id is reused when the batch is retried — so it is
+reported rather than failed, and the reaper that removes such objects is M7's.
+
+It stays because a graceful run should be able to answer the same four questions at any time,
+and because an untested control reads as a working one.

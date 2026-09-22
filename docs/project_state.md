@@ -327,6 +327,18 @@ open when it arrived. `architecture.md` and `metric_definitions.md` say so where
 meet it. The ledger side never moves; whether the settlement feed presents an item on its
 business date or its clearing date is M4's decision.
 
+**If a later milestone wants CI to exercise ingestion rather than only ticking, the CI anchor
+has to move and the manifest regenerates.** Right now the `stack` workflow seeds `ci` at the
+pinned anchor 2026-09-18 and runs `make tick-to`; it never runs an ingestion DAG, so nothing
+in CI depends on the simulated date being in the past and the pinned anchor is fine. That
+changes the moment a workflow runs `ingest_core_banking`: Airflow will not schedule a run
+whose logical date is in the future, and a run's logical date is the simulated business day,
+so the anchor would have to sit behind the real clock by at least the window being ingested.
+Moving the anchor changes the generated data, so the committed `ci` manifest regenerates with
+it and `make seed-manifest CHECK=1` compares against the new one. Stated here so that the
+pinned anchor reads as a decision that is still correct rather than as something nobody
+revisited. M4 found the constraint; `docs/runbook.md` carries it.
+
 **The ECB feed cannot return a rate for a simulated date beyond the real one.** The `ci` profile
 pins its anchor, so sixty ticks land past today, and the simulated clock is free to run ahead of
 the real one — the only real-clock constraint in the schema is
