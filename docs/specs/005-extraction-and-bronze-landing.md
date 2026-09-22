@@ -914,3 +914,16 @@ that far behind means the source and the warehouse disagree — a reseed against
 still holding an earlier run's batches is how it arises — and the refusal says so, because
 either the source or the warehouse is about to be read as evidence for something it did not
 do.
+
+### 2026-09-22 — the tick guard is two-sided
+
+The guard added above refused a simulation more than one day *behind* the day being ingested
+and said nothing about one ahead of it. That is half the property, and the missing half is the
+same failure: extracting day D once the simulation has moved past D reads a window that no
+longer holds what the tick log says changed on D, which is M3's measurement exactly.
+
+Found by reseeding the source while a backfill's state was still in the warehouse — running a
+single test from `generator/tests`, whose fixture seeds — and watching the loop resume happily
+against a source that no longer had the history the registry was recording. At the moment of
+ingesting day D the simulation must be at D or at D-1, and anything else is refused with the
+usual cause named. `docs/runbook.md` carries the operational half.
