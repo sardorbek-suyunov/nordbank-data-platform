@@ -159,6 +159,15 @@ def main() -> int:
         # arrives days after the customer made it and lands in the partition of its arrival
         # rather than of its business date. The initial load is the batch with no lower
         # watermark, which is exactly how the registry records "this is the first read".
+        initial_prefixes = [
+            row[0]
+            for row in rows(
+                c,
+                "select object_prefix from ops.batch_registry "
+                "where status = 'registered' and entity = 'transactions' "
+                "and watermark_from is null",
+            )
+        ]
         prefixes = [
             row[0]
             for row in rows(
@@ -200,16 +209,43 @@ def main() -> int:
                 f"over {row[1]} batch(es)"
             )
 
-    _late_arrivals(prefixes)
+    with clients.source_cursor() as cursor:
+        cursor.execute(
+            """
+            select coalesce(sum(c.rows_late_arriving), 0)
+              from platform.tick_table_counts c
+              join platform.tick_log l on l.tick_log_id = c.tick_log_id
+             where c.table_name = 'transactions'
+            """
+        )
+        claimed_late = int(cursor.fetchone()[0])
+
+    _late_arrivals(initial_prefixes, prefixes, claimed_late)
     return 0
 
 
-def _late_arrivals(prefixes: list[str]) -> None:
-    """Criterion 16, read off the objects themselves.
+def _late_arrivals(initial: list[str], incremental: list[str], claimed_late: int | None) -> None:
+    """Criterion 16, by first appearance rather than by lag.
 
-    A late arrival is a transaction whose business date is earlier than the ingest date of the
-    partition holding it. The claim is that it lands in the partition of its arrival, so the
-    evidence is the count of rows whose `booked_at` date precedes their partition's date.
+    The claim is that a row lands in the partition of its **arrival**, not of its business
+    date. Two different things put a row in a partition later than its business date and only
+    one of them is a late arrival:
+
+    - an **insert** of a transaction the bank learns about days after the tap, which is the
+      late-arrival model `generator_realism.md` states and `platform.tick_log` counts;
+    - an **update** to an older row — a status change, a reversal — whose `updated_at` moved
+      today and whose `booked_at` did not.
+
+    Lag alone cannot tell them apart, and the first attempt at this measurement did not try:
+    it reported 189 rows in the two-to-five-day band against a source that claimed 60 late
+    arrivals, because an update to a row booked three days ago sits in the same band. A row's
+    **first appearance** in bronze can tell them apart, because an insert appears once and an
+    update has appeared before.
+
+    So the key set of the initial load is read first, then every incremental partition in
+    date order, and a transaction is a late arrival when its first appearance anywhere is in a
+    partition later than its business date. The count is then directly comparable to the tick
+    log's, which is what makes this evidence rather than an illustration.
     """
     import io
 
@@ -218,30 +254,44 @@ def _late_arrivals(prefixes: list[str]) -> None:
     client = clients.lake_client()
     bucket = clients.lake_bucket()
 
-    late = 0
-    same = 0
-    by_lag: dict[int, int] = {}
-    for prefix in sorted(set(prefixes)):
-        ingest_date = prefix.split("ingest_date=")[1].split("/")[0]
-        listing = client.list_objects_v2(Bucket=bucket, Prefix=prefix)
-        for item in listing.get("Contents", []):
+    def rows_of(prefix: str):
+        ingest_date = _date(prefix.split("ingest_date=")[1].split("/")[0])
+        for item in client.list_objects_v2(Bucket=bucket, Prefix=prefix).get("Contents", []):
             body = client.get_object(Bucket=bucket, Key=item["Key"])["Body"].read()
-            table = pq.read_table(io.BytesIO(body), columns=["booked_at"])
-            for value in table.column("booked_at").to_pylist():
-                if value is None:
-                    continue
-                lag = (_date(ingest_date) - value.date()).days
-                if lag > 0:
-                    late += 1
-                    by_lag[lag] = by_lag.get(lag, 0) + 1
-                else:
-                    same += 1
+            table = pq.read_table(io.BytesIO(body), columns=["transaction_id", "booked_at"])
+            yield ingest_date, table.to_pylist()
 
-    print("  incremental batches only; the initial load of the historical book is excluded")
-    print(f"  {late} transaction row(s) landed in a partition later than their business date")
-    print(f"  {same} landed in the partition of their business date")
+    seen: set = set()
+    for _day, batch in (pair for prefix in sorted(initial) for pair in rows_of(prefix)):
+        seen.update(row["transaction_id"] for row in batch)
+    print(f"  {len(seen)} transaction(s) arrived in the initial load and are excluded")
+
+    on_time = 0
+    late = 0
+    updates = 0
+    by_lag: dict[int, int] = {}
+    for ingest_date, batch in (pair for prefix in sorted(incremental) for pair in rows_of(prefix)):
+        for row in batch:
+            key = row["transaction_id"]
+            if key in seen:
+                updates += 1
+                continue
+            seen.add(key)
+            lag = (ingest_date - row["booked_at"].date()).days
+            if lag <= 0:
+                on_time += 1
+            else:
+                late += 1
+                by_lag[lag] = by_lag.get(lag, 0) + 1
+
+    print(f"  {on_time} transaction(s) first appeared in the partition of their business date")
+    print(f"  {late} first appeared in a later one, which is a late arrival")
+    if claimed_late is not None:
+        verdict = "agrees" if late == claimed_late else "DISAGREES"
+        print(f"    the source's tick log claims {claimed_late}; the lake {verdict}")
     for lag in sorted(by_lag):
         print(f"    {lag} day(s) late: {by_lag[lag]}")
+    print(f"  {updates} row(s) were updates to a transaction bronze had already received")
 
 
 def _date(text: str):
