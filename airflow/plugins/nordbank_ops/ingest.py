@@ -29,11 +29,32 @@ that declare `warehouse_access` take it.
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import Any
 
 SOURCE_SYSTEM = "corebank"
-CONTRACT_DIR = "/opt/airflow/contracts"
 PROJECT_ROOT = "/opt/airflow"
+
+# Two layouts, the same as `airflow/tests/conftest.py` has always had to cope with: the
+# project image, where this tree is mounted under /opt/airflow, and a checkout, where the DAG
+# tests run natively against the repository. Resolving to the image path alone built two DAGs
+# with no entities and no assets on a runner, and every DAG test but the asset count passed.
+CONTRACT_DIRS: tuple[str, ...] = (
+    "/opt/airflow/contracts",
+    str(Path(__file__).resolve().parents[3] / "contracts"),
+)
+
+
+def contract_root() -> Path:
+    for candidate in CONTRACT_DIRS:
+        if Path(candidate).is_dir():
+            return Path(candidate)
+    raise RuntimeError(
+        "no contract directory found; looked in " + ", ".join(CONTRACT_DIRS) + ". "
+        "An ingestion DAG with no contracts has nothing to ingest, so this refuses rather "
+        "than building one."
+    )
+
 
 EXTRACT_LAG_VARIABLE = "EXTRACT_LAG_MINUTES"
 DEFAULT_EXTRACT_LAG_MINUTES = 15
@@ -49,15 +70,15 @@ def extract_lag() -> dt.timedelta:
 def _contracts(source_schema: str) -> dict:
     """Every contract for one source schema, keyed on entity."""
     import sys
-    from pathlib import Path
 
-    for candidate in (PROJECT_ROOT, f"{PROJECT_ROOT}/scripts"):
-        if candidate not in sys.path:
+    root = contract_root()
+    for candidate in (PROJECT_ROOT, f"{PROJECT_ROOT}/scripts", str(root.parent / "scripts")):
+        if Path(candidate).is_dir() and candidate not in sys.path:
             sys.path.insert(0, candidate)
 
     from data_contract import load_all
 
-    everything = load_all(Path(CONTRACT_DIR) / SOURCE_SYSTEM)
+    everything = load_all(root / SOURCE_SYSTEM)
     return {
         entity: contract
         for entity, contract in everything.items()

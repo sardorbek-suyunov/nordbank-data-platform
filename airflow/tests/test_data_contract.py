@@ -157,3 +157,15 @@ def test_two_entities_of_the_same_name_from_different_schemas_are_refused(tmp_pa
     (tmp_path / "b_accounts.yml").write_text(dump(other), encoding="utf-8")
     with pytest.raises(ContractError, match="already contracted"):
         load_all(tmp_path)
+
+
+def test_a_missing_contract_directory_is_refused_rather_than_empty(tmp_path):
+    """The defect CI found on this milestone's pull request.
+
+    The DAG factory resolved the contract root to a path that exists only inside the image.
+    On a runner `load_all` returned nothing, two ingestion DAGs were built with no entities,
+    no assets and nothing to do, and every DAG test but the asset count passed. A missing
+    contract directory is a configuration failure and not an empty one.
+    """
+    with pytest.raises(ContractError, match="no such directory"):
+        load_all(tmp_path / "not-here")
