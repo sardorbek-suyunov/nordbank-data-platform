@@ -828,7 +828,7 @@ ingestion DAG.
 Parquet file and does not say what runs it; a make target is what the other eighteen criteria
 have.
 
-### 2026-09-22 — `ops.source_reconciliation` is keyed per batch, and the day is a sum
+### 2026-09-22 — `ops.source_reconciliation` is keyed per batch, and the day is its covering batch
 
 The first complete sixty-day backfill reported nine entities on the drift day as landing a
 handful of rows against a claim of hundreds, and the discrepancy was the bookkeeping rather
@@ -840,17 +840,35 @@ succeeded, the watermark *did* move, so their new batches read from it and see o
 Section 1 keyed the table on entity and source day, so the two batches upserted over each
 other and the tail's count won.
 
-Keeping the larger count was tried first and is the wrong shape: it makes the row a contest
-between batches rather than a record of them. **The table is keyed per batch per source day**,
-and the per-day figure is `ops.source_reconciliation_daily`, a view that sums the batches. The
-drift day then reconciles as what it actually is — the batch before the halt landed most of
-the day and the batch after the contract bump landed the rest — which is also the only reading
-consistent with the halt-and-resume procedure ruling 4 established. The conflict clause
-survives for the retry case, where a batch rewrites its own contribution rather than adding to
-it.
+Two attempts at a rule failed before the third worked, and the sequence is the instructive
+part. **Keeping the larger count** makes the row a contest between batches rather than a
+record of them, and is silently wrong the day two batches land genuinely different parts of a
+day. **Summing the batches** is wrong in the opposite direction, because two batches landing
+rows of one day overlap rather than partition: measured, the batch before the halt covered
+2026-08-26 at 271 rows and the batch after the contract bump re-read its last fifteen minutes
+at 267, and the sum reported 538 against a claim of 271.
 
-The view is a view rather than a column because a sum of rows is a derivation, and storing it
-would be a second place for one fact to live.
+**The table is keyed per batch per source day**, and `ops.source_reconciliation_daily` takes
+the day's landing from the batches that **covered** it. A batch covers a source day when its
+window opened at or before the start of that day, which is exactly when it read the day
+whole; a batch whose window opened inside the day re-read part of it. Those re-reads are real
+landings and are kept — they are the overlap the `>=` watermark exists to produce, and the
+view exposes them as `partial_batches` and `rows_re_read`, which is better evidence for
+criterion 7 than anything built for it. They are not a second portion of the day.
+
+The day's figure is the largest a covering batch reported: its count when there is one, and
+still the distinct total when a day that failed before registering is re-run and two batches
+each read the whole of it.
+
+960 of 960 claimed entity-days reconcile exactly under that rule, the drift day included, and
+none of it needed the backfill re-running. That is the payoff of the keying: the contributions
+were already stored per batch, so changing the view recomputed every day from what was there.
+
+Two smaller things came with it. The coverage comparison converts explicitly to UTC rather
+than casting a date to `timestamptz`, because the cast reads the session timezone and the same
+view answered differently in the container and on a machine five hours east of it. And the
+conflict clause survives for the retry case, where a batch rewrites its own contribution
+rather than adding to it.
 
 ### 2026-09-22 — replaying history across a drift boundary needs the contract of the time
 

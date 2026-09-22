@@ -115,7 +115,34 @@ def test_a_report_with_no_per_day_counts_reconciles_to_zero():
     assert landed_on_day({}, SOURCE_DATE) == 0
 
 
-def reconcile(connection, landed, batch_id, claimed=210, quarantined=0):
+def register_batch(connection, batch_id, watermark_from):
+    """A registry row, because the daily view needs a batch's window to judge coverage."""
+    connection.execute(
+        """
+        insert into ops.batch_registry (
+            batch_id, source_system, source_schema, entity, ingest_date, interval_start,
+            interval_end, batch_sequence, contract_version, watermark_from, object_prefix,
+            status, opened_at, triggering_run_id
+        ) values (?, 'corebank', 'core', 'accounts', ?, ?, ?, 1, 1, ?, 'p/', 'registered', ?, 'r')
+        """,
+        [
+            batch_id,
+            SOURCE_DATE,
+            dt.datetime.combine(SOURCE_DATE, dt.time(), tzinfo=dt.UTC),
+            dt.datetime.combine(SOURCE_DATE, dt.time(), tzinfo=dt.UTC) + dt.timedelta(days=1),
+            watermark_from,
+            NOW,
+        ],
+    )
+
+
+def reconcile(connection, landed, batch_id, claimed=210, quarantined=0, watermark_from=None):
+    if watermark_from is None:
+        # Default to a window that opened before the day, which is what covering means.
+        watermark_from = dt.datetime.combine(SOURCE_DATE, dt.time(), tzinfo=dt.UTC) - dt.timedelta(
+            minutes=15
+        )
+    register_batch(connection, batch_id, watermark_from)
     write_reconciliation(
         connection,
         source_system="corebank",
@@ -129,49 +156,71 @@ def reconcile(connection, landed, batch_id, claimed=210, quarantined=0):
     )
 
 
+def inside_the_day(minutes_before_midnight: int) -> dt.datetime:
+    """A window that opened inside the source day, which is a partial re-read."""
+    return dt.datetime.combine(
+        SOURCE_DATE + dt.timedelta(days=1), dt.time(), tzinfo=dt.UTC
+    ) - dt.timedelta(minutes=minutes_before_midnight)
+
+
 def daily(connection):
     return connection.execute(
-        "select rows_claimed, rows_landed, rows_quarantined, difference, batches "
-        "from ops.source_reconciliation_daily"
+        "select rows_claimed, rows_landed, rows_quarantined, difference, batches, "
+        "partial_batches, rows_re_read from ops.source_reconciliation_daily"
     ).fetchone()
 
 
-def test_one_batch_is_one_row(connection):
+def test_one_covering_batch_is_the_day(connection):
     reconcile(connection, 210, "accounts-01")
-    assert connection.execute("select count(*) from ops.source_reconciliation").fetchone() == (1,)
-    assert daily(connection) == (210, 210, 0, 0, 1)
+    assert daily(connection) == (210, 210, 0, 0, 1, 0, 0)
 
 
 def test_a_retry_of_the_same_batch_replaces_its_own_contribution(connection):
     reconcile(connection, 100, "accounts-01")
-    reconcile(connection, 210, "accounts-01")
+    write_reconciliation(
+        connection,
+        source_system="corebank",
+        entity="accounts",
+        source_date=SOURCE_DATE,
+        rows_claimed=210,
+        rows_landed=210,
+        rows_quarantined=0,
+        batch_id="accounts-01",
+        now=NOW,
+    )
     assert connection.execute("select count(*) from ops.source_reconciliation").fetchone() == (1,)
-    assert daily(connection) == (210, 210, 0, 0, 1)
+    assert daily(connection) == (210, 210, 0, 0, 1, 0, 0)
 
 
-def test_two_batches_covering_one_day_sum_rather_than_fight(connection):
-    """The drift day, and the reason the table is keyed per batch.
+def test_a_partial_re_read_is_not_added_to_the_day(connection):
+    """The drift day, and the reason the view asks which batches covered the day.
 
-    Keyed per day and upserted, the narrow re-run after a halt overwrote the wide batch's
-    count and the control reported a discrepancy only its own bookkeeping had created. Keyed
-    per batch, the day is the sum: the batch before the halt landed most of it and the batch
-    after the contract bump landed the rest.
+    Two batches landed rows of one day and their rows overlap rather than partition: the
+    batch before the halt covered the whole day and the batch after the contract bump
+    re-read the last fifteen minutes of it. Summing counted the overlap twice; taking the
+    last dropped the rest of the day.
     """
-    reconcile(connection, 267, "accounts-01")
-    reconcile(connection, 4, "accounts-02", claimed=271)
-    assert connection.execute("select count(*) from ops.source_reconciliation").fetchone() == (2,)
-    assert daily(connection) == (271, 271, 0, 0, 2)
+    reconcile(connection, 271, "accounts-01")
+    reconcile(connection, 267, "accounts-02", claimed=271, watermark_from=inside_the_day(15))
+    assert daily(connection) == (271, 271, 0, 0, 2, 1, 267)
+
+
+def test_two_covering_batches_do_not_double_the_day(connection):
+    """A day re-run after failing before registration: each batch read the whole day."""
+    reconcile(connection, 210, "accounts-01")
+    reconcile(connection, 210, "accounts-02")
+    assert daily(connection) == (210, 210, 0, 0, 2, 0, 0)
 
 
 def test_an_unclaimed_day_keeps_a_null_difference(connection):
     """ "Nothing changed" and "nothing claimed" are different facts."""
     reconcile(connection, 598, "accounts-01", claimed=None)
-    assert daily(connection) == (None, 598, 0, None, 1)
+    assert daily(connection)[:4] == (None, 598, 0, None)
 
 
 def test_quarantined_rows_count_towards_the_day(connection):
     reconcile(connection, 209, "accounts-01", claimed=210, quarantined=1)
-    assert daily(connection) == (210, 209, 1, 0, 1)
+    assert daily(connection)[:4] == (210, 209, 1, 0)
 
 
 # --- the source's claim --------------------------------------------------------------------

@@ -137,7 +137,8 @@ def main() -> int:
         for row in rows(
             c,
             """
-            select d.entity, d.rows_claimed, d.rows_landed, d.difference, d.batches
+            select d.entity, d.rows_claimed, d.rows_landed, d.difference, d.batches,
+                   d.partial_batches, d.rows_re_read
               from ops.source_reconciliation_daily d
              where d.source_date = (
                 select min(interval_start)::date from ops.batch_registry where status = 'failed'
@@ -146,8 +147,8 @@ def main() -> int:
             """,
         ):
             print(
-                f"  {row[0]}: claimed {row[1]}, landed {row[2]} over {row[4]} batch(es), "
-                f"difference {row[3]}"
+                f"  {row[0]}: claimed {row[1]}, landed {row[2]}, difference {row[3]}, "
+                f"over {row[4]} batch(es) of which {row[5]} partial, re-reading {row[6]} row(s)"
             )
 
         heading(16, "late arrivals, by the partition they landed in")

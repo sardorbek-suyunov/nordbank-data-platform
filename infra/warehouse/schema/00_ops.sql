@@ -82,23 +82,62 @@ create table if not exists ops.source_reconciliation (
     primary key (source_system, entity, source_date, batch_id)
 );
 
--- The per-day figure, which is what criterion 15 compares against the source's claim. A view
--- rather than a column, because a sum of rows is a derivation and storing it would be a second
--- place for the same fact to live.
+-- The per-day figure, which is what criterion 15 compares against the source's claim.
+--
+-- **Not a sum, and not the last writer.** Two batches can land rows belonging to one source
+-- day and their rows overlap rather than partition: measured on the drift day, the batch
+-- before the halt covered the whole day and the batch after the contract bump re-read the
+-- last fifteen minutes of it, so summing counted 267 rows twice and taking the last counted
+-- 271 of them not at all.
+--
+-- A batch **covers** a source day when its window opened at or before the start of that day,
+-- which is exactly the condition under which it read the day whole. A batch whose window
+-- opened inside the day re-read part of it: those rows are real landings and are kept, and
+-- they are the overlap the `>=` watermark exists to produce, but they are not a second
+-- portion of the day to be added to the first.
+--
+-- So the day's landing is the largest a covering batch reported. One covering batch is the
+-- ordinary case and the maximum is its count; two arise when a day is re-run after failing,
+-- and each of them read the whole day, so the maximum is still the distinct total.
+--
+-- The comparison converts explicitly to UTC rather than casting a date to `timestamptz`. The
+-- cast reads the session timezone, so the same view answered differently in the container,
+-- which runs at UTC, and on a developer machine five hours east of it — where every batch
+-- looked partial and every day looked empty.
 create or replace view ops.source_reconciliation_daily as
+with contribution as (
+    select
+        r.source_system,
+        r.entity,
+        r.source_date,
+        r.rows_claimed,
+        r.rows_landed,
+        r.rows_quarantined,
+        coalesce(
+            (b.watermark_from at time zone 'UTC') <= r.source_date::timestamp, true
+        ) as covers_the_day
+    from ops.source_reconciliation as r
+    left join ops.batch_registry as b on r.batch_id = b.batch_id
+)
+
 select
     source_system,
     entity,
     source_date,
     max(rows_claimed) as rows_claimed,
-    sum(rows_landed) as rows_landed,
-    sum(rows_quarantined) as rows_quarantined,
+    coalesce(max(rows_landed) filter (where covers_the_day), 0) as rows_landed,
+    coalesce(max(rows_quarantined) filter (where covers_the_day), 0) as rows_quarantined,
     case
         when max(rows_claimed) is null then null
-        else sum(rows_landed) + sum(rows_quarantined) - max(rows_claimed)
+        else
+            coalesce(max(rows_landed) filter (where covers_the_day), 0)
+            + coalesce(max(rows_quarantined) filter (where covers_the_day), 0)
+            - max(rows_claimed)
     end as difference,
-    count(*) as batches
-from ops.source_reconciliation
+    count(*) as batches,
+    count(*) filter (where not covers_the_day) as partial_batches,
+    coalesce(sum(rows_landed) filter (where not covers_the_day), 0) as rows_re_read
+from contribution
 group by 1, 2, 3;
 
 -- Task failures, written by the DAG's `on_failure_callback`. It cannot hold the
