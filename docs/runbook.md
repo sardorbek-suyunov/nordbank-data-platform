@@ -122,6 +122,12 @@ run simply produced a reconciliation that disagreed with itself.
 Finish or abandon a backfill before running the integration suite, and re-seed deliberately
 afterwards.
 
+This paragraph did not prevent the second occurrence, so it is no longer the guard.
+`make test-integration` now starts by counting `ops.batch_registry` inside the container and
+refuses when it holds any batch, naming the source systems and the ingest dates it would
+orphan. `FORCE=1 make test-integration` proceeds anyway, for a backfill that is finished with;
+`make nuke` is the other way out. A warehouse with no registry, as on a fresh CI stack, passes.
+
 ### The anchor must be chosen so the simulated window stays behind the real clock
 
 `docs/project_state.md` recorded at M3 that the simulated clock is free to run ahead of the
