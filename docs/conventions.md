@@ -221,6 +221,16 @@ Every model declares its primary key and tests it with `unique` and `not_null`. 
 cannot is exempt only by documenting the exemption in its schema file, with the reason. An
 undeclared grain is not an exemption, it is an unfinished model.
 
+**Every structural test asserts a minimum cardinality.** A test of a DAG's shape asserts its
+task count and its asset count; a test of a mapped task asserts that its expansion input is
+non-empty; a test or check that loops over a collection — parsed DAGs, catalogue tables, bronze
+objects, registry batches — asserts a floor on the collection before it asserts anything about
+its members. A test that cannot tell a correct DAG from an empty one proves nothing, and the
+failure is not hypothetical: at M4 a contract root that resolved only inside the image built
+two ingestion DAGs with no entities and no assets on a CI runner, and sixteen of eighteen DAG
+tests stayed green. The floor is stated as a number in the test, never read from the thing
+under test, because a floor derived from an empty collection is zero.
+
 Every test and every quality check declares a severity, once, where it is defined:
 
 | Severity | Meaning | Effect |

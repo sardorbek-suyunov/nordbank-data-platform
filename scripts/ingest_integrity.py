@@ -96,8 +96,14 @@ def main() -> int:
     for entity, held, by_batch, registered in ahead[:20]:
         print(f"   {entity}: watermark {held} from {by_batch}, highest registered {registered}")
 
+    # An empty registry has no open batch, no missing object and no watermark ahead of
+    # anything, so every question above answers "none". That is not a clean registry.
+    if not batches:
+        print("\nintegrity: nothing to check, the registry holds no batch")
+        return 2
+
     clean = not still_open and not missing and not ahead
-    print(f"\nintegrity: {'clean' if clean else 'NOT CLEAN'}")
+    print(f"\nintegrity: {'clean' if clean else 'NOT CLEAN'} across {len(batches)} batch(es)")
     return 0 if clean else 1
 
 
