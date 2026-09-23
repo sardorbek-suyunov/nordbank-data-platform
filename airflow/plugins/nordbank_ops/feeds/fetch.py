@@ -23,12 +23,22 @@ recorded responses with no network and no waiting.
 from __future__ import annotations
 
 import random
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 RETRIED_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+# A requests exception quotes the full URL it failed on, query string included, and the FRED
+# feed's query string carries its API key. Error text is logged and written to
+# ops.feed_request, so any key-like parameter is redacted before it is kept anywhere.
+_SECRET_PARAMETER = re.compile(r"(api_key|apikey|token|key)=([^&\s'\"]+)", re.IGNORECASE)
+
+
+def redact(text: str) -> str:
+    return _SECRET_PARAMETER.sub(r"\1=REDACTED", text)
 
 
 @dataclass(frozen=True)
@@ -119,7 +129,7 @@ def fetch(
             response = get(url, params=params, timeout=policy.timeout)
         except (requests.Timeout, requests.ConnectionError) as exc:
             result.status, result.body = None, None
-            result.error = f"{type(exc).__name__}: {exc}"
+            result.error = redact(f"{type(exc).__name__}: {exc}")
             result.attempts.append(Attempt(status=None, error=result.error, waited=0.0))
         else:
             result.status, result.body, result.error = response.status_code, response.content, None
