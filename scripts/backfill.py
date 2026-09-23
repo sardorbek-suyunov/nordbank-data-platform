@@ -36,6 +36,30 @@ says so, because the failure it prevents is a hang rather than an error.
 
 It runs on the host, because the tick is a host package and the Airflow CLI and the registry
 are both in the container, and nothing can reach all three from one place.
+
+**The day, in order, since specification 006.**
+
+1. Tick the source to the day.
+2. Deliver what third parties send that day: the processor's clearing files due on it
+   (`generator.settlement`) and the sanctions publisher's list (`generator.sanctions`). Both are
+   simulation, and both are idempotent, so a resumed day delivers the same bytes again.
+3. `ingest_reference_data`, then `ingest_core_banking`, in that order, for the reason above.
+4. The four feeds, together: `ingest_card_settlements`, `ingest_fx_rates`, and on the days
+   their cadence falls, `ingest_sanctions_list` on Mondays and `ingest_macro_series` on the
+   15th. They depend on nothing but core banking having run — the clearing file's card
+   references are first seen by the core extraction, so they resolve to tokens the vault
+   already holds — and on nothing in each other, so they are triggered together and waited
+   for together.
+
+A day is complete when core banking registered all forty-five entities for it and every feed
+due that day has a successful run. A feed run that fails halts the loop exactly as a failed
+core batch does, naming the batch and the reason.
+
+**One day demonstrates the sensor waiting.** `--defer-demo DATE` triggers the settlement DAG on
+that day *before* the clearing file is delivered, watches its sensor task until Airflow reports
+it `deferred`, and only then delivers the file. A sensor that finds its file on the first look
+never waits, and proves nothing about waiting; this is the day it does. What was observed is
+written to `data/acceptance/deferral.json`.
 """
 
 from __future__ import annotations
@@ -55,6 +79,16 @@ import source_db_exec as db  # noqa: E402
 
 REFERENCE_DAG = "ingest_reference_data"
 CORE_DAG = "ingest_core_banking"
+SETTLEMENT_DAG = "ingest_card_settlements"
+FX_DAG = "ingest_fx_rates"
+SANCTIONS_DAG = "ingest_sanctions_list"
+MACRO_DAG = "ingest_macro_series"
+
+# In the backfill the sensor waits seconds, not the deployed four hours: a day whose file is
+# late would otherwise hold the loop for the whole grace period.
+SETTLEMENT_CONF = {"sensor_timeout_seconds": 40, "sensor_poke_seconds": 3}
+DEMO_CONF = {"sensor_timeout_seconds": 300, "sensor_poke_seconds": 3}
+EVIDENCE = ROOT / "data" / "acceptance"
 
 # Sixteen `core` entities and twenty-nine `ref` entities (spec 005 criterion 2).
 EXPECTED = {CORE_DAG: 16, REFERENCE_DAG: 29}
@@ -131,6 +165,117 @@ def existing_run(dag_id: str, day: dt.date) -> dict | None:
         if row["logical_date"] == stamp:
             return row
     return None
+
+
+def feeds_due(day: dt.date) -> list[str]:
+    """The feeds whose cadence falls on a day, in the order they are triggered."""
+    due = [SETTLEMENT_DAG, FX_DAG]
+    if day.weekday() == 0:
+        due.append(SANCTIONS_DAG)
+    if day.day == 15:
+        due.append(MACRO_DAG)
+    return due
+
+
+def run_state(dag_id: str, day: dt.date) -> str | None:
+    held = existing_run(dag_id, day)
+    return held["state"] if held else None
+
+
+def start_run(dag_id: str, day: dt.date, conf: dict | None = None) -> str:
+    """Start one run for one logical date without waiting, clearing it if it already exists."""
+    held = existing_run(dag_id, day)
+    if held is not None:
+        print(f"backfill: clearing the existing run of {dag_id} for {day}", flush=True)
+        airflow(
+            "tasks", "clear", dag_id, "--yes",
+            "--start-date", day.isoformat(), "--end-date", day.isoformat(),
+        )  # fmt: skip
+        return held["run_id"]
+    listed = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
+    before = {row["run_id"] for row in listed}
+    arguments = ["dags", "trigger", dag_id, "--logical-date", f"{day.isoformat()}T00:00:00+00:00"]
+    if conf:
+        arguments += ["--conf", json.dumps(conf)]
+    airflow(*arguments)
+    deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        runs = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
+        fresh = [row for row in runs if row["run_id"] not in before]
+        if fresh:
+            return sorted(fresh, key=lambda row: row["run_after"])[-1]["run_id"]
+        time.sleep(POLL_SECONDS)
+    raise SystemExit(f"backfill: {dag_id} for {day} never appeared")
+
+
+def task_state(dag_id: str, task_id: str, run_id: str) -> str:
+    completed = run(
+        ["docker", "compose", "exec", "-T", "airflow-scheduler", "airflow", "tasks", "state",
+         dag_id, task_id, run_id]
+    )  # fmt: skip
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    return lines[-1] if lines else "unknown"
+
+
+def deliver(day: dt.date, *, settlement_files: bool = True) -> None:
+    """What third parties send on a day. Simulation, and idempotent."""
+    if settlement_files:
+        completed = run(
+            [sys.executable, "-m", "generator.settlement", "--date", day.isoformat()], capture=False
+        )
+        if completed.returncode != 0:
+            raise SystemExit(f"backfill: delivering the clearing files for {day} failed")
+    completed = run(
+        [sys.executable, "-m", "generator.sanctions", "--date", day.isoformat()], capture=False
+    )
+    if completed.returncode != 0:
+        raise SystemExit(f"backfill: publishing the sanctions list for {day} failed")
+
+
+def feed_failures(run_id: str) -> list[dict]:
+    payload = in_container("feed_state.py", "--run-id", run_id)
+    return json.loads(payload.strip().splitlines()[-1])["failed"]
+
+
+def deferral_demo(day: dt.date) -> str:
+    """Trigger the settlement DAG before its file exists, watch it defer, then deliver the file."""
+    run_id = start_run(SETTLEMENT_DAG, day, DEMO_CONF)
+    observed: list[dict] = []
+    deadline = time.monotonic() + 240
+    deferred_at = None
+    while time.monotonic() < deadline:
+        state = task_state(SETTLEMENT_DAG, "wait_for_file", run_id)
+        stamp = dt.datetime.now(dt.UTC).isoformat()
+        if not observed or observed[-1]["state"] != state:
+            observed.append({"at": stamp, "state": state})
+            print(f"backfill: {day}: wait_for_file is {state}", flush=True)
+        if state == "deferred":
+            deferred_at = stamp
+            break
+        if state in ("success", "failed", "skipped", "upstream_failed"):
+            break
+        time.sleep(1)
+    if deferred_at is None:
+        raise SystemExit(
+            f"backfill: the settlement sensor for {day} never deferred; observed {observed}"
+        )
+    print(f"backfill: {day}: the sensor is deferred; delivering the clearing file now", flush=True)
+    deliver(day, settlement_files=True)
+    delivered_at = dt.datetime.now(dt.UTC).isoformat()
+    final = wait_for(SETTLEMENT_DAG, run_id)
+    observed.append({"at": dt.datetime.now(dt.UTC).isoformat(),
+                     "state": task_state(SETTLEMENT_DAG, "wait_for_file", run_id)})  # fmt: skip
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    (EVIDENCE / "deferral.json").write_text(
+        json.dumps(
+            {"day": day.isoformat(), "run_id": run_id, "deferred_at": deferred_at,
+             "file_delivered_at": delivered_at, "run_state": final, "sensor_states": observed},
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )  # fmt: skip
+    print(f"backfill: {day}: the demonstration run ended {final}", flush=True)
+    return run_id
 
 
 def trigger_and_wait(dag_id: str, day: dt.date) -> str:
@@ -252,7 +397,9 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--from", dest="start", required=True)
     parser.add_argument("--to", dest="end", required=True)
+    parser.add_argument("--defer-demo", dest="defer_demo", default=None)
     arguments = parser.parse_args(argv)
+    demo = dt.date.fromisoformat(arguments.defer_demo) if arguments.defer_demo else None
 
     start = dt.date.fromisoformat(arguments.start)
     end = dt.date.fromisoformat(arguments.end)
@@ -280,7 +427,8 @@ def main(argv: list[str]) -> int:
         # Both DAGs write into one registry, so one interval's registered set covers both and
         # a day is complete when all forty-five entities are in it.
         state = interval_state(day, EXPECTED[CORE_DAG] + EXPECTED[REFERENCE_DAG])
-        if state["complete"]:
+        pending = [dag for dag in feeds_due(day) if run_state(dag, day) != "success"]
+        if state["complete"] and not pending:
             skipped += 1
             day += dt.timedelta(days=1)
             continue
@@ -293,14 +441,45 @@ def main(argv: list[str]) -> int:
                 print(f"backfill: ticking the source to {day}", flush=True)
             tick_one_day(day, simulated)
 
-        print(f"backfill: {day}: {REFERENCE_DAG}", flush=True)
-        trigger_and_wait(REFERENCE_DAG, day)
-        print(f"backfill: {day}: {CORE_DAG}", flush=True)
-        trigger_and_wait(CORE_DAG, day)
+        demo_today = demo == day and SETTLEMENT_DAG in pending
+        deliver(day, settlement_files=not demo_today)
 
-        state = interval_state(day, EXPECTED[CORE_DAG] + EXPECTED[REFERENCE_DAG])
-        if state["failed"]:
-            return halt(day, state["failed"])
+        if not state["complete"]:
+            print(f"backfill: {day}: {REFERENCE_DAG}", flush=True)
+            trigger_and_wait(REFERENCE_DAG, day)
+            print(f"backfill: {day}: {CORE_DAG}", flush=True)
+            trigger_and_wait(CORE_DAG, day)
+
+            state = interval_state(day, EXPECTED[CORE_DAG] + EXPECTED[REFERENCE_DAG])
+            if state["failed"]:
+                return halt(day, state["failed"])
+
+        started: dict[str, str] = {}
+        if demo_today:
+            print(f"backfill: {day}: {SETTLEMENT_DAG}, triggered before its file", flush=True)
+            started[SETTLEMENT_DAG] = deferral_demo(day)
+        for dag in pending:
+            if dag in started:
+                continue
+            conf = SETTLEMENT_CONF if dag == SETTLEMENT_DAG else None
+            print(f"backfill: {day}: {dag}", flush=True)
+            started[dag] = start_run(dag, day, conf)
+        failed_feeds = []
+        for dag, run_id in started.items():
+            if wait_for(dag, run_id) != "success":
+                failed_feeds.extend(
+                    feed_failures(run_id)
+                    or [
+                        {
+                            "entity": dag,
+                            "failure_reason": (
+                                "the run failed before any batch failed; see its tasks"
+                            ),
+                        }
+                    ]
+                )
+        if failed_feeds:
+            return halt(day, failed_feeds)
 
         processed += 1
         day += dt.timedelta(days=1)

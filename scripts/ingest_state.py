@@ -24,6 +24,9 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--interval", required=True, help="the run's logical date, YYYY-MM-DD")
     parser.add_argument("--expected", type=int, default=0, help="entities expected for the day")
+    # Scoped to one source system, because the feeds' batches share intervals with the core
+    # banking source's and would otherwise count towards its completeness.
+    parser.add_argument("--system", default="corebank", help="the source system to report on")
     arguments = parser.parse_args(argv)
 
     interval = dt.datetime.fromisoformat(arguments.interval).replace(tzinfo=dt.UTC)
@@ -34,10 +37,10 @@ def main(argv: list[str]) -> int:
             select entity, source_schema, batch_sequence, status, failure_reason,
                    rows_read, rows_landed, rows_quarantined
               from ops.batch_registry
-             where interval_start = ?
+             where interval_start = ? and source_system = ?
              order by entity, batch_sequence
             """,
-            [interval],
+            [interval, arguments.system],
         ).fetchall()
 
     batches = [
