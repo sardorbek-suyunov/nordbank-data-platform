@@ -492,6 +492,30 @@ from a sanctions list into a portfolio repository would publish accusations abou
 people to make a demonstration marginally more convincing, which is indefensible whatever the
 demonstration is worth.
 
+### The list the fixture is merged into
+
+Specification 006 lands a sanctions list, and the list is synthetic in content and real in
+shape (ADR 0015). `generator/sanctions/` publishes it to the inbound bucket in the
+FollowTheMoney format the OpenSanctions documentation describes, and every entity carries a
+marker name built the same way as the fixture's — `ZZ-SYNTHETIC <word> <serial>
+SANCTIONS-FIXTURE` — so the convention above extends from the fixture to the whole list. The
+fixture's twelve names are entities of the list, which is what makes a match possible.
+
+The real consolidated list held 300,971 entities when it was measured and exports four times a
+day under a new version string each time. This one holds a few hundred and publishes once per
+simulated day, and its content changes only on Mondays. Both properties are kept on purpose: a
+new version string over unchanged content is common in the real feed and is exactly what
+identity by content checksum has to handle, and weekly change gives snapshot versioning real
+changes to land within a sixty-day window. The volume is not representative and nothing
+measured against it is a claim about screening at scale.
+
+| Parameter | Value | Why |
+|---|---|---|
+| `sanctions_list.base_entities` | 300 | A list large enough that a match is not trivially every entry, small enough to read |
+| `sanctions_list.weekly_additions` | 5 | New designations each Monday, so every weekly snapshot differs from the last |
+| `sanctions_list.weekly_removals` | 2 | Delistings, so a snapshot is a replacement rather than an append |
+| `sanctions_list.pep_share` | 0.3 | Topics are `role.pep` for this share and `sanction` otherwise, so both kinds of entry exist |
+
 ## Measuring continuity across the anchor
 
 The day after the anchor should look like the day before it, and saying so needs an instrument

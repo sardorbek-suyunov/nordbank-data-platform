@@ -2,7 +2,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-.PHONY: help install init-env lint format test test-dags test-integration up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance ingest-integrity seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files dbt-build dbt-docs dq clean
+.PHONY: help install init-env lint format test test-dags test-integration up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance ingest-integrity seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list dbt-build dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -132,6 +132,9 @@ tick-status: ## Print the simulation state and the last ten ticks
 
 generate-settlement-files: ## Deliver the card clearing files due on DATE to the inbound bucket
 	uv run python -m generator.settlement --date $(DATE)
+
+publish-sanctions-list: ## Publish the synthetic sanctions list for DATE to the inbound bucket
+	uv run python -m generator.sanctions --date $(DATE)
 
 tick-acceptance: ## Seed, tick and report specification 004's evidence (REPLAY=1, TICKS=n)
 ifdef REPLAY

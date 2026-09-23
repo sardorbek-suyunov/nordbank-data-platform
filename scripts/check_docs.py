@@ -6,8 +6,8 @@ Three rules:
    `docs/specs` describe the directory rather than a decision and are exempt.
 2. The root README carries no TODO token.
 3. The contract bands in `docs/generator_realism.md` agree with `generator/profiles.yml`.
-4. The settlement file parameters in the same document agree with the `settlement` section of
-   `generator/profiles.yml`, for the same reason.
+4. The settlement file and sanctions list parameters in the same document agree with the
+   `settlement` and `sanctions_list` sections of `generator/profiles.yml`, for the same reason.
 
 The third exists because those bands are one fact with two representations, and neither can be
 deleted. Spec 003's invariants and acceptance criteria are written against the bands *as the
@@ -36,8 +36,10 @@ BAND_ROW = re.compile(
 
 # | `settlement.late_file_share` | 0.05 | why |   The dotted name keeps it out of BAND_ROW.
 SETTLEMENT_ROW = re.compile(
-    r"^\|\s*`settlement\.(?P<key>[a-z0-9_.]+)`\s*\|\s*(?P<value>[0-9.]+)\s*\|"
+    r"^\|\s*`(?P<section>settlement|sanctions_list)\.(?P<key>[a-z0-9_.]+)`\s*\|"
+    r"\s*(?P<value>[0-9.]+)\s*\|"
 )
+DOCUMENTED_SECTIONS = ("settlement", "sanctions_list")
 
 
 def status_failures() -> list[str]:
@@ -129,24 +131,28 @@ def settlement_failures() -> list[str]:
     for line in REALISM.read_text(encoding="utf-8").splitlines():
         match = SETTLEMENT_ROW.match(line.strip())
         if match:
-            documented[match.group("key")] = float(match.group("value"))
+            documented[f"{match.group('section')}.{match.group('key')}"] = float(
+                match.group("value")
+            )
     raw = yaml.safe_load(PROFILES.read_text(encoding="utf-8"))
-    configured = _flatten("", raw["defaults"].get("settlement", {}))
+    configured = {}
+    for section in DOCUMENTED_SECTIONS:
+        configured.update(_flatten(section, raw["defaults"].get(section, {})))
 
     failures = []
-    if len(documented) < 10:
+    if len(documented) < 14:
         failures.append(
-            f"generator_realism.md: {len(documented)} settlement parameter row(s) found, at "
-            "least 10 expected"
+            f"generator_realism.md: {len(documented)} feed parameter row(s) found, at least 14 "
+            "expected"
         )
     for key in sorted(set(documented) | set(configured)):
         if key not in documented:
-            failures.append(f"generator_realism.md: settlement.{key} is configured, not documented")
+            failures.append(f"generator_realism.md: {key} is configured, not documented")
         elif key not in configured:
-            failures.append(f"profiles.yml: settlement.{key} is documented, not configured")
+            failures.append(f"profiles.yml: {key} is documented, not configured")
         elif documented[key] != configured[key]:
             failures.append(
-                f"settlement.{key}: generator_realism.md says {documented[key]}, "
+                f"{key}: generator_realism.md says {documented[key]}, "
                 f"profiles.yml says {configured[key]}"
             )
     return failures
@@ -163,8 +169,8 @@ def main() -> int:
 
     documented = len(_documented_bands())
     print(
-        f"documentation checks passed ({documented} contract band(s) and the settlement "
-        "parameters agree with profiles.yml)"
+        f"documentation checks passed ({documented} contract band(s) and the feed parameters "
+        "agree with profiles.yml)"
     )
     return 0
 
