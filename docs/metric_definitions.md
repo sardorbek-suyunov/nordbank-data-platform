@@ -385,15 +385,30 @@ absolute term keeps a tiny file from escalating over a rounding difference. Both
 in the currency the comparison happened in, so the thresholds do not move with the exchange
 rate.
 
+The relative term is taken against the **absolute** file total. A day on which refunds outweigh
+purchases in one currency has a negative total, and 0.1 per cent of a negative number is a
+negative threshold that every difference exceeds, which would make each break on such a day an
+`error` for its sign rather than its size. A file total of exactly zero has no relative room at
+all, so any difference on it is an `error`; that is the correct reading, since a netted-out day
+has nothing to be rounded against. Specification 006 fixed both while implementing the feed.
+
 *A late-arriving item posts to a later date than it settled on, and that is a timing break
 rather than a defect.* The source presents an offline card transaction days after the customer
 made it, and its ledger entry posts to the period that is open when it arrives, not to the
 business date — posting into a closed period would restate a day already reported. The network
 file names the settlement date, so the two sides land on different dates for the same item. The
 comparison is still per settlement date, so the difference appears as a break, and materiality
-governs the response exactly as it does for any other. The resolution belongs to M4, which owns
-the settlement feed and decides whether it presents the item on its business date or on its
-clearing date; what is fixed here is that the ledger side never moves.
+governs the response exactly as it does for any other. The ledger side never moves.
+
+*Resolved at M4: the file presents an item on its clearing date, and the timing break does not
+arise.* A processor clears an item when it is presented, which for a late offline item is the
+day it reached the bank, and that is the day the ledger posts it. The clearing file for
+settlement date S covers the items the ledger posted on S minus the network's lag, so the two
+sides land on the same date for a late item as for any other. The item's business date travels
+in the file as `transaction_date` for anyone who needs it. The breaks this feed produces are
+therefore the ones the processor's data put there, and a timing difference is not one of them;
+a feed that presented on the business date would reintroduce it, and this paragraph says what
+it would look like.
 
 **Source columns.** `sl_card_settlements.file_total_amount`,
 `sl_card_settlements.settlement_currency`, `sl_card_settlements.settlement_date`,
