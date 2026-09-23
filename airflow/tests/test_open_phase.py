@@ -72,3 +72,18 @@ def test_the_open_step_allocates_one_batch_per_contracted_entity(warehouse, sche
     finally:
         connection.close()
     assert opened == EXPECTED[schema]
+
+
+def test_the_open_step_selects_the_contract_of_the_interval(warehouse) -> None:
+    """Contract-of-the-time at the open step, with the committed contracts and no edit to disk.
+
+    `payments` version 2 takes over on 2026-08-26. A batch opened for the day before carries
+    version 1 and one opened for that day carries version 2; every other entity carries 1.
+    """
+    before = open_phase(source_schema="core", context=_context(dt.date(2026, 8, 25)))
+    on = open_phase(source_schema="core", context=_context(dt.date(2026, 8, 26)))
+    version = {a["entity"]: a["contract_version"] for a in before}
+    assert version["payments"] == 1
+    assert {a["entity"]: a["contract_version"] for a in on}["payments"] == 2
+    assert {v for e, v in version.items() if e != "payments"} == {1}
+    assert len(version) == EXPECTED["core"]

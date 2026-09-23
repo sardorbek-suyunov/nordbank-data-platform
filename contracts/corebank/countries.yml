@@ -15,6 +15,7 @@ contract_version: 1
 watermark_column: updated_at
 primary_key: country_id
 dictionary_revision: sha256:e5d088874e5b22e7
+in_force_from: null
 columns:
 - name: country_id
   type: bigint

@@ -27,6 +27,7 @@ def contract(**overrides):
         "watermark_column": "updated_at",
         "primary_key": "payment_id",
         "dictionary_revision": "sha256:0123456789abcdef",
+        "in_force_from": None,
         "columns": [
             {
                 "name": "payment_id",
@@ -87,6 +88,7 @@ def test_the_timeline_declares_what_each_entity_may_drift_to():
 def test_a_contract_bumped_to_the_widened_type_is_accepted_drift_and_not_a_finding():
     body = contract().as_dict()
     body["contract_version"] = 2
+    body["in_force_from"] = "2026-08-26"
     body["columns"][1]["type"] = "character varying(280)"
     found, accepted = differences(parse(body, "test"), documented())
     assert found == []
