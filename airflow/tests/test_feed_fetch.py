@@ -108,3 +108,16 @@ def test_a_client_error_is_returned_once_and_not_retried(status) -> None:
     result, calls, waits = _run(status)
     assert result.status == status and not result.ok
     assert len(calls) == 1 and waits == []
+
+
+def test_an_error_quoting_the_request_url_has_its_key_redacted() -> None:
+    leak = requests.ConnectionError(
+        "Max retries exceeded with url: /fred/series/observations?series_id=UNRATE"
+        "&api_key=abc123secret&file_type=json"
+    )
+    get, _calls = _script(*([leak] * POLICY.max_attempts))
+    with pytest.raises(FetchFailedError) as raised:
+        fetch(URL, policy=POLICY, get=get, sleep=lambda _s: None, rng=random.Random(1))
+    text = str(raised.value) + " ".join(a.error or "" for a in raised.value.result.attempts)
+    assert "abc123secret" not in text
+    assert "api_key=REDACTED" in text
