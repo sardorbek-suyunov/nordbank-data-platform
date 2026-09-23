@@ -2,7 +2,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe fault-demo up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance ingest-integrity seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list dbt-build dbt-docs dq clean
+.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe fault-demo up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance feeds-acceptance ingest-integrity seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list dbt-build dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -102,8 +102,8 @@ extract: ## Run one interval outside Airflow (DATE=YYYY-MM-DD, SCHEMA=core|ref)
 	@echo "extract: running inside airflow-scheduler, where the warehouse volume is"
 	docker compose exec -T -e DATE=$(DATE) -e SCHEMA=$(or $(SCHEMA),core) airflow-scheduler bash -c "python /opt/airflow/scripts/extract_cli.py"
 
-backfill: ## Tick and ingest one day at a time (FROM=YYYY-MM-DD TO=YYYY-MM-DD), resumable
-	uv run python scripts/backfill.py --from $(FROM) --to $(TO)
+backfill: ## Tick, deliver and ingest one day at a time (FROM= TO= [DEFER_DEMO=]), resumable
+	uv run python scripts/backfill.py --from $(FROM) --to $(TO) $(if $(DEFER_DEMO),--defer-demo $(DEFER_DEMO))
 
 bronze-stats: ## Landed and quarantined counts by entity and ingest date (ALL=1 for every status)
 	docker compose exec -T -e ALL=$(ALL) airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_stats.py"
@@ -113,6 +113,9 @@ bronze-pii-scan: ## Scan every registered bronze object for a cleartext identifi
 
 bronze-acceptance: ## Report specification 005's evidence against what the backfill produced
 	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_acceptance.py"
+
+feeds-acceptance: ## Report specification 006's evidence against what the backfill produced
+	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/feeds_acceptance.py"
 
 ingest-integrity: ## Check the registry against the lake and the watermarks
 	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/ingest_integrity.py"
