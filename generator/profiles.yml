@@ -771,6 +771,15 @@ defaults:
     break_error_relative_min: 0.005
     break_error_relative_max: 0.05
 
+  sanctions_list:
+    # The synthetic sanctions list, ADR 0015. A list of a few hundred marker-named entities
+    # changing weekly: enough for snapshot versioning to have real changes to land, nothing
+    # like the real list's volume, which the realism document says.
+    base_entities: 300
+    weekly_additions: 5
+    weekly_removals: 2
+    pep_share: 0.3
+
   loading:
     # Rows per COPY statement for the ordinary tables, which bounds the payload held in memory
     # on both sides of the pipe rather than the trigger queue.
