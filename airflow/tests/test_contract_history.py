@@ -177,3 +177,30 @@ def test_a_recorded_version_edited_in_place_is_refused(warehouse, tree) -> None:
 def test_a_recorded_version_with_no_file_is_refused() -> None:
     with pytest.raises(selection.ContractSelectionError, match="no file on disk"):
         selection.body(load_history(CONTRACTS), "payments", 9)
+
+
+def test_every_clearing_file_version_takes_over_on_the_day_its_layout_event_fires() -> None:
+    """The file-layout counterpart of the check above, for the processor's scripted events.
+
+    A version that stops describing a column the layout timeline removes, or starts describing
+    one it adds, accepted that event, and must take over on the day the event fires at the
+    acceptance anchor.
+    """
+    from generator.drift.timeline import ACCEPTANCE_ANCHOR
+    from generator.settlement import timeline as layout
+
+    versions = load_history(CONTRACTS.parent / "cardnet")["settlements"]
+    checked = 0
+    for earlier, later in zip(versions, versions[1:], strict=False):
+        before, after = set(earlier.record_columns), set(later.record_columns)
+        for event in layout.EVENTS:
+            removed = event.kind == layout.COLUMN_REMOVED and event.column in before - after
+            added = event.kind == layout.COLUMN_ADDED and event.column in after - before
+            if removed or added:
+                assert later.in_force_from == event.fires_on(ACCEPTANCE_ANCHOR), (
+                    f"settlements version {later.contract_version} accepts {event.name}, which "
+                    f"fires on {event.fires_on(ACCEPTANCE_ANCHOR)}, and says it takes over on "
+                    f"{later.in_force_from}"
+                )
+                checked += 1
+    assert checked >= 1, "no clearing file version accepts a scripted layout event"
