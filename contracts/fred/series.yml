@@ -1,0 +1,68 @@
+# Data contract for FRED series observations.
+#
+# Optional feed. It needs a free API key, and `ingest_macro_series` skips with a stated reason
+# when `FRED_API_KEY` is absent rather than failing; nothing in CI depends on it (spec 006
+# section 2).
+#
+# Revisions to a published period are expected. Every run lands what it fetched as a new batch
+# and silver keeps the history, so the same observation date can arrive in several batches with
+# different values and different `realtime_start`, which is why the key includes it.
+#
+# FRED marks a missing observation with the string "." rather than omitting it or sending a
+# null. The contract declares that marker, so it lands as a null value by the contract's own
+# rule rather than by coercion at the gate.
+source_system: fred
+source_schema: interval_api
+entity: series
+kind: api
+contract_version: 1
+in_force_from: null
+source_of_truth:
+  publisher: Federal Reserve Bank of St. Louis, Federal Reserve Economic Data
+  document: FRED API, fred/series/observations, https://fred.stlouisfed.org/docs/api/fred/series_observations.html
+  endpoint: GET https://api.stlouisfed.org/fred/series/observations?series_id={series}&api_key={key}&file_type=json
+  measured: >-
+    2026-09-23, without a key: HTTP 400 with error_code 400 and the message that api_key is not
+    set. A keyed response has not been observed, because this deployment holds no key; the
+    shape below is the documented example's.
+primary_key: [series_id, observation_date, realtime_start]
+format:
+  response: json
+  top_level:
+    realtime_start: date
+    realtime_end: date
+    observation_start: date
+    observation_end: date
+    units: string
+    output_type: number
+    file_type: string
+    order_by: string
+    sort_order: string
+    count: number
+    offset: number
+    limit: number
+    observations: array
+  observation_fields: [realtime_start, realtime_end, date, value]
+  null_markers: ["."]
+columns:
+- name: series_id
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+  origin: request
+- name: observation_date
+  type: date
+  nullable: false
+  classification: non-personal
+- name: realtime_start
+  type: date
+  nullable: false
+  classification: non-personal
+- name: realtime_end
+  type: date
+  nullable: false
+  classification: non-personal
+- name: value
+  type: numeric(18,8)
+  nullable: true
+  classification: non-personal

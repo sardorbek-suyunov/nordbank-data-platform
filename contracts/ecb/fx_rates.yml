@@ -1,0 +1,59 @@
+# Data contract for the ECB reference rates, as served by the Frankfurter API v1.
+#
+# Authored, not bootstrapped: there is no dictionary entry for a third party's API. The source
+# of truth is named below, with what was measured against it on 2026-09-22 when the contract
+# was written, because two of those measurements are what the landing rule depends on.
+#
+# One request per date. A response lands only when its `date` equals the date requested; any
+# other response is a date the ECB did not publish, and nothing is written for it (spec 006
+# section 2). The rate is parsed from the JSON as a decimal and never passes through a float.
+source_system: ecb
+source_schema: interval_api
+entity: fx_rates
+kind: api
+contract_version: 1
+in_force_from: null
+source_of_truth:
+  publisher: European Central Bank, euro foreign exchange reference rates
+  document: Frankfurter API v1 reference, https://frankfurter.dev
+  endpoint: GET {FRANKFURTER_BASE_URL}/{date}?base=EUR
+  measured: 2026-09-22
+  behaviour:
+    - A date with no publication (a weekend, a TARGET holiday, or a date after the latest
+      publication) returns HTTP 200 with the previous publication's rates and that
+      publication's date in `date`. Only a date beyond all data returns 404.
+    - The v1 API carries a Deprecation header with the date 2026-05-18 and names
+      https://api.frankfurter.dev/v2/rates as its successor.
+    - v2 is not a drop-in replacement. It returns a flat list of per-currency rows, serves
+      currencies outside the ECB's reference set, and on a weekend dates some currencies on
+      the Saturday and others on the Friday, so the ECB's single publication calendar does
+      not hold for it. Moving to v2 is a new contract version and a new landing rule.
+  review_trigger: >-
+    Re-examine when v1 stops answering, when `make feeds-probe` reports a shape difference
+    from the recorded fixtures, or when a recorded fixture passes 180 days of age.
+primary_key: [rate_date, quote_currency]
+format:
+  response: json
+  top_level:
+    amount: number
+    base: string
+    date: date
+    rates: object
+  rates_entry: {key: currency, value: number}
+columns:
+- name: rate_date
+  type: date
+  nullable: false
+  classification: non-personal
+- name: base_currency
+  type: character(3)
+  nullable: false
+  classification: non-personal
+- name: quote_currency
+  type: character(3)
+  nullable: false
+  classification: non-personal
+- name: rate
+  type: numeric(18,8)
+  nullable: false
+  classification: non-personal

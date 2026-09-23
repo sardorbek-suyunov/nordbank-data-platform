@@ -176,6 +176,25 @@ def main(argv: list[str]) -> int:
         f"{len(missing)} uncontracted, {superseded} superseded version(s) under history/, "
         f"dictionary at {revision}"
     )
+    # Authored contracts for the external feeds have no dictionary to diverge from, so they
+    # are loaded rather than compared: a malformed one, or a broken version chain, fails here.
+    authored = 0
+    for directory in sorted(p for p in (ROOT / "contracts").iterdir() if p.is_dir()):
+        if directory.name == SOURCE_SYSTEM:
+            continue
+        chains = load_history(directory)
+        authored += len(chains)
+        for entity, versions in sorted(chains.items()):
+            current = versions[-1]
+            print(
+                f"  {directory.name}.{entity}: authored {current.kind} contract, version "
+                f"{current.contract_version}, against {current.source_of_truth['document']}"
+            )
+    print(f"contracts-diff: {authored} authored contract(s) loaded")
+    if authored < 5:
+        print("contracts-diff: fewer than the five authored feed contracts were found")
+        return 1
+
     if stale_pins:
         print(
             f"contracts-diff: {stale_pins} contract(s) pinned to an earlier dictionary revision; "
