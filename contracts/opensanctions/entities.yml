@@ -1,0 +1,136 @@
+# Data contract for the sanctions and PEP list snapshot, in the OpenSanctions FollowTheMoney
+# entity format.
+#
+# The shape is the real feed's, taken from the publisher's documentation; **the content is
+# synthetic** (ADR 0015). The snapshot the platform lands is published by the simulation under
+# the inbound bucket, every entity in it carries a `ZZ-` marker name that no person or company
+# has, and it includes the M3 screening fixture so screening has something to match. The real
+# consolidated list is never downloaded into, committed to or landed by this platform.
+#
+# One line per entity. The top-level keys are compared with `format.top_level`: a key the
+# snapshot has and this contract does not is additive drift; a documented key that is missing is
+# breaking. `properties` is an open vocabulary that varies by entity schema, so a property this
+# contract does not map is not drift and is kept in `_raw_payload`.
+#
+# Names are classified `sensitive`, not `identifier`. Screening matches list names against
+# counterparty names resolved through the vault (ADR 0010), and a keyed hash would make that
+# matching impossible; a designated party's name is retained at full precision and
+# access-restricted, which is what `pii_classification.md` prescribes for sanctions match data.
+source_system: opensanctions
+source_schema: snapshot
+entity: entities
+kind: snapshot
+contract_version: 1
+in_force_from: null
+source_of_truth:
+  publisher: OpenSanctions, Consolidated Sanctions dataset
+  document: OpenSanctions entity data format, https://www.opensanctions.org/docs/entities/
+  real_feed:
+    index: https://data.opensanctions.org/datasets/latest/sanctions/index.json
+    resource: entities.ftm.json, one FollowTheMoney entity per line
+    measured: 2026-09-22
+    version_semantics: >-
+      The version is an export identifier such as 20260922134701-kui, not a publication date.
+      The dataset exports on the schedule 0 1,7,13,19 * * *, four times a day, and every
+      export carries a new version string whether or not the content changed.
+    size: >-
+      300,971 entities at the measured version; entities.ftm.json was 365,254,588 bytes and
+      targets.simple.csv 73,374,064.
+    licence: >-
+      Creative Commons 4.0 Attribution NonCommercial, with commercial use licensed separately;
+      stated at https://www.opensanctions.org/licensing/ when checked on 2026-09-23. Not relied
+      on here, because the real list is not ingested.
+  identity: >-
+    A snapshot is identified by the checksum of entities.ftm.json (ADR 0013). The publisher's
+    version string and export timestamp are recorded as attributes of every landed row.
+primary_key: [entity_id]
+format:
+  index: json
+  index_required: [version, last_export, resources]
+  entities: json_lines
+  top_level:
+    id: string
+    schema: string
+    caption: string
+    datasets: array
+    referents: array
+    first_seen: timestamp
+    last_change: timestamp
+    properties: object
+  column_sources:
+    entity_id: id
+    entity_schema: schema
+    caption: caption
+    datasets: datasets
+    referents: referents
+    first_seen: first_seen
+    last_change: last_change
+    names: properties.name
+    aliases: properties.alias
+    birth_dates: properties.birthDate
+    nationalities: properties.nationality
+    countries: properties.country
+    topics: properties.topics
+columns:
+- name: entity_id
+  type: character varying(200)
+  nullable: false
+  classification: non-personal
+- name: entity_schema
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: caption
+  type: character varying(500)
+  nullable: false
+  classification: sensitive
+- name: datasets
+  type: json
+  nullable: false
+  classification: non-personal
+- name: referents
+  type: json
+  nullable: false
+  classification: non-personal
+- name: first_seen
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: last_change
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+- name: names
+  type: json
+  nullable: true
+  classification: sensitive
+- name: aliases
+  type: json
+  nullable: true
+  classification: sensitive
+- name: birth_dates
+  type: json
+  nullable: true
+  classification: sensitive
+- name: nationalities
+  type: json
+  nullable: true
+  classification: sensitive
+- name: countries
+  type: json
+  nullable: true
+  classification: sensitive
+- name: topics
+  type: json
+  nullable: true
+  classification: non-personal
+- name: publisher_version
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+  origin: header
+- name: published_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+  origin: header

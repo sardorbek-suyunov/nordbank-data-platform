@@ -122,8 +122,8 @@ new version string; that is recorded in the contract, as the publisher's behavio
 platform chooses to ingest weekly, and that choice is what the freshness SLA in
 `metric_definitions.md` measures.
 
-**The list's content is synthetic, and that is a decision rather than a simplification.**
-It reproduces the FollowTheMoney entity schema the real list uses, and its entities
+**The list's content is synthetic, and that is a decision rather than a simplification** (ADR
+0015). It reproduces the FollowTheMoney entity schema the real list uses, and its entities
 are generated, including the fixture M3 planted so that screening has something to match. The
 real list holds some three hundred thousand designated persons and entities; landing it would
 put real special-category personal data into a lake that feeds a publicly deployed application
