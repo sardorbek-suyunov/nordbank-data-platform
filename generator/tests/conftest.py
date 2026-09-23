@@ -17,3 +17,12 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 for candidate in (str(ROOT), str(ROOT / "scripts")):
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
+
+import pytest  # noqa: E402
+from network_guard import install  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_external_network(monkeypatch):
+    """Spec 006 section 6: no test reaches the internet. See `scripts/network_guard.py`."""
+    install(monkeypatch)

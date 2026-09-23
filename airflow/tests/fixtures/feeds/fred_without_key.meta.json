@@ -1,0 +1,16 @@
+{
+  "captured_at": "2026-09-23T10:32:22+00:00",
+  "endpoint": "https://api.stlouisfed.org/fred/series/observations",
+  "params": {
+    "series_id": "UNRATE",
+    "file_type": "json"
+  },
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/json; charset=UTF-8"
+  },
+  "why": "no key: HTTP 400, which is why the feed skips",
+  "contract": "fred.series",
+  "contract_version": 1,
+  "contract_fingerprint": "sha256:c0069f4c8f287a4d"
+}
