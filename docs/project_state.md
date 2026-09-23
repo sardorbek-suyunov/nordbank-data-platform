@@ -346,3 +346,31 @@ the real one — the only real-clock constraint in the schema is
 Either the anchor is chosen so the extracted window stays behind real time, or the feed
 synthesises rates for simulated-future dates and says so. Both are defensible and the choice
 should be deliberate.
+
+*Resolved at M4, and the second branch turned out not to exist.* Specification 005's backfill
+refuses a window ending after today, because Airflow will not schedule a future logical date,
+so the anchor branch was taken for a reason stricter than the FX feed. Specification 006 then
+measured the Frankfurter API: asked for a date it has not published, it returns HTTP 200 with
+the latest earlier publication and that publication's date. The feed lands a response only
+when the returned date equals the requested one, so a simulated-future date lands nothing.
+Synthesis is not merely rejected: the rule that keeps weekends absent makes it impossible.
+
+**Contract-of-the-time replay is open, and owned by specification 006.** Replaying history across
+a contract version bump currently means checking out the contract as it stood before the bump
+by hand, which is what specification 005's acceptance commit sequence records. Specification
+006 selects the contract in force for a batch by the batch's interval instead. Its planning
+measured that `meta.contract_version` does not yet hold what that needs: `in_force_from` is the
+real wall-clock time the register step first saw a version, not the source time from which the
+version applies, and the table stores no contract body, only a version number and a
+fingerprint.
+
+*Resolved by specification 006* (ADR 0014). Each contract carries an authored source-time
+`in_force_from`, superseded versions stay unedited under `history/`, and the open step selects
+the version in force for a batch's interval from `meta.contract_version`, which now keeps the
+source-time date beside the real-time `first_seen_at`. Proven by a replay: a fresh stack seeded
+at the acceptance anchor and backfilled over the whole sixty-one-day window with both version
+bumps already committed ran without a halt and with no file edited, validating `payments`
+against version 1 through 2026-08-25 and version 2 from 2026-08-26, and the clearing file against
+version 1 through 2026-09-02 and version 2 from 2026-09-03. The committed dates are authored
+against one anchor, 2026-07-20, because the scripted drift is anchor-relative; the runbook says
+so.

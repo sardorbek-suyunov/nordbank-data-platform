@@ -10,9 +10,9 @@ machine; the cloud footprint exists only to prove the transformation layer is po
 | Source | Type | Load pattern | Cadence |
 |---|---|---|---|
 | Core banking (Postgres, synthetic) | Relational OLTP | Incremental by watermark on `updated_at`, soft deletes | Daily |
-| ECB FX rates (Frankfurter API) | REST API | Incremental by date, gap-filling for weekends/holidays | Daily |
-| Card network settlement files | CSV/JSON in object storage | File-arrival driven, late files reprocess prior partitions | Daily |
-| Sanctions / PEP list (OpenSanctions) | Bulk download | Full refresh, versioned snapshot | Weekly |
+| ECB FX rates (Frankfurter API) | REST API | Interval, one request per date; unpublished dates absent in bronze, gap-filled in silver | Daily |
+| Card network settlement files | CSV in object storage | File arrival, identity by content checksum; a late file lands in the partition of its arrival | Daily |
+| Sanctions / PEP list (OpenSanctions schema, synthetic content) | Bulk snapshot | Full refresh, versioned by the publisher's version string | Weekly by platform choice; the publisher exports four times a day |
 | Macro indicators (FRED) | REST API | Incremental append | Monthly |
 
 ### Ingestion pattern per source
@@ -40,6 +40,32 @@ safe because deduplication in silver is idempotent: rows are keyed on the busine
 advances only after the partition is written and registered, so a failed run repeats rather
 than skips.
 
+**The overlap's cost is bounded by the rows at the watermark, not by elapsed time, and for
+reference data that bound is the whole book.** A run re-reads every row whose `updated_at`
+lies within `EXTRACT_LAG` below the watermark. For a `core` entity that is the tail of the
+previous day. For a `ref` entity it is everything: the reference seed writes each table in one
+transaction, so its rows share one `updated_at`, the watermark sits on that instant, and the
+watermark can never advance past a tie cluster that never changes. Reference extraction
+therefore re-reads its whole book on every run, and bronze holds one copy of it per run.
+
+Measured on specification 005's sixty-day backfill: all twenty-nine reference entities landed
+their entire book on every one of sixty-two runs, and no reference watermark moved once. That
+is 441 rows a run and 27,342 in total against 283,036 `core` rows, so about ten per cent of
+the backfill's bronze rows are repeated reference data. The cost is constant per run rather
+than growing, which is why it is accepted rather than fixed here; it is also the reason
+specification 005's first reconciliation reported a 441-row discrepancy that was the control
+working.
+
+It is an M7 metric with a threshold rather than a note. `ops.source_reconciliation_daily`
+already exposes `rows_re_read` per entity and day; M7 adds a `dq` check of severity `info`
+recording each entity's re-read share per run, escalating to `warn` when an entity re-reads
+all of what it lands on more than seven consecutive runs — a watermark that has not moved in a
+week while the entity keeps landing rows. Against the measurement above it fires for all
+twenty-nine reference entities, which is the intended outcome: the cost becomes a reported
+number rather than a surprise. The remedy, if the number ever matters, is a cursor that
+records the primary keys already registered at the watermark instant, so that a tie cluster
+is read once; it is not built here because at `ci` and `dev` the book is small.
+
 Deletes are soft. The source sets `is_deleted` and moves `updated_at`, the row arrives
 through the normal incremental path, and the delete is applied in silver rather than by
 removing a bronze row.
@@ -55,26 +81,53 @@ to `dq` for investigation rather than deleting them automatically. It runs on it
 cadence, independent of the daily incremental load, and is implemented at M7 with the rest of
 the reconciliation work.
 
-**ECB FX rates.** The API is queried for the date range between the last loaded rate date and
-the run date. The ECB publishes on working days only, at around 16:00 CET, which is 15:00 UTC
-in summer and 14:00 UTC in winter. Nothing in the platform assumes a fixed UTC publication
-hour: the freshness window for this source is derived from the CET publication time and the
-daylight saving offset in force on the day, which is why the window is stated with a grace
-rather than as a deadline.
+**ECB FX rates.** The API is queried once per date, for the run's logical date. The ECB
+publishes on working days only, at around 16:00 CET, which is 15:00 UTC in summer and 14:00 UTC
+in winter. Nothing in the platform assumes a fixed UTC publication hour: the freshness window
+for this source is derived from the CET publication time and the daylight saving offset in
+force on the day, which is why the window is stated with a grace rather than as a deadline.
 
-Weekend and holiday gaps are filled by carrying the last published rate forward into a rate
-table with one row per currency per calendar date, because conversion must not fail on a
-Sunday transaction. Carried rows are flagged, so the fill is visible downstream.
+**A date the ECB did not publish is absent in bronze, and the API does not say so.** Measured
+against Frankfurter v1: a request for a Saturday, a TARGET holiday or a date after the latest
+publication returns HTTP 200 with the previous publication's rates and that publication's date
+in the `date` field; only a date beyond all data returns 404. So the landing rule is that a
+response is written only when its `date` equals the date requested, and otherwise nothing is
+written — not a null row and not a flagged row. That comparison is the whole control, and it
+also makes a rate for a simulated day ahead of the real clock impossible to fabricate: the API
+answers such a request with an earlier date, and the rule lands nothing.
 
-**Card network settlement files.** Files land under a bucket prefix and a sensor triggers the
-DAG on arrival rather than on a clock. A file names the settlement date it covers, which may
-be earlier than the arrival date. Late files therefore reprocess the partition of their
-settlement date, and the reconciliation mart is rebuilt for the affected dates.
+Weekend and holiday gaps are filled in **silver**, by carrying the last published rate forward
+into a rate table with one row per currency per calendar date, because conversion must not
+fail on a Sunday transaction. Carried rows are flagged, so the fill is visible downstream.
+Filling at ingest would destroy the evidence that the gap existed.
 
-**Sanctions and PEP list.** The published snapshot is downloaded whole each week and stored
-under a version derived from the publication date. Screening results reference the version
-they were produced against, so a past decision can be explained with the list as it stood
-that day.
+**Card network settlement files.** Files land under a bucket prefix and a deferrable sensor
+releases the DAG when the file for the day is there. A file is identified by the checksum of
+its content, so a file reprocessed or renamed never lands twice. A file names the settlement
+date it covers, which may be earlier than the day it arrives. **A late file lands in the
+ingest partition of its arrival**, with its settlement date as a business attribute: bronze
+partitions by ingest date and never rewrites a registered partition (ADR 0008), so a file for
+settlement date D−3 arriving today is today's batch. What is rebuilt for the affected
+settlement dates is the reconciliation mart, at M6.
+
+**Sanctions and PEP list.** The snapshot is loaded whole and stored under the publisher's own
+version string, with the publisher's export timestamp recorded as its publication time. A
+snapshot whose content checksum the platform has already landed is a no-op. Screening results
+reference the version they were produced against, so a past decision can be explained with the
+list as it stood that day.
+
+Two cadences are involved and they are not the same fact. The real OpenSanctions consolidated
+list exports four times a day, on the schedule `0 1,7,13,19 * * *`, and each export carries a
+new version string; that is recorded in the contract, as the publisher's behaviour. The
+platform chooses to ingest weekly, and that choice is what the freshness SLA in
+`metric_definitions.md` measures.
+
+**The list's content is synthetic, and that is a decision rather than a simplification** (ADR
+0015). It reproduces the FollowTheMoney entity schema the real list uses, and its entities
+are generated, including the fixture M3 planted so that screening has something to match. The
+real list holds some three hundred thousand designated persons and entities; landing it would
+put real special-category personal data into a lake that feeds a publicly deployed application
+at M9, with no lawful basis and no retention story.
 
 **Macro indicators.** Series are appended monthly. Revisions to already published periods are
 expected; the load is an upsert keyed on series and period, and the previous value is kept in
@@ -273,7 +326,16 @@ Raw extracts land in MinIO under the bucket `nordbank-lake`:
 
 ```
 bronze/<source>/<entity>/ingest_date=YYYY-MM-DD/batch_id=<batch_id>/part-NNNN.parquet
+quarantine/<source>/<entity>/ingest_date=YYYY-MM-DD/batch_id=<batch_id>/part-NNNN.parquet
 ```
+
+Third parties deliver to a second bucket, `nordbank-inbound`: the card processor's clearing
+files under `cardnet/`, the sanctions publisher's snapshots under `opensanctions/sanctions/`.
+It stands for the senders' side of the boundary, the way `postgres-source` does for the core
+banking system, and it is a separate bucket rather than a prefix because a delivery carries
+identifiers in the clear and the lake must never hold one (ADR 0013). Nothing downstream of
+ingestion reads it. The simulation keeps the manifests of what it injected into each clearing
+file under `cardnet/_simulation/`, which discovery never lists.
 
 Partitioning is by ingest date rather than business date, so a partition is written once and
 never revisited. Business date filtering happens in silver, where late arrivals can be
@@ -305,6 +367,17 @@ schedules. The measured behaviour and its cost are recorded in ADR 0002.
 
 Pipeline state lives in the `ops` schema: a batch registry with one row per extraction batch,
 per-entity watermarks, run outcomes, and freshness measurements per source.
+
+The external feeds share one DAG shape with the core banking extraction and add a phase in
+front of it for the two delivery modes: `discover` lists and hashes what a publisher delivered,
+without touching the warehouse; `open`, pooled, recognises content that has already landed and
+selects the contract version in force for each batch's interval; `extract`, mapped and
+unpooled, lands one unit — an FX interval, one clearing file, one snapshot; `register`, pooled on
+`all_done`, registers or fails each batch; the gate fails the run. The settlement DAG puts a
+deferrable sensor in front, which gives up its worker while it waits and lets the triggerer
+poll for the day's file; running out of time records the day as having no file rather than
+failing. A delivered file or snapshot is identified by the checksum of its content, recorded in
+`ops.ingested_file`, so a reprocessed or renamed file never lands twice (ADR 0013).
 
 Rerun semantics are precise about what immutability means. A task retry inside a batch that
 has not yet been registered overwrites its own partial output: nothing downstream can see an

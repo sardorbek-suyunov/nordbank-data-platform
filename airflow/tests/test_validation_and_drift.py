@@ -40,6 +40,7 @@ CONTRACT = parse(
         "watermark_column": "updated_at",
         "primary_key": "account_id",
         "dictionary_revision": "sha256:0123456789abcdef",
+        "in_force_from": None,
         "columns": [
             {
                 "name": "account_id",

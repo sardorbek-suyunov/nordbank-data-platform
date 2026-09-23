@@ -1,0 +1,12 @@
+{
+  "captured_at": "2026-09-23T10:20:00+00:00",
+  "endpoint": "https://fred.stlouisfed.org/docs/api/fred/series_observations.html",
+  "params": {},
+  "status": null,
+  "headers": {},
+  "why": "NOT RECORDED: the JSON example on FRED's documentation page, first two observations, because no key is held to record a keyed response",
+  "source": "documentation",
+  "contract": "fred.series",
+  "contract_version": 1,
+  "contract_fingerprint": "sha256:c0069f4c8f287a4d"
+}

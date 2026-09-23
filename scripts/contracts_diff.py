@@ -36,7 +36,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from data_contract import SOURCE_SYSTEM, dictionary_revision, load_all  # noqa: E402
+from data_contract import (  # noqa: E402
+    SOURCE_SYSTEM,
+    dictionary_revision,
+    load_all,
+    load_history,
+)
 from schema_contract import read_dictionary  # noqa: E402
 
 sys.path.insert(0, str(ROOT))
@@ -119,6 +124,11 @@ def main(argv: list[str]) -> int:
         by_entity.setdefault((column.schema, column.table), {})[column.name] = column
 
     contracts = load_all(CONTRACTS)
+    # Only the current version is compared with the dictionary; a superseded one describes
+    # the source as it was and would diverge for ever. The chain is still loaded, so a
+    # broken one fails here and in CI rather than at the first replay that selects from it.
+    chains = load_history(CONTRACTS)
+    superseded = sum(len(versions) - 1 for versions in chains.values())
     revision = dictionary_revision(DICTIONARY)
 
     diverged = 0
@@ -163,8 +173,28 @@ def main(argv: list[str]) -> int:
     print(
         f"contracts-diff: {len(contracts)} contract(s), {len(by_entity)} documented entity(ies), "
         f"{diverged} diverging, {accepted_count} carrying accepted drift, "
-        f"{len(missing)} uncontracted, dictionary at {revision}"
+        f"{len(missing)} uncontracted, {superseded} superseded version(s) under history/, "
+        f"dictionary at {revision}"
     )
+    # Authored contracts for the external feeds have no dictionary to diverge from, so they
+    # are loaded rather than compared: a malformed one, or a broken version chain, fails here.
+    authored = 0
+    for directory in sorted(p for p in (ROOT / "contracts").iterdir() if p.is_dir()):
+        if directory.name == SOURCE_SYSTEM:
+            continue
+        chains = load_history(directory)
+        authored += len(chains)
+        for entity, versions in sorted(chains.items()):
+            current = versions[-1]
+            print(
+                f"  {directory.name}.{entity}: authored {current.kind} contract, version "
+                f"{current.contract_version}, against {current.source_of_truth['document']}"
+            )
+    print(f"contracts-diff: {authored} authored contract(s) loaded")
+    if authored < 5:
+        print("contracts-diff: fewer than the five authored feed contracts were found")
+        return 1
+
     if stale_pins:
         print(
             f"contracts-diff: {stale_pins} contract(s) pinned to an earlier dictionary revision; "

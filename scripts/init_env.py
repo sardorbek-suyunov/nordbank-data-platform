@@ -43,9 +43,20 @@ def fernet_key() -> str:
 
 
 def secret(name: str) -> str:
+    """A generated credential that no command line can mistake for an option.
+
+    `token_urlsafe` draws from an alphabet that includes `-`, and measured, one value in
+    sixty-four begins with it. A password beginning with a dash reaches `airflow users create
+    --password` and `mc alias set` as an argument, where it is parsed as an option: CI's stack
+    job failed once on `argument -p/--password: expected one argument` with a freshly generated
+    `.env`. So a value is drawn again until it does not begin with one.
+    """
     if name == "AIRFLOW_FERNET_KEY":
         return fernet_key()
-    return secrets.token_urlsafe(24)
+    value = secrets.token_urlsafe(24)
+    while value.startswith("-"):
+        value = secrets.token_urlsafe(24)
+    return value
 
 
 def strip_comment(value: str) -> str:

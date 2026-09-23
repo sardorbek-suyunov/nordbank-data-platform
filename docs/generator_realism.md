@@ -492,6 +492,30 @@ from a sanctions list into a portfolio repository would publish accusations abou
 people to make a demonstration marginally more convincing, which is indefensible whatever the
 demonstration is worth.
 
+### The list the fixture is merged into
+
+Specification 006 lands a sanctions list, and the list is synthetic in content and real in
+shape (ADR 0015). `generator/sanctions/` publishes it to the inbound bucket in the
+FollowTheMoney format the OpenSanctions documentation describes, and every entity carries a
+marker name built the same way as the fixture's — `ZZ-SYNTHETIC <word> <serial>
+SANCTIONS-FIXTURE` — so the convention above extends from the fixture to the whole list. The
+fixture's twelve names are entities of the list, which is what makes a match possible.
+
+The real consolidated list held 300,971 entities when it was measured and exports four times a
+day under a new version string each time. This one holds a few hundred and publishes once per
+simulated day, and its content changes only on Mondays. Both properties are kept on purpose: a
+new version string over unchanged content is common in the real feed and is exactly what
+identity by content checksum has to handle, and weekly change gives snapshot versioning real
+changes to land within a sixty-day window. The volume is not representative and nothing
+measured against it is a claim about screening at scale.
+
+| Parameter | Value | Why |
+|---|---|---|
+| `sanctions_list.base_entities` | 300 | A list large enough that a match is not trivially every entry, small enough to read |
+| `sanctions_list.weekly_additions` | 5 | New designations each Monday, so every weekly snapshot differs from the last |
+| `sanctions_list.weekly_removals` | 2 | Delistings, so a snapshot is a replacement rather than an append |
+| `sanctions_list.pep_share` | 0.3 | Topics are `role.pep` for this share and `sanction` otherwise, so both kinds of entry exist |
+
 ## Measuring continuity across the anchor
 
 The day after the anchor should look like the day before it, and saying so needs an instrument
@@ -810,6 +834,114 @@ against their own windows, one drift event fires with `schema-check` still green
 DAG and in-stack integration suites pass. It does not prove that the bank the generator models
 behaves correctly over a period long enough for its slower mechanisms to run.
 
+## Card settlement files
+
+Specification 006 adds the first source the platform does not extract from a database: the
+clearing file the bank's card processor sends it. The processor is simulated in
+`generator/settlement/`, on the simulation's side of the boundary, and writes to the inbound
+bucket against the specification in `contracts/cardnet/README.md`.
+
+### Which file this is, and why the distinction matters
+
+It is an **issuer clearing file**, sent by the processor to the issuing bank, not a
+scheme-to-scheme settlement report. The difference decides what the file may carry.
+
+A scheme report identifies a card only by its masked number, the first six and last four
+digits. The source holds those as `core.cards.card_bin` and `core.cards.card_last_four`, both
+classified `non-personal`, because neither identifies a card alone. A file carrying only the
+masked number would give the platform nothing to tokenise, and the cross-source property
+specification 006 section 4 asks for — one card, one token, whichever feed it arrived through —
+would be asserted about a value that is never tokenised anywhere.
+
+An issuer clearing file carries the issuer's own reference for the card as well, because the
+processor clears on the bank's behalf and the bank has to post each item to the right card. That
+reference is `core.cards.card_reference`, classified `identifier`, and the file carries both it
+and the masked number. Switching file type is the realistic resolution rather than a
+manufactured one: nothing in the file is there only to make a test pass.
+
+Each item also carries `transaction_reference`, the reference the transaction is known by
+outside the bank, which is exactly what a real clearing record carries and what links a file
+record back to `core.transactions` without anything a real file would not contain.
+
+### What a file covers
+
+A file for settlement date S covers the card items whose ledger posting date is S minus one day,
+for both networks. The processor presents an item on the day the bank posted it, not on the day
+the cardholder transacted, so a late offline item — booked on the day of the tap, posted days
+later to the period open when it arrived — is presented on its posting date, and the file and
+the ledger agree on it. The timing break `metric_definitions.md` anticipated for late items does
+not arise from this feed; the only breaks in it are the injected ones.
+
+The amount is what the bank owes the network: the item's cash ledger line, negated. It is in the
+item's own currency, which is the account's, so the file settles in eight currencies.
+
+### Defects, and the order they happen in
+
+The order is the order a processor's own failures would occur in, and it is what keeps the
+defects independently settable:
+
+1. A **break** alters one item's amount before anything is totalled. The processor believes its
+   own number, so its trailer agrees with the altered item and disagrees with the ledger.
+2. The **trailer** is computed over every item written, per network and currency: the sender's
+   control total.
+3. **Malformation** happens in transmission, after the trailer. A damaged record still counts
+   in the trailer at its true amount, so it quarantines without becoming a settlement break.
+
+Without the trailer, reconciling the landed sum against the ledger would turn every quarantined
+record into a break of its own amount, and the malformed rate and the break rate would be one
+parameter. That is the same shape as the mod-97 rule specification 005 kept out of the ingest
+gate: a rate that looks independent and is not.
+
+**A break's magnitude is relative to the total of the network and currency it lands in.** The
+severity rule has a relative threshold, 0.1 per cent of the file total, and an absolute one, 100
+units. Measured on the `ci` book, a day's euro cell for one network totals several thousand
+units and a minor-currency cell tens, with one to three items; the relative threshold is
+therefore a few euro in one and a few hundredths of a krone in the other. An absolute magnitude
+tuned to produce a `warn` in one cell is an `error` in the other, and one tuned at `ci` changes
+severity at `dev`, where every cell is about ten times larger. Two bands relative to the cell's
+total produce each severity on purpose at every scale. A `warn` cannot be represented on a cell
+whose total is below about a tenth of a unit, because the delta would round to zero at four
+decimal places; such a cell is skipped rather than given a break of the wrong severity, and the
+manifest counts it.
+
+### Parameters
+
+`scripts/check_docs.py` fails if this table and the `settlement` section of
+`generator/profiles.yml` disagree.
+
+| Parameter | Value | Why |
+|---|---|---|
+| `settlement.settlement_lag_days` | 1 | Both networks settle the calendar day after clearing |
+| `settlement.late_file_share` | 0.05 | About three late files in a sixty-day window: enough to exercise late arrival, few enough that most days have their own file |
+| `settlement.late_by_days` | 3 | The D−3 case specification 006 names |
+| `settlement.malformed_record_share` | 0.01 | About one damaged record a day at `ci`, so quarantine has real traffic every week without dominating the file |
+| `settlement.malformed_kind_mix.unparseable_amount` | 0.25 | The four kinds specification 006 names, equally likely |
+| `settlement.malformed_kind_mix.invalid_date` | 0.25 | |
+| `settlement.malformed_kind_mix.missing_required_field` | 0.25 | |
+| `settlement.malformed_kind_mix.wrong_field_count` | 0.25 | |
+| `settlement.break_warn_share` | 0.03 | Per network and currency per file; about fifteen of each severity over a window |
+| `settlement.break_error_share` | 0.03 | |
+| `settlement.break_warn_relative_min` | 0.0001 | A tenth of the relative threshold |
+| `settlement.break_warn_relative_max` | 0.0008 | Four fifths of it, so rounding cannot carry a `warn` over |
+| `settlement.break_error_relative_min` | 0.005 | Five times the threshold |
+| `settlement.break_error_relative_max` | 0.05 | Five per cent of the cell |
+
+Measured before the numbers were committed, with a dry run over the sixty-one settlement dates
+2026-07-20 to 2026-09-18 of the `ci` book then loaded (seed 42, anchor 2026-09-18, so every one
+of those dates was history): 7,653 detail records, 125 a file; 556 network-and-currency cells,
+9.1 a file; 83 malformed records, all four kinds present (24 unparseable amounts, 15 invalid
+dates, 22 missing required fields, 22 wrong field counts); 28 breaks, 10 `warn` and 18 `error`,
+every one landing at the severity it was drawn for and no cell skipped; five late files.
+
+### Layout drift
+
+Two events change the file's layout, at an offset from the anchor like the relational timeline
+(`generator/settlement/timeline.py`). At anchor plus 20 the processor starts sending
+`interchange_fee_amount` on every item, which is additive. At anchor plus 45 it stops sending
+`merchant_name`, which is breaking: the whole file is quarantined, its batch fails, and the
+backfill halts for a contract decision. A removed column is the breaking kind specification
+005 could prove only by unit test, because the relational timeline scripts none.
+
 ## Deliberately unrealistic
 
 Everything below is wrong on purpose, or wrong and accepted. It is listed so that nobody has to
@@ -830,6 +962,10 @@ discover it.
 | **Login coverage is constructed, not emergent** | A session is generated before a digital transaction at the configured rate. Real coverage would emerge from customers who happen to have logged in; here it is placed, so Q19 has signal by construction |
 | **The ledger has no accruals, revaluation or impairment** | Postings exist for customer movements, fees, interest paid and loan cash flows. A real ledger carries far more, and `ref.gl_source_entities` is an open vocabulary precisely so those can arrive when something writes them |
 | **Fraud is labelled, not inferred** | The generator knows which transactions are fraudulent because it made them so. A real bank only ever has dispositions. The label never reaches the database — only the alert and its disposition do — so downstream models see what a bank sees |
+| **Settlement is one calendar day after clearing for both networks** | Real networks settle on business days, with different cut-offs per network and per currency. A calendar-day lag keeps every settlement date's file covering exactly one posting date, which is what makes the reconciliation exact; business-day settlement would bundle a weekend's postings into Monday's file and belongs with a processor model this milestone does not need |
+| **One processor file covers both networks** | Many issuers receive one file per network, or one per network per currency. One file per day keeps file identity, lateness and drift about one object; the network is a column, and the reconciliation is per network regardless |
+| **The interchange fee the processor starts sending is a flat 0.2 per cent** | The field exists to be additive drift in the file's layout, not to be priced. Q4's interchange comes from `ref.interchange_rates`, and nothing reads this field |
+| **A break is one altered item** | Real breaks also come from items missing on one side or duplicated on the other. An altered amount is the only kind whose magnitude can be drawn relative to the cell's total and so land at a chosen severity; a missing or duplicated item's magnitude is the item's own amount, which at `ci` is an `error` in almost every cell |
 
 ## Contract bands
 

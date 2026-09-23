@@ -28,6 +28,7 @@ MINIMAL = {
     "watermark_column": "updated_at",
     "primary_key": "account_id",
     "dictionary_revision": "sha256:0123456789abcdef",
+    "in_force_from": None,
     "columns": [
         {
             "name": "account_id",
@@ -124,7 +125,9 @@ def test_the_key_and_the_watermark_must_be_described_columns(field):
 
 def test_the_fingerprint_changes_with_the_content_and_not_with_the_version():
     base = parse(payload(), "test")
-    same_content_new_version = parse(payload(contract_version=2), "test")
+    same_content_new_version = parse(
+        payload(contract_version=2, in_force_from="2026-08-26"), "test"
+    )
     assert base.fingerprint == same_content_new_version.fingerprint
 
     body = payload()

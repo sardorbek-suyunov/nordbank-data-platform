@@ -45,6 +45,15 @@ x-airflow-common: &airflow-common
     AIRFLOW_CONN_NORDBANK_LAKE: ${AIRFLOW_CONN_NORDBANK_LAKE}
     DUCKDB_PATH: ${DUCKDB_PATH}
     LAKE_BUCKET: ${LAKE_BUCKET}
+    # The external feeds, from specification 006. The inbound bucket is the third parties' side
+    # of the boundary, where deliveries arrive with their identifiers in the clear; it is not
+    # the lake, and no model reads it.
+    INBOUND_BUCKET: ${INBOUND_BUCKET}
+    CARD_SETTLEMENT_PREFIX: ${CARD_SETTLEMENT_PREFIX}
+    SANCTIONS_SNAPSHOT_PREFIX: ${SANCTIONS_SNAPSHOT_PREFIX}
+    FRANKFURTER_BASE_URL: ${FRANKFURTER_BASE_URL}
+    FRED_API_KEY: ${FRED_API_KEY}
+    FRED_SERIES: ${FRED_SERIES}
     NORDBANK_ENV: ${NORDBANK_ENV}
     # Extraction, from M4. The salt is the key material for identifier tokenisation and can
     # never be rotated without re-tokenising all history (ADR 0005).
@@ -155,6 +164,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       LAKE_BUCKET: ${LAKE_BUCKET}
+      INBOUND_BUCKET: ${INBOUND_BUCKET}
     volumes:
       - ./infra/docker/minio/init.sh:/init.sh:ro
     depends_on:

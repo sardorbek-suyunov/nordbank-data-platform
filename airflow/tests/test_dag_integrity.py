@@ -1,7 +1,13 @@
 """DAG integrity: every file in the DAG folder parses, and every DAG is described properly.
 
-Marked `dags` because it needs an Airflow installation. It passes when the folder is empty and
-is never skipped: an empty DAG folder is a valid state, an unimportable one is not.
+Marked `dags` because it needs an Airflow installation. It is never skipped.
+
+**Every test here asserts a minimum cardinality** (`docs/conventions.md`, Tests). A test that
+loops over the parsed DAGs passes against an empty DagBag, and a test of an ingestion DAG's
+shape passes against a DAG with no entities: at M4 a contract root that resolved only inside
+the image built two DAGs with no entities and no assets on a runner, and sixteen of eighteen
+tests stayed green. So the DAG set, each DAG's task count, each DAG's asset count and each
+mapped task's expansion input are all asserted to be at least what they must be.
 """
 
 from __future__ import annotations
@@ -14,6 +20,22 @@ pytestmark = pytest.mark.dags
 
 DAG_FOLDER = Path(__file__).resolve().parent.parent / "dags"
 
+# The minimum task count of every DAG the folder must contain. A DAG absent from this table
+# fails `test_every_dag_declares_its_minimum_task_count`, so adding a DAG means stating its
+# shape here rather than inheriting a vacuous pass.
+MINIMUM_TASKS: dict[str, int] = {
+    "ops_stack_healthcheck": 4,
+    "ops_source_tick": 1,
+    "ingest_core_banking": 4,
+    "ingest_reference_data": 4,
+    # discover, open, extract, register, gate; the settlement DAG adds its sensor and the macro
+    # series DAG its key check.
+    "ingest_fx_rates": 5,
+    "ingest_card_settlements": 6,
+    "ingest_sanctions_list": 5,
+    "ingest_macro_series": 6,
+}
+
 
 def _dagbag():
     # Airflow 3 moved DagBag and dropped include_examples; example DAGs are a separate bundle
@@ -23,6 +45,15 @@ def _dagbag():
     return DagBag(dag_folder=str(DAG_FOLDER))
 
 
+def _dags() -> dict:
+    """The parsed DAGs, refusing a set smaller than the one this file states."""
+    dags = _dagbag().dags
+    assert len(dags) >= len(MINIMUM_TASKS), (
+        f"{len(dags)} DAG(s) parsed, at least {len(MINIMUM_TASKS)} expected: {sorted(dags)}"
+    )
+    return dags
+
+
 def test_dag_folder_exists() -> None:
     assert DAG_FOLDER.is_dir(), f"DAG folder missing: {DAG_FOLDER}"
 
@@ -30,31 +61,43 @@ def test_dag_folder_exists() -> None:
 def test_no_import_errors() -> None:
     dagbag = _dagbag()
     assert dagbag.import_errors == {}, f"DAG import errors: {dagbag.import_errors}"
+    assert len(dagbag.dags) >= len(MINIMUM_TASKS)
 
 
 def test_every_dag_declares_an_owner_and_tags() -> None:
-    for dag_id, dag in _dagbag().dags.items():
+    for dag_id, dag in _dags().items():
         owners = [owner for owner in (dag.owner or "").split(",") if owner.strip()]
         assert owners and owners != ["airflow"], f"{dag_id} has no meaningful owner"
         assert dag.tags, f"{dag_id} has no tags"
 
 
 def test_dag_id_matches_its_filename() -> None:
-    for dag_id, dag in _dagbag().dags.items():
+    for dag_id, dag in _dags().items():
         assert Path(dag.fileloc).stem == dag_id, (
             f"{dag_id} is defined in {Path(dag.fileloc).name}; the names must match"
         )
 
 
 def test_no_cycles() -> None:
-    for dag_id, dag in _dagbag().dags.items():
+    for _dag_id, dag in _dags().items():
         dag.check_cycle()  # raises AirflowDagCycleException
-        assert len(dag.tasks) > 0, f"{dag_id} has no tasks"
+
+
+def test_every_dag_declares_its_minimum_task_count() -> None:
+    dags = _dags()
+    undeclared = sorted(set(dags) - set(MINIMUM_TASKS))
+    assert not undeclared, f"DAG(s) with no minimum task count in this file: {undeclared}"
+    missing = sorted(set(MINIMUM_TASKS) - set(dags))
+    assert not missing, f"DAG(s) this file expects that did not parse: {missing}"
+    for dag_id, minimum in MINIMUM_TASKS.items():
+        count = len(dags[dag_id].tasks)
+        assert count >= minimum, f"{dag_id} has {count} task(s), at least {minimum} expected"
 
 
 def test_python_files_and_parsed_dags_agree() -> None:
     modules = {path.stem for path in DAG_FOLDER.glob("*.py") if not path.name.startswith("_")}
-    parsed = set(_dagbag().dags)
+    parsed = set(_dags())
+    assert len(modules) >= len(MINIMUM_TASKS)
     assert modules == parsed, f"DAG modules {modules} do not match parsed DAG ids {parsed}"
 
 
@@ -68,6 +111,7 @@ def test_the_source_tick_is_paused_and_touches_no_warehouse_pool() -> None:
     dag = _dagbag().dags.get("ops_source_tick")
     assert dag is not None, "ops_source_tick did not parse"
     assert dag.is_paused_upon_creation is True
+    assert len(dag.tasks) >= MINIMUM_TASKS["ops_source_tick"]
     for task in dag.tasks:
         assert task.pool == "default_pool", f"{task.task_id} holds pool {task.pool}"
 
@@ -99,6 +143,7 @@ def test_only_the_pooled_phases_hold_the_warehouse_pool(dag_id: str) -> None:
     than only on the pooled pair.
     """
     dag = _dagbag().dags[dag_id]
+    assert len(dag.tasks) >= MINIMUM_TASKS[dag_id]
     pooled = {task.task_id for task in dag.tasks if task.pool == "warehouse_access"}
     assert pooled == {"open_batches", "register"}, f"{dag_id} pools: {pooled}"
     for task in dag.tasks:
@@ -112,6 +157,8 @@ def test_register_and_gate_run_on_all_done(dag_id: str) -> None:
     dag = _dagbag().dags[dag_id]
     assert str(dag.get_task("register").trigger_rule) == "TriggerRule.ALL_DONE"
     assert str(dag.get_task("gate").trigger_rule) == "TriggerRule.ALL_DONE"
+    # A gate that read only the register summary passed a run whose open step failed.
+    assert dag.get_task("gate").upstream_task_ids == {"register", "open_batches"}
 
 
 @pytest.mark.parametrize("dag_id", INGEST_DAGS)
@@ -138,10 +185,25 @@ def test_one_asset_is_emitted_per_entity(dag_id: str) -> None:
 
 @pytest.mark.parametrize("dag_id", INGEST_DAGS)
 def test_the_extract_task_is_mapped_over_the_open_step(dag_id: str) -> None:
+    """The wiring half of the mapped-input rule.
+
+    The expansion input is the open step's return value, which exists only at run time, so a
+    DAG-level test can prove where it comes from and not that it is non-empty. The other half
+    is `test_open_phase.py`, which runs the open step against a throwaway warehouse and
+    asserts one allocation per contracted entity.
+    """
     dag = _dagbag().dags[dag_id]
     extract = dag.get_task("extract")
     assert extract.upstream_task_ids == {"open_batches"}
     assert "register" in extract.downstream_task_ids
+    # On a decorated mapped task `expand_input` is an empty placeholder and the real input is
+    # `op_kwargs_expand_input`. Measured in Airflow 3.3.2: asserting on the first reports a
+    # correctly wired DAG as mapped over nothing, and a test that only checked its type would
+    # have passed on the placeholder.
+    expand = getattr(extract, "op_kwargs_expand_input", None) or extract.expand_input
+    assert len(expand.value) >= 1, f"{dag_id}: extract is mapped over nothing"
+    sources = {getattr(operator, "task_id", None) for operator, _key in expand.iter_references()}
+    assert sources == {"open_batches"}, f"{dag_id}: extract is mapped over {sources}"
 
 
 def test_the_contract_root_resolves_in_this_layout() -> None:
@@ -155,3 +217,79 @@ def test_the_contract_root_resolves_in_this_layout() -> None:
     assert contract_root().is_dir()
     assert len(entities("core")) == EXPECTED_ENTITIES["ingest_core_banking"]
     assert len(entities("ref")) == EXPECTED_ENTITIES["ingest_reference_data"]
+
+
+FEED_DAGS = (
+    "ingest_fx_rates",
+    "ingest_card_settlements",
+    "ingest_sanctions_list",
+    "ingest_macro_series",
+)
+
+# One asset per landed entity, spec 006 section 8. The settlement file lands two.
+FEED_ASSETS = {
+    "ingest_fx_rates": {"ingest_fx_rates/fx_rates"},
+    "ingest_card_settlements": {
+        "ingest_card_settlements/settlements",
+        "ingest_card_settlements/settlement_totals",
+    },
+    "ingest_sanctions_list": {"ingest_sanctions_list/entities"},
+    "ingest_macro_series": {"ingest_macro_series/series"},
+}
+
+
+@pytest.mark.parametrize("dag_id", FEED_DAGS)
+def test_a_feed_dag_holds_the_warehouse_pool_only_where_it_touches_the_warehouse(dag_id) -> None:
+    dag = _dagbag().dags[dag_id]
+    assert len(dag.tasks) >= MINIMUM_TASKS[dag_id]
+    pooled = {task.task_id for task in dag.tasks if task.pool == "warehouse_access"}
+    assert pooled == {"open_batches", "register"}, f"{dag_id} pools: {pooled}"
+    for task in dag.tasks:
+        if task.task_id not in pooled:
+            assert task.pool == "default_pool", f"{task.task_id} holds pool {task.pool}"
+
+
+@pytest.mark.parametrize("dag_id", FEED_DAGS)
+def test_a_feed_dag_is_unscheduled_and_registers_on_all_done(dag_id) -> None:
+    dag = _dagbag().dags[dag_id]
+    assert dag.schedule is None and dag.catchup is False
+    assert str(dag.get_task("register").trigger_rule) == "TriggerRule.ALL_DONE"
+    assert str(dag.get_task("gate").trigger_rule) == "TriggerRule.ALL_DONE"
+    assert dag.get_task("gate").upstream_task_ids == {"register", "open_batches"}
+
+
+@pytest.mark.parametrize("dag_id", FEED_DAGS)
+def test_a_feed_dag_emits_one_asset_per_entity(dag_id) -> None:
+    outlets = _dagbag().dags[dag_id].get_task("register").outlets
+    names = {getattr(outlet, "name", None) for outlet in outlets}
+    assert len(outlets) >= 1
+    assert names == FEED_ASSETS[dag_id]
+
+
+@pytest.mark.parametrize("dag_id", FEED_DAGS)
+def test_a_feed_extract_is_mapped_over_the_open_step(dag_id) -> None:
+    extract = _dagbag().dags[dag_id].get_task("extract")
+    expand = getattr(extract, "op_kwargs_expand_input", None) or extract.expand_input
+    assert len(expand.value) >= 1, f"{dag_id}: extract is mapped over nothing"
+    sources = {getattr(operator, "task_id", None) for operator, _key in expand.iter_references()}
+    assert sources == {"open_batches"}
+
+
+def test_the_settlement_dag_waits_with_a_deferrable_sensor_that_holds_no_pool() -> None:
+    dag = _dagbag().dags["ingest_card_settlements"]
+    sensor = dag.get_task("wait_for_file")
+    assert type(sensor).__name__ == "InboundFileSensor"
+    assert sensor.pool == "default_pool"
+    assert hasattr(sensor, "execute_complete")
+    assert "discover_deliveries" in sensor.downstream_task_ids
+
+
+def test_the_macro_series_dag_checks_for_its_key_before_anything_else() -> None:
+    dag = _dagbag().dags["ingest_macro_series"]
+    check = dag.get_task("check_key")
+    assert (
+        type(check).__name__.lower().startswith("_shortcircuit")
+        or "ShortCircuit" in type(check).__name__
+    )
+    assert check.upstream_task_ids == set()
+    assert "discover_deliveries" in check.downstream_task_ids

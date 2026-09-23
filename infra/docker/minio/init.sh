@@ -13,6 +13,13 @@ done
 echo "minio-init: ensuring bucket ${LAKE_BUCKET}"
 mc mb --ignore-existing "local/${LAKE_BUCKET}"
 
+# The inbound bucket is where third parties deliver, before anything is ingested. It is a
+# separate bucket rather than a prefix of the lake because a delivery carries identifiers in
+# the clear, and the lake is the one place that must never hold one (ADR 0005).
+echo "minio-init: ensuring bucket ${INBOUND_BUCKET}"
+mc mb --ignore-existing "local/${INBOUND_BUCKET}"
+mc anonymous set none "local/${INBOUND_BUCKET}"
+
 echo "minio-init: ensuring prefixes"
 for prefix in bronze quarantine; do
     if ! mc stat "local/${LAKE_BUCKET}/${prefix}/.keep" >/dev/null 2>&1; then

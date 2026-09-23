@@ -2,7 +2,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-.PHONY: help install init-env lint format test test-dags test-integration up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance ingest-integrity seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance dbt-build dbt-docs dq clean
+.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe fault-demo up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance feeds-acceptance ingest-integrity seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list dbt-build dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -30,13 +30,27 @@ test: ## Run the unit tests, which need neither Airflow nor a running stack
 test-dags: ## Run the DAG integrity tests, natively or in the project image
 	uv run python scripts/run_dag_tests.py
 
-test-integration: ## Run the smoke tests inside the running stack, then check for schema drift
+test-offline: ## Run the unit and DAG suites in a container with no network at all
+	uv run python scripts/run_offline_tests.py
+
+test-integration: ## Run the smoke tests inside the running stack (FORCE=1 over a loaded warehouse)
+	docker compose exec -T -e FORCE=$(FORCE) airflow-scheduler bash -c "python /opt/airflow/scripts/integration_guard.py"
 	@echo "test-integration: running inside airflow-scheduler, where the volumes and network are"
 	docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow && pytest -q -m integration tests"
 	$(MAKE) schema-check
 	@echo "test-integration: generator integration tests run on the host, where the Docker socket is"
 	uv run pytest -q -m integration generator/tests
 	$(MAKE) seed-verify
+
+fault-demo: ## Show retry and no partial registration against injected faults (in the stack)
+	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/fault_demo.py"
+
+feeds-probe: ## Compare the live feed APIs with the recorded fixtures (RECORD=1 re-records)
+ifdef RECORD
+	uv run python scripts/feeds_probe.py --record
+else
+	uv run python scripts/feeds_probe.py
+endif
 
 up: ## Generate .env if absent, validate it, then start the stack and wait for health
 	uv run python scripts/stack_up.py
@@ -88,8 +102,8 @@ extract: ## Run one interval outside Airflow (DATE=YYYY-MM-DD, SCHEMA=core|ref)
 	@echo "extract: running inside airflow-scheduler, where the warehouse volume is"
 	docker compose exec -T -e DATE=$(DATE) -e SCHEMA=$(or $(SCHEMA),core) airflow-scheduler bash -c "python /opt/airflow/scripts/extract_cli.py"
 
-backfill: ## Tick and ingest one day at a time (FROM=YYYY-MM-DD TO=YYYY-MM-DD), resumable
-	uv run python scripts/backfill.py --from $(FROM) --to $(TO)
+backfill: ## Tick, deliver and ingest one day at a time (FROM= TO= [DEFER_DEMO=]), resumable
+	uv run python scripts/backfill.py --from $(FROM) --to $(TO) $(if $(DEFER_DEMO),--defer-demo $(DEFER_DEMO))
 
 bronze-stats: ## Landed and quarantined counts by entity and ingest date (ALL=1 for every status)
 	docker compose exec -T -e ALL=$(ALL) airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_stats.py"
@@ -99,6 +113,9 @@ bronze-pii-scan: ## Scan every registered bronze object for a cleartext identifi
 
 bronze-acceptance: ## Report specification 005's evidence against what the backfill produced
 	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_acceptance.py"
+
+feeds-acceptance: ## Report specification 006's evidence against what the backfill produced
+	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/feeds_acceptance.py"
 
 ingest-integrity: ## Check the registry against the lake and the watermarks
 	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/ingest_integrity.py"
@@ -128,6 +145,12 @@ tick-to: ## Advance the simulated source to DATE, one transaction per day
 
 tick-status: ## Print the simulation state and the last ten ticks
 	uv run python -m generator.mutation --status
+
+generate-settlement-files: ## Deliver the card clearing files due on DATE to the inbound bucket
+	uv run python -m generator.settlement --date $(DATE)
+
+publish-sanctions-list: ## Publish the synthetic sanctions list for DATE to the inbound bucket
+	uv run python -m generator.sanctions --date $(DATE)
 
 tick-acceptance: ## Seed, tick and report specification 004's evidence (REPLAY=1, TICKS=n)
 ifdef REPLAY

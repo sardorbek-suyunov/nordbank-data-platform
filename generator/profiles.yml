@@ -741,6 +741,45 @@ defaults:
       suspense: "9000"
       fx_conversion: "9100"
 
+  settlement:
+    # The card processor's clearing files, spec 006 section 2. docs/generator_realism.md
+    # justifies each number and scripts/check_docs.py checks that the two agree.
+    processor_id: NBKPROC
+    # Both networks settle one calendar day after clearing. Calendar rather than business days
+    # is a simplification the realism document lists.
+    settlement_lag_days: 1
+    # The ledger line a card item settles through: the cash line of its posting batch, negated,
+    # is what the bank owes the network.
+    cash_account: "1000"
+    # A file held back and delivered late_by_days after its settlement date.
+    late_file_share: 0.05
+    late_by_days: 3
+    # Per detail record, damaged in transit after the trailer was computed.
+    malformed_record_share: 0.01
+    malformed_kind_mix:
+      unparseable_amount: 0.25
+      invalid_date: 0.25
+      missing_required_field: 0.25
+      wrong_field_count: 0.25
+    # Per network and currency in a file. A break alters one item's amount by a fraction of
+    # that cell's total, drawn from the band for its intended severity: a warn band well under
+    # the 0.1 per cent threshold, an error band well over it.
+    break_warn_share: 0.03
+    break_error_share: 0.03
+    break_warn_relative_min: 0.0001
+    break_warn_relative_max: 0.0008
+    break_error_relative_min: 0.005
+    break_error_relative_max: 0.05
+
+  sanctions_list:
+    # The synthetic sanctions list, ADR 0015. A list of a few hundred marker-named entities
+    # changing weekly: enough for snapshot versioning to have real changes to land, nothing
+    # like the real list's volume, which the realism document says.
+    base_entities: 300
+    weekly_additions: 5
+    weekly_removals: 2
+    pep_share: 0.3
+
   loading:
     # Rows per COPY statement for the ordinary tables, which bounds the payload held in memory
     # on both sides of the pipe rather than the trigger queue.

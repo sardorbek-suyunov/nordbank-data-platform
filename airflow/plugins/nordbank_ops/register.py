@@ -2,9 +2,10 @@
 
 Everything this step does is one DuckDB transaction: mark the batches that wrote as
 `registered`, advance their watermarks to the observed maximum, upsert the vault, load the
-quarantine index, write the reconciliation rows and record the contract versions in force. A
-failure anywhere rolls all of it back, so every batch stays `written` and every watermark stays
-where it was, and the next run repeats rather than skips.
+quarantine index and write the reconciliation rows. The contract versions are recorded by the
+open step, which selects from them (spec 006 section 5). A failure anywhere rolls all of it
+back, so every batch stays `written` and every watermark stays where it was, and the next run
+repeats rather than skips.
 
 Two things are outside the transaction and it matters that they are.
 
@@ -306,7 +307,7 @@ def write_reconciliation(
     )
 
 
-# --- drift and contract versions -----------------------------------------------------------
+# --- drift -----------------------------------------------------------------------------
 
 
 def record_drift(connection: Any, batch: dict, observations: list[dict], now: dt.datetime) -> int:
@@ -332,26 +333,6 @@ def record_drift(connection: Any, batch: dict, observations: list[dict], now: dt
             ],
         )
     return len(observations)
-
-
-def record_contract_version(connection: Any, contract, now: dt.datetime) -> None:
-    connection.execute(
-        """
-        insert into meta.contract_version (
-            source_system, entity, contract_version, dictionary_revision, contract_fingerprint,
-            in_force_from
-        ) values (?, ?, ?, ?, ?, ?)
-        on conflict (source_system, entity, contract_version) do nothing
-        """,
-        [
-            contract.source_system,
-            contract.entity,
-            contract.contract_version,
-            contract.dictionary_revision,
-            contract.fingerprint,
-            now,
-        ],
-    )
 
 
 # --- the phase --------------------------------------------------------------------------------
@@ -388,7 +369,6 @@ def register_run(
                     f"batch {entry['batch_id']} vanished from the registry"
                 )
 
-            record_contract_version(connection, contract, now)
             report.drift_rows += record_drift(connection, batch, entry.get("drift", []), now)
 
             if entry["status"] == "failed":

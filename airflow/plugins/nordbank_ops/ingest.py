@@ -176,16 +176,25 @@ def build_ingest_dag(*, dag_id: str, source_schema: str, doc: str):
         # `retries=0`: the gate's failure is a verdict on the run rather than a mishap. A run
         # with a failed batch will still have one on the retry, so retrying only delays the
         # answer by the backoff. `ops_source_tick` sets it to zero at M3 for the same reason.
+        # The gate also takes the open step's allocation. Measured: with the open step failed,
+        # extract was upstream_failed, register ran on all_done and registered nothing, the gate
+        # read a summary with no failures, and being the only leaf task it made the run
+        # succeed having done nothing. Requiring the allocation fails that run instead.
         @task(trigger_rule="all_done", retries=0)
-        def gate(summary: dict) -> None:
+        def gate(summary: dict, allocated: list[dict]) -> None:
             from nordbank_ops.phases import gate_phase
 
+            if summary is None or allocated is None:
+                raise RuntimeError(
+                    "the run allocated or registered nothing because an earlier step failed; "
+                    "see the failed task"
+                )
             gate_phase(summary)
 
         opened = open_batches()
         extracted = extract.expand(batch=opened)
         registered = register()
         extracted >> registered
-        gate(registered)
+        gate(registered, opened)
 
     return _dag()

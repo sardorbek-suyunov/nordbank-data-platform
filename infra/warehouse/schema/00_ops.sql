@@ -154,3 +154,61 @@ create table if not exists ops.task_failure (
     reason varchar not null,
     failed_at timestamptz not null
 );
+
+-- File and snapshot identity (spec 006 section 1, ADR 0013). One row per distinct content that
+-- has landed, keyed on the SHA-256 of the bytes, so the same file reprocessed never lands twice
+-- and a file renamed but unchanged is recognised. Written by the register step when the file's
+-- batch registers, and not before: a file whose batch failed is not ingested, and is picked up
+-- again once the reason it failed is resolved.
+--
+-- `business_date` is the settlement date a file covers or the publication date of a snapshot.
+-- `publisher_version` is a snapshot's own version string, which identifies a publication and
+-- is recorded, but is not the identity: the publisher can issue a new version string over the
+-- same content, and that is a no-op here.
+create table if not exists ops.ingested_file (
+    content_checksum varchar primary key,
+    source_system varchar not null,
+    entity varchar not null,
+    object_key varchar not null,
+    byte_size bigint not null,
+    business_date date,
+    publisher_version varchar,
+    batch_id varchar not null,
+    first_ingested_at timestamptz not null
+);
+
+-- Every time discovery sees a file, and what it concluded. The evidence that a reprocessed or
+-- renamed file was recognised rather than merely not duplicated: a sighting of a known checksum
+-- under a new key is recorded as `already_ingested` with the batch it landed as.
+create table if not exists ops.file_sighting (
+    content_checksum varchar not null,
+    source_system varchar not null,
+    object_key varchar not null,
+    ingest_date date not null,
+    outcome varchar not null,
+    batch_id varchar,
+    triggering_run_id varchar not null,
+    seen_at timestamptz not null,
+    check (outcome in ('new', 'already_ingested'))
+);
+
+-- One row per request an interval feed made: how many attempts it took, the status of the
+-- last one, and whether it landed rows, found the date unpublished, or failed. A date the
+-- publisher did not publish is `absent` with zero rows, which is how bronze records a gap
+-- without writing a row for it. A request that was answered inside an interval that failed as
+-- a whole is `discarded`: it succeeded, and nothing was written, because an interval lands
+-- entirely or not at all.
+create table if not exists ops.feed_request (
+    batch_id varchar not null,
+    source_system varchar not null,
+    entity varchar not null,
+    request_key varchar not null,
+    attempts integer not null,
+    final_status integer,
+    outcome varchar not null,
+    detail varchar,
+    rows_landed bigint not null,
+    requested_at timestamptz not null,
+    primary key (batch_id, request_key),
+    check (outcome in ('landed', 'absent', 'failed', 'discarded'))
+);

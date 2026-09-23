@@ -1120,6 +1120,7 @@ dev = [
     { name = "pyarrow" },
     { name = "pytest" },
     { name = "pytz" },
+    { name = "requests" },
     { name = "ruff" },
     { name = "sqlfluff" },
 ]
@@ -1139,6 +1140,7 @@ dev = [
     { name = "pyarrow", specifier = ">=21.0.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytz", specifier = ">=2025.2" },
+    { name = "requests", specifier = ">=2.32" },
     { name = "ruff", specifier = ">=0.16.8" },
     { name = "sqlfluff", specifier = ">=4.3.0" },
 ]

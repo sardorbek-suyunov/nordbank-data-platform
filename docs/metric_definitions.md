@@ -385,15 +385,30 @@ absolute term keeps a tiny file from escalating over a rounding difference. Both
 in the currency the comparison happened in, so the thresholds do not move with the exchange
 rate.
 
+The relative term is taken against the **absolute** file total. A day on which refunds outweigh
+purchases in one currency has a negative total, and 0.1 per cent of a negative number is a
+negative threshold that every difference exceeds, which would make each break on such a day an
+`error` for its sign rather than its size. A file total of exactly zero has no relative room at
+all, so any difference on it is an `error`; that is the correct reading, since a netted-out day
+has nothing to be rounded against. Specification 006 fixed both while implementing the feed.
+
 *A late-arriving item posts to a later date than it settled on, and that is a timing break
 rather than a defect.* The source presents an offline card transaction days after the customer
 made it, and its ledger entry posts to the period that is open when it arrives, not to the
 business date — posting into a closed period would restate a day already reported. The network
 file names the settlement date, so the two sides land on different dates for the same item. The
 comparison is still per settlement date, so the difference appears as a break, and materiality
-governs the response exactly as it does for any other. The resolution belongs to M4, which owns
-the settlement feed and decides whether it presents the item on its business date or on its
-clearing date; what is fixed here is that the ledger side never moves.
+governs the response exactly as it does for any other. The ledger side never moves.
+
+*Resolved at M4: the file presents an item on its clearing date, and the timing break does not
+arise.* A processor clears an item when it is presented, which for a late offline item is the
+day it reached the bank, and that is the day the ledger posts it. The clearing file for
+settlement date S covers the items the ledger posted on S minus the network's lag, so the two
+sides land on the same date for a late item as for any other. The item's business date travels
+in the file as `transaction_date` for anyone who needs it. The breaks this feed produces are
+therefore the ones the processor's data put there, and a timing difference is not one of them;
+a feed that presented on the business date would reintroduce it, and this paragraph says what
+it would look like.
 
 **Source columns.** `sl_card_settlements.file_total_amount`,
 `sl_card_settlements.settlement_currency`, `sl_card_settlements.settlement_date`,
@@ -413,8 +428,15 @@ of days on which every expected batch for that source was fresh.
 | Core banking | 06:00 UTC daily | 24 hours plus a 2 hour grace |
 | ECB FX rates | Around 16:00 CET on ECB working days, which is 15:00 UTC in summer and 14:00 UTC in winter | 3 hours after the publication time in force on that date; the window is computed from CET and never from a fixed UTC hour |
 | Card settlement files | 08:00 UTC daily | 24 hours plus a 4 hour grace, because the file is produced by a third party |
-| Sanctions list | 09:00 UTC each Monday | 8 days |
+| Sanctions list | 09:00 UTC each Monday, the platform's chosen ingestion cadence | 8 days |
 | FRED macro series | 09:00 UTC on the 15th of the month | 35 days |
+
+The sanctions row measures the cadence the platform chose, not the publisher's. The
+OpenSanctions consolidated list exports four times a day, and its contract records that as the
+publisher's behaviour; the platform ingests weekly because a weekly re-screen is how the
+control is operated, and the SLA measures whether the platform kept to its own choice. A
+publisher that stopped exporting would show here only once the platform's weekly run found
+nothing new to land, which is the platform's freshness rather than the feed's.
 
 **Source columns.** `ops.batch_registry.source_system`, `ops.batch_registry.ended_at`,
 `ops.batch_registry.status`, `ops.freshness_sla.window_hours`. The first was named
