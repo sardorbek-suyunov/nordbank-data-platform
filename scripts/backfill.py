@@ -64,9 +64,11 @@ POLL_SECONDS = 3
 RUN_TIMEOUT_SECONDS = 900
 
 RESOLUTION = (
-    "A breaking drift is resolved by a person, not by this loop: bump `contract_version` in "
-    "the entity's contract under `contracts/corebank/`, describe the source's new shape, "
-    "commit it, and run `make backfill` again. It resumes from this day."
+    "A breaking drift is resolved by a person, not by this loop: move the entity's contract "
+    "to `contracts/<source>/history/<entity>.v<N>.yml`, write the next version describing the "
+    "source's new shape with `in_force_from` set to this day, commit both, and run "
+    "`make backfill` again. It resumes from this day, and days before it keep validating "
+    "against the version that was in force then."
 )
 
 

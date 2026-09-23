@@ -165,3 +165,25 @@ Silver, dbt, FX gap-filling, sanctions matching, the reconciliation mart.
     delivered by 005.
 19. All four checks pass; delivered as a pull request on `feat/M4-external-feeds`
     with all four green.
+
+## Amendments
+
+Appended during implementation. The scope text above is left as issued; the protocol is in
+`docs/specs/README.md`.
+
+### 2026-09-23 — contract dates are authored against one pinned anchor
+
+Section 5's selection, as ruled before implementation, gives every contract an authored
+source-time `in_force_from`. The simulated source fires its scripted drift at an offset from the
+seed anchor (`generator/drift/timeline.py`), so the business day on which `payments` widens is
+`anchor + 37` and differs for every anchor, while an authored date is absolute. An authored date
+is therefore correct for exactly one anchor.
+
+The committed contracts are authored against `ACCEPTANCE_ANCHOR`, 2026-07-20, named once in the
+timeline module, and a unit test asserts that every contract version accepting a scripted event
+takes over on the day that event fires at that anchor. The acceptance procedure seeds at that
+anchor rather than at the runbook's `today − window` example. That still meets the constraint
+the runbook states — the window must end on or before today, and 2026-07-20 plus sixty days is
+2026-09-18 — and it is the anchor specification 005's acceptance run used, so the two
+specifications' evidence describes one history. ADR 0014 records the decision and the
+restriction it places on exercising the repository at other anchors.

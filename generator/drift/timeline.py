@@ -34,6 +34,16 @@ from schema_contract import Column  # noqa: E402
 COLUMN_ADDED = "column_added"
 TYPE_WIDENED = "type_widened"
 
+# The anchor the acceptance history is seeded at, and therefore the anchor every committed
+# contract's `in_force_from` is authored against. The two cannot both be relative: an event
+# fires at an offset from the anchor so that any anchor reaches it, while a contract states the
+# business day it takes over from, which in a real deployment is a fixed date. So the contracts
+# are written for one anchor, it is named here once, and a unit test asserts that every
+# contract version accepting a scripted event takes over on the day that event fires at this
+# anchor. 2026-07-20 plus sixty days is 2026-09-18, which is behind the real clock, as a
+# backfill requires; it is also the anchor specification 005's acceptance run used.
+ACCEPTANCE_ANCHOR = dt.date(2026, 7, 20)
+
 
 @dataclass(frozen=True)
 class DriftEvent:
