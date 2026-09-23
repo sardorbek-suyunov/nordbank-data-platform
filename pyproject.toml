@@ -31,6 +31,10 @@ dev = [
     # neither Airflow nor a running stack.
     "pyarrow>=21.0.0",
     "boto3>=1.40.0",
+    # The interval feeds fetch over HTTP with requests, which the Airflow image carries. It is
+    # here for the same reason as the two above: `make test` exercises the retry policy against
+    # recorded responses on the host, with no network and no stack.
+    "requests>=2.32",
 ]
 # Airflow is a separate group: it does not import on every host this project is developed on,
 # so `uv sync` must not put a broken installation in the default environment. CI installs it
