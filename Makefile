@@ -30,7 +30,8 @@ test: ## Run the unit tests, which need neither Airflow nor a running stack
 test-dags: ## Run the DAG integrity tests, natively or in the project image
 	uv run python scripts/run_dag_tests.py
 
-test-integration: ## Run the smoke tests inside the running stack, then check for schema drift
+test-integration: ## Run the smoke tests inside the running stack (FORCE=1 over a loaded warehouse)
+	docker compose exec -T -e FORCE=$(FORCE) airflow-scheduler bash -c "python /opt/airflow/scripts/integration_guard.py"
 	@echo "test-integration: running inside airflow-scheduler, where the volumes and network are"
 	docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow && pytest -q -m integration tests"
 	$(MAKE) schema-check
