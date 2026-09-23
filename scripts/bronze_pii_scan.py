@@ -53,10 +53,19 @@ def classified_identifier_columns(cursor) -> list[tuple[str, str, str]]:
 
 
 def registered_objects(connection) -> list[str]:
+    """Every bronze prefix of a registered batch, and every quarantine prefix of any batch.
+
+    Quarantine is scanned for a failed batch too: a file refused whole for breaking drift is
+    quarantined record by record with its payload, and a cleartext identifier there would be as
+    much a leak as one in bronze (specification 006 criterion 12).
+    """
     rows = connection.execute(
-        "select object_prefix from ops.batch_registry where status = 'registered'"
+        "select object_prefix, status from ops.batch_registry "
+        "where status in ('registered', 'failed')"
     ).fetchall()
-    return [row[0] for row in rows]
+    prefixes = [prefix for prefix, status in rows if status == "registered"]
+    prefixes += ["quarantine/" + prefix.split("/", 1)[1] for prefix, _status in rows]
+    return prefixes
 
 
 def main() -> int:
@@ -96,8 +105,9 @@ def main() -> int:
                 break
 
     print(
-        f"bronze-pii-scan: {len(keys)} object(s) under {len(set(prefixes))} registered "
-        f"prefix(es), against {len(pairs)} vault value(s)"
+        f"bronze-pii-scan: {len(keys)} object(s), "
+        f"{sum(1 for k in keys if k.startswith('quarantine/'))} of them quarantine, under "
+        f"{len(set(prefixes))} prefix(es), against {len(pairs)} vault value(s)"
     )
     # A scan of nothing, or for nothing, finds nothing, and would report that as a pass.
     if not keys or not usable:
@@ -132,7 +142,10 @@ def main() -> int:
             print(f"  token {token} ({length} bytes) in {key}")
         return 1
 
-    print("\nbronze-pii-scan: no cleartext identifier found in any registered bronze object")
+    print(
+        "\nbronze-pii-scan: no cleartext identifier found in any registered bronze object or "
+        "any quarantine object"
+    )
     if unproven:
         print(
             "bronze-pii-scan: these classified identifier columns supplied no value to the "
