@@ -25,15 +25,31 @@ create table if not exists meta.pii_vault (
     created_at timestamptz not null
 );
 
--- The contract version in force per entity, and when. A new row is written when a contract's
--- version changes, so the history of what the platform agreed to accept is readable.
+-- Every contract version per entity and the business day it applies from. The open step
+-- selects the version in force for a batch from here, by the batch's interval, so replaying a
+-- day from before a version bump validates against the version of that day without anyone
+-- checking out an old file.
+--
+-- Two times, and they answer different questions. `in_force_from` is **source time**: the first
+-- business day the version applies to, authored in the contract, null for a version that
+-- applies from the start of history. `first_seen_at` is **real time**: when this platform first
+-- recorded the version. Specification 005 had one column, named `in_force_from` and holding the
+-- second, which made selecting by interval compare a simulated day against a wall clock.
+--
+-- The contract body is not stored here. It is on disk, the current version beside its
+-- superseded ones under `history/`, and the fingerprint is what ties a row to a file: a
+-- version whose file no longer matches its recorded fingerprint is refused, because an edited
+-- old contract would change a replay silently. `dictionary_revision` is null for a contract
+-- authored against a published file or API specification rather than bootstrapped from the
+-- data dictionary.
 create table if not exists meta.contract_version (
     source_system varchar not null,
     entity varchar not null,
     contract_version integer not null,
-    dictionary_revision varchar not null,
+    dictionary_revision varchar,
     contract_fingerprint varchar not null,
-    in_force_from timestamptz not null,
+    in_force_from date,
+    first_seen_at timestamptz not null,
     primary key (source_system, entity, contract_version)
 );
 

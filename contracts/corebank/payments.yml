@@ -16,6 +16,12 @@
 # narrower one did, so the platform accepts it, and this is the deliberate decision the halt
 # asked a person to take. The generator writes thirteen characters into the column at every
 # profile, so nothing in the data changes; what changed is the source's declared shape.
+#
+# `in_force_from` is the business day the widening fired in the acceptance history, which is
+# seeded at `ACCEPTANCE_ANCHOR` in generator/drift/timeline.py: 2026-07-20 plus the event's
+# thirty-seven days. The drift timeline is relative to the anchor and this date is absolute, so
+# it is correct for that anchor and no other; a unit test asserts the two agree. Version 1 is
+# under history/, and a batch for a day before this one is validated against it.
 source_system: corebank
 source_schema: core
 entity: payments
@@ -23,6 +29,7 @@ contract_version: 2
 watermark_column: updated_at
 primary_key: payment_id
 dictionary_revision: sha256:e5d088874e5b22e7
+in_force_from: 2026-08-26
 columns:
 - name: payment_id
   type: bigint

@@ -1,4 +1,4 @@
-# Data contract for core.loan_installments.
+# Data contract for core.payments.
 #
 # Bootstrapped from docs/data_dictionary.md once, then hand-authored. It is not
 # regenerated on every run: the dictionary records what the source is, this records
@@ -10,45 +10,73 @@
 # commit, when the platform decides to accept something new.
 source_system: corebank
 source_schema: core
-entity: loan_installments
+entity: payments
 contract_version: 1
 watermark_column: updated_at
-primary_key: loan_installment_id
+primary_key: payment_id
 dictionary_revision: sha256:e5d088874e5b22e7
 in_force_from: null
 columns:
-- name: loan_installment_id
+- name: payment_id
   type: bigint
   nullable: false
   classification: non-personal
-- name: loan_id
+- name: payment_reference
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: account_id
   type: bigint
   nullable: false
   classification: pseudonymous_key
-- name: installment_number
-  type: smallint
+- name: payment_type_code
+  type: character varying(40)
   nullable: false
   classification: non-personal
-- name: due_date
-  type: date
+- name: payment_scheme_code
+  type: character varying(40)
   nullable: false
   classification: non-personal
-- name: due_amount
-  type: numeric(18,4)
+- name: payment_status_code
+  type: character varying(40)
   nullable: false
   classification: non-personal
-- name: paid_amount
-  type: numeric(18,4)
+- name: initiated_at
+  type: timestamp with time zone
   nullable: false
   classification: non-personal
-- name: paid_at
+- name: booked_at
   type: timestamp with time zone
   nullable: true
   classification: non-personal
-- name: installment_currency_code
+- name: settled_at
+  type: timestamp with time zone
+  nullable: true
+  classification: non-personal
+- name: payment_amount
+  type: numeric(18,4)
+  nullable: false
+  classification: non-personal
+- name: payment_currency_code
   type: character(3)
   nullable: false
   classification: non-personal
+- name: counterparty_iban
+  type: character varying(34)
+  nullable: true
+  classification: identifier
+- name: counterparty_name
+  type: character varying(200)
+  nullable: true
+  classification: identifier
+- name: counterparty_country_code
+  type: character(2)
+  nullable: true
+  classification: non-personal
+- name: remittance_reference
+  type: character varying(140)
+  nullable: true
+  classification: quasi-identifier
 - name: created_at
   type: timestamp with time zone
   nullable: false

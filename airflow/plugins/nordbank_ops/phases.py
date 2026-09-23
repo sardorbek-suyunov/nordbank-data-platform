@@ -36,13 +36,20 @@ for _candidate in ("/opt/airflow", "/opt/airflow/scripts"):
         sys.path.insert(0, _candidate)
 
 
-def _contracts(source_schema: str) -> dict:
-    from data_contract import load_all
-
+def _chains(source_schema: str) -> dict:
+    """Every version of every contract for one source schema, oldest first, keyed on entity."""
+    from nordbank_ops.contracts import load_chains
     from nordbank_ops.ingest import SOURCE_SYSTEM, contract_root
 
-    everything = load_all(contract_root() / SOURCE_SYSTEM)
-    return {e: c for e, c in everything.items() if c.source_schema == source_schema}
+    everything = load_chains(contract_root() / SOURCE_SYSTEM)
+    return {e: v for e, v in everything.items() if v[-1].source_schema == source_schema}
+
+
+def _contract(source_schema: str, entity: str, version: int):
+    """The contract a batch was opened under, which is not necessarily the one on disk."""
+    from nordbank_ops.contracts import body
+
+    return body(_chains(source_schema), entity, version)
 
 
 def _interval(context: dict) -> tuple[dt.datetime, dt.datetime, dt.date]:
@@ -61,10 +68,17 @@ def _interval(context: dict) -> tuple[dt.datetime, dt.datetime, dt.date]:
 
 
 def open_phase(*, source_schema: str, context: dict) -> list[dict]:
-    """Allocate a batch per entity in one warehouse transaction."""
+    """Allocate a batch per entity in one warehouse transaction.
+
+    The contract version is chosen here, by the interval, from `meta.contract_version`, and
+    stored on the batch. Every version on disk is recorded first, so a bump committed since the
+    last run is visible to the selection and a recorded version whose file was edited is
+    refused before anything is allocated.
+    """
+    from nordbank_ops import contracts as contract_versions
     from nordbank_ops import registry, warehouse
 
-    contracts = _contracts(source_schema)
+    chains = _chains(source_schema)
     interval_start, interval_end, ingest_date = _interval(context)
     run_id = context["dag_run"].run_id
     opened_at = dt.datetime.now(dt.UTC)
@@ -74,8 +88,13 @@ def open_phase(*, source_schema: str, context: dict) -> list[dict]:
     with warehouse.connect(read_only=False) as connection:
         connection.execute("begin transaction")
         try:
-            for entity in sorted(contracts):
-                contract = contracts[entity]
+            contract_versions.sync(connection, chains, opened_at)
+            for entity in sorted(chains):
+                current = chains[entity][-1]
+                version = contract_versions.select(
+                    connection, current.source_system, entity, interval_start.date()
+                )
+                contract = contract_versions.body(chains, entity, version)
                 held = registry.watermark(connection, contract.source_system, entity)
                 watermark_from = None if held is None else held - lag
                 key = registry.BatchKey(
@@ -99,6 +118,7 @@ def open_phase(*, source_schema: str, context: dict) -> list[dict]:
                     {
                         "entity": entity,
                         "batch_id": batch["batch_id"],
+                        "contract_version": int(batch["contract_version"]),
                         "ingest_date": batch["ingest_date"].isoformat(),
                         "opened_at": batch["opened_at"].isoformat(),
                         "watermark_from": (
@@ -123,7 +143,7 @@ def extract_phase(*, source_schema: str, batch: dict, context: dict) -> dict:
     from nordbank_ops.extract import extract_entity
     from nordbank_ops.tokenise import Tokeniser
 
-    contract = _contracts(source_schema)[batch["entity"]]
+    contract = _contract(source_schema, batch["entity"], int(batch["contract_version"]))
     tokeniser = Tokeniser.from_environment()
     resolved = {
         "batch_id": batch["batch_id"],
@@ -181,7 +201,7 @@ def register_phase(*, source_schema: str, context: dict) -> dict:
     from nordbank_ops import clients, register, registry, warehouse
     from nordbank_ops.tokenise import Tokeniser
 
-    contracts = _contracts(source_schema)
+    chains = _chains(source_schema)
     interval_start, _interval_end, source_date = _interval(context)
     now = dt.datetime.now(dt.UTC)
 
@@ -192,7 +212,20 @@ def register_phase(*, source_schema: str, context: dict) -> dict:
     reported = {r["entity"] for r in reports}
 
     with warehouse.connect(read_only=False) as connection:
-        for entity in sorted(contracts):
+        # The contract each batch was opened under, read back from the registry, so a batch is
+        # registered against the version it was validated against. The current version stands
+        # in only for an entity with no batch this run, which is registered as failed.
+        from nordbank_ops.contracts import body
+
+        contracts = {entity: versions[-1] for entity, versions in chains.items()}
+        for report in reports:
+            opened = registry.batch(connection, report["batch_id"])
+            if opened is not None:
+                contracts[report["entity"]] = body(
+                    chains, report["entity"], int(opened["contract_version"])
+                )
+
+        for entity in sorted(chains):
             if entity in reported:
                 continue
             key = registry.BatchKey(
