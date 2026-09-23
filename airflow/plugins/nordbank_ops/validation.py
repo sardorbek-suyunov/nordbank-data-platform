@@ -102,17 +102,32 @@ def matches_type(value: Any, declared: str) -> bool:
         return isinstance(value, dt.datetime)
     if base in ("double precision", "real"):
         return isinstance(value, float | int) and not isinstance(value, bool)
+    if base == "json":
+        # A nested value an authored contract carries whole, such as a FollowTheMoney entity's
+        # list of names. It is a list or a mapping as the source delivered it, never a string
+        # that merely looks like one.
+        return isinstance(value, list | dict)
     # An unknown declared type is not silently accepted: a contract naming a type this does not
     # understand is a contract the gate cannot enforce, and saying so is better than passing
     # everything through.
     raise ValueError(f"contract declares a type this gate does not understand: {declared!r}")
 
 
+def record_key(record: dict, contract):
+    """The record's primary key: the value for a single-column key, a tuple for a composite."""
+    keys = getattr(contract, "keys", (contract.primary_key,))
+    if len(keys) == 1:
+        return record.get(keys[0])
+    return tuple(record.get(key) for key in keys)
+
+
 def validate_record(record: dict, contract, seen_keys: set) -> Rejection | None:
     """The first reason this record is refused, or None."""
-    key_value = record.get(contract.primary_key)
-    if key_value is None:
-        return Rejection(contract.primary_key, QuarantineReason.PRIMARY_KEY_NULL, None)
+    keys = getattr(contract, "keys", (contract.primary_key,))
+    key_value = record_key(record, contract)
+    for key in keys:
+        if record.get(key) is None:
+            return Rejection(key, QuarantineReason.PRIMARY_KEY_NULL, None)
     if key_value in seen_keys:
         return Rejection(
             contract.primary_key,
@@ -147,7 +162,7 @@ def validate(records: Iterable[dict], contract) -> ValidationResult:
     for record in records:
         rejection = validate_record(record, contract, seen_keys)
         if rejection is None:
-            seen_keys.add(record[contract.primary_key])
+            seen_keys.add(record_key(record, contract))
             result.landed.append(record)
         else:
             result.rejected.append((record, rejection))

@@ -1,0 +1,58 @@
+# Data contract for the trailer records of the card processor's clearing file.
+#
+# One row per network and settlement currency: the processor's own count and amount total over
+# the detail records it wrote, before transmission. These are the file side of the settlement
+# reconciliation (Q15, metric_definitions.md), which compares them with the ledger; the detail
+# records are reconciled separately, against the trailer's count, by landed plus quarantined.
+source_system: cardnet
+source_schema: file
+entity: settlement_totals
+kind: file
+contract_version: 1
+in_force_from: null
+source_of_truth:
+  publisher: Nordbank card processor (simulated)
+  document: Card processor clearing file, layout 1, contracts/cardnet/README.md
+primary_key: [network, settlement_currency]
+format:
+  delimiter: ","
+  quoting: rfc4180
+  encoding: utf-8
+  record_type: T
+  fields: [record_type, network, settlement_currency, record_count, amount_total]
+columns:
+- name: record_type
+  type: character(1)
+  nullable: false
+  classification: non-personal
+- name: network
+  type: character varying(40)
+  nullable: false
+  classification: non-personal
+- name: settlement_currency
+  type: character(3)
+  nullable: false
+  classification: non-personal
+- name: record_count
+  type: bigint
+  nullable: false
+  classification: non-personal
+- name: amount_total
+  type: numeric(18,4)
+  nullable: false
+  classification: non-personal
+- name: settlement_date
+  type: date
+  nullable: false
+  classification: non-personal
+  origin: header
+- name: file_sequence
+  type: integer
+  nullable: false
+  classification: non-personal
+  origin: header
+- name: processor_id
+  type: character varying(20)
+  nullable: false
+  classification: non-personal
+  origin: header
