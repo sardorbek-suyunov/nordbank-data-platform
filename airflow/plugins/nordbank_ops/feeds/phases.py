@@ -655,13 +655,34 @@ def flatten_reports(pulled) -> list[dict]:
     return out
 
 
+def current_reports(reports: list[dict], allocations) -> list[dict]:
+    """Only the reports for batches this run's open step allocated.
+
+    Measured on a cleared re-run of a settlement day whose file had already landed: the open
+    step allocated nothing, the mapped extract task expanded to no instances and its earlier
+    instance was marked removed, and pulling its XCom still returned the earlier try's report.
+    The register step then tried to register a batch that was already registered, and the
+    registry refused. A report is this run's only if its batch is in this run's allocation.
+    """
+    allocated = {
+        batch["batch_id"]
+        for unit in (allocations or [])
+        if unit
+        for batch in unit.get("batches", [])
+    }
+    return [report for report in reports if report.get("batch_id") in allocated]
+
+
 def register(context: dict, system: str, identifier_values=None) -> dict:
     from nordbank_ops import clients, warehouse
     from nordbank_ops.feeds.register import register_feed_run
     from nordbank_ops.tokenise import Tokeniser
 
     _start, day = _logical(context)
-    reports = flatten_reports(context["ti"].xcom_pull(task_ids=EXTRACT_TASK_ID, key=REPORT_KEY))
+    reports = current_reports(
+        flatten_reports(context["ti"].xcom_pull(task_ids=EXTRACT_TASK_ID, key=REPORT_KEY)),
+        context["ti"].xcom_pull(task_ids="open_batches"),
+    )
     run_id = context["dag_run"].run_id
     now = dt.datetime.now(dt.UTC)
 
