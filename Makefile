@@ -2,7 +2,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-.PHONY: help install init-env lint format test test-dags test-integration up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance ingest-integrity seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list dbt-build dbt-docs dq clean
+.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance ingest-integrity seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list dbt-build dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -30,6 +30,9 @@ test: ## Run the unit tests, which need neither Airflow nor a running stack
 test-dags: ## Run the DAG integrity tests, natively or in the project image
 	uv run python scripts/run_dag_tests.py
 
+test-offline: ## Run the unit and DAG suites in a container with no network at all
+	uv run python scripts/run_offline_tests.py
+
 test-integration: ## Run the smoke tests inside the running stack (FORCE=1 over a loaded warehouse)
 	docker compose exec -T -e FORCE=$(FORCE) airflow-scheduler bash -c "python /opt/airflow/scripts/integration_guard.py"
 	@echo "test-integration: running inside airflow-scheduler, where the volumes and network are"
@@ -38,6 +41,13 @@ test-integration: ## Run the smoke tests inside the running stack (FORCE=1 over 
 	@echo "test-integration: generator integration tests run on the host, where the Docker socket is"
 	uv run pytest -q -m integration generator/tests
 	$(MAKE) seed-verify
+
+feeds-probe: ## Compare the live feed APIs with the recorded fixtures (RECORD=1 re-records)
+ifdef RECORD
+	uv run python scripts/feeds_probe.py --record
+else
+	uv run python scripts/feeds_probe.py
+endif
 
 up: ## Generate .env if absent, validate it, then start the stack and wait for health
 	uv run python scripts/stack_up.py

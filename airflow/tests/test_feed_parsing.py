@@ -1,7 +1,8 @@
 """Parsing and landing the feeds, with no network, no stack and no Airflow (spec 006).
 
-The Frankfurter bodies here are the responses measured on 2026-09-22 and quoted in the
-contract; `test_feed_fixtures.py` runs the same rules against the recorded files.
+The Friday response is the recorded one from `fixtures/feeds/`; the malformed and reshaped
+bodies are constructed, and each says what it stands for. `test_feed_fixtures.py` runs the
+landing rule against every recording.
 """
 
 from __future__ import annotations
@@ -29,7 +30,9 @@ if str(ROOT) not in sys.path:
 CONTRACTS = ROOT / "contracts"
 TOKENISER = Tokeniser(salt=b"parsing-test-salt")
 
-FRIDAY = b'{"amount":1.0,"base":"EUR","date":"2026-07-24","rates":{"GBP":0.8561,"USD":1.1377}}'
+FRIDAY = (
+    Path(__file__).resolve().parent / "fixtures" / "feeds" / "fx_2026-07-24.body"
+).read_bytes()
 
 
 def _contract(system: str, entity: str):
@@ -85,10 +88,11 @@ def test_a_response_for_the_date_asked_lands_one_row_per_currency() -> None:
         FRIDAY, dt.date(2026, 7, 24), _contract("ecb", "fx_rates")
     )
     assert breaking is None and drift == []
-    assert [r["quote_currency"] for r in records] == ["GBP", "USD"]
-    assert records[1]["rate"] == decimal.Decimal("1.1377")
-    assert isinstance(records[1]["rate"], decimal.Decimal)
-    assert payloads == [FRIDAY.decode()] * 2
+    assert len(records) == 29
+    assert [r["quote_currency"] for r in records] == sorted(r["quote_currency"] for r in records)
+    usd = next(r for r in records if r["quote_currency"] == "USD")
+    assert usd["rate"] == decimal.Decimal("1.1377") and isinstance(usd["rate"], decimal.Decimal)
+    assert payloads == [FRIDAY.decode()] * 29
 
 
 def test_a_response_dated_before_the_date_asked_lands_nothing() -> None:

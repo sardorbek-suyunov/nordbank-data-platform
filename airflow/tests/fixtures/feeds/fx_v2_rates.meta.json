@@ -1,0 +1,17 @@
+{
+  "captured_at": "2026-09-23T10:32:22+00:00",
+  "endpoint": "https://api.frankfurter.dev/v2/rates",
+  "params": {
+    "base": "EUR",
+    "date": "2026-07-25"
+  },
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "cache-control": "public, max-age=86400, stale-while-revalidate=86400, stale-if-error=86400"
+  },
+  "why": "the advertised successor: a list, per-currency dates, not a drop-in",
+  "contract": "ecb.fx_rates",
+  "contract_version": 1,
+  "contract_fingerprint": "sha256:29a05f77cf5b3d35"
+}
