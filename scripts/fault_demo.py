@@ -106,14 +106,16 @@ def _prepare() -> None:
 
 def _context(day: dt.date, conf: dict) -> dict:
     class _Ti:
+        """XCom keyed by task, as Airflow keeps it, for the phases this drives directly."""
+
         def __init__(self) -> None:
-            self.pushed: list = []
+            self.pushed: dict[tuple[str, str], object] = {}
 
-        def xcom_push(self, key, value):
-            self.pushed.append(value)
+        def xcom_push(self, key, value, task_id: str = "extract"):
+            self.pushed[(task_id, key)] = value
 
-        def xcom_pull(self, task_ids, key):
-            return list(self.pushed)
+        def xcom_pull(self, task_ids, key: str = "return_value"):
+            return self.pushed.get((task_ids, key))
 
     logical = dt.datetime.combine(day, dt.time(), tzinfo=dt.UTC)
     run = SimpleNamespace(
@@ -146,6 +148,7 @@ def _scenario(fault: str, mode: str, day: dt.date, held: dt.date | None) -> dict
     context = _context(day, conf)
     started = time.monotonic()
     units = phases.fx_open(context)
+    context["ti"].xcom_push(key="return_value", value=units, task_id="open_batches")
     reports = phases.fx_extract(units[0], context)
     context["ti"].xcom_push(key=phases.REPORT_KEY, value=reports)
     summary = phases.register(context, phases.FX)
