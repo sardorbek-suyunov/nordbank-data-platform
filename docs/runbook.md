@@ -307,8 +307,58 @@ length and `--profile dev` the scale.
 
 ## Backfill procedure
 
-Populated at M4, once partitions, batch ids and watermarks are in place. The anchor
-pattern above is the half of it that exists now.
+The acceptance history is seeded at the anchor the committed contracts are authored against,
+`ACCEPTANCE_ANCHOR` in `generator/drift/timeline.py`, 2026-07-20, and run for sixty days. The
+anchor is pinned rather than taken from `today − window` because a contract names the business
+day it takes over from, and the source's scripted drift fires at an offset from the anchor: at
+any other anchor the committed contracts select the wrong version between the two days, and the
+backfill halts there (ADR 0014). 2026-07-20 plus sixty days is behind the real clock, which is
+the constraint the section above states.
+
+```bash
+FORCE=1 make nuke && make up && make schema-apply
+NORDBANK_ENV=ci NORDBANK_SEED=42 NORDBANK_ANCHOR_DATE=2026-07-20 make seed
+make warehouse-apply
+NORDBANK_ENV=ci make backfill FROM=2026-07-20 TO=2026-09-18 DEFER_DEMO=2026-07-21
+```
+
+`NORDBANK_ENV=ci` matters: the tick refuses to run at a profile other than the one the source
+was seeded at, and the default is `dev`.
+
+Each day ticks the source, delivers the processor's clearing files and the sanctions publisher's
+list, runs reference data and then core banking, and then the feeds due that day together. The
+order and the reasons are in `scripts/backfill.py`. At `ci` a day takes about two minutes.
+
+**The loop halts on a failed batch and says why.** Two halts are scripted into the timeline.
+
+- `core.payments` widens `remittance_reference` at anchor plus 37. With contract-of-the-time in
+  place this no longer halts: `payments` version 2 is committed with `in_force_from` 2026-08-26,
+  so the day the widening fires selects it and the days before select version 1.
+- The processor stops sending `merchant_name` at anchor plus 45, 2026-09-03, which is a removed
+  column and breaking. The whole file is quarantined, its batches fail and the loop halts. The
+  resolution is a contract decision: move `contracts/cardnet/settlements.yml` to
+  `contracts/cardnet/history/settlements.v1.yml`, write version 2 without the field and with
+  `in_force_from: 2026-09-03`, commit both, and run the same backfill command again. It resumes
+  on the failed day, re-runs only the feed that failed, and lands the file under version 2.
+
+**After changing code under `airflow/plugins/`, restart Airflow** before trusting a run:
+`docker compose restart airflow-scheduler airflow-dag-processor airflow-triggerer
+airflow-apiserver`. Its processes keep plugin modules they have already imported, so a change
+reaches neither the DAG structure nor the tasks until they restart. And a cleared run keeps the
+DAG version it was created with, so a code fix is tested with a new run, not by clearing an old
+one. A contract change needs neither: contracts are read from disk at run time.
+
+**Evidence targets**, each run after the backfill because the warehouse excludes readers while a
+writer holds it:
+
+- `make feeds-acceptance` — the evidence per criterion of specification 006, including the
+  settlement reconciliation against the injected breaks.
+- `make bronze-pii-scan` — the byte-wise scan, over bronze and quarantine objects.
+- `make fault-demo` — retry and no partial registration against injected faults, in a scratch
+  warehouse and bucket.
+- `make test-offline` — the unit and DAG suites with no network.
+- `make feeds-probe` — the live APIs against the recorded fixtures; needs the network, and is
+  how an upstream change is noticed.
 
 ## Escalation
 
