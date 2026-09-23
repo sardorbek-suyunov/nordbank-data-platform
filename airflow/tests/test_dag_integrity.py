@@ -157,6 +157,8 @@ def test_register_and_gate_run_on_all_done(dag_id: str) -> None:
     dag = _dagbag().dags[dag_id]
     assert str(dag.get_task("register").trigger_rule) == "TriggerRule.ALL_DONE"
     assert str(dag.get_task("gate").trigger_rule) == "TriggerRule.ALL_DONE"
+    # A gate that read only the register summary passed a run whose open step failed.
+    assert dag.get_task("gate").upstream_task_ids == {"register", "open_batches"}
 
 
 @pytest.mark.parametrize("dag_id", INGEST_DAGS)
