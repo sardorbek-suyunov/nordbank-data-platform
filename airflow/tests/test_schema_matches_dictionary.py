@@ -232,6 +232,9 @@ def test_every_table_has_an_updated_at_index_and_the_trigger(execute) -> None:
     )
 
     all_tables = {row[0] for row in tables}
+    # Sixteen core and twenty-nine ref tables. Without a floor, an unapplied schema has no
+    # tables, no table lacks an index, and the test passes.
+    assert len(all_tables) >= 45, f"{len(all_tables)} table(s) found, at least 45 expected"
     assert not all_tables - {row[0] for row in indexed}, "tables without an updated_at index"
     assert not all_tables - {row[0] for row in triggered}, "tables without the trigger"
 

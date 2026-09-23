@@ -99,6 +99,14 @@ def main() -> int:
         f"bronze-pii-scan: {len(keys)} object(s) under {len(set(prefixes))} registered "
         f"prefix(es), against {len(pairs)} vault value(s)"
     )
+    # A scan of nothing, or for nothing, finds nothing, and would report that as a pass.
+    if not keys or not usable:
+        print(
+            "bronze-pii-scan: refusing to report a result: "
+            f"{len(keys)} object(s) to scan and {len(usable)} vault value(s) to scan for. "
+            "Both must be non-zero for the absence of a hit to mean anything."
+        )
+        return 2
 
     hits: list[tuple[str, str, int]] = []
     scanned = 0
