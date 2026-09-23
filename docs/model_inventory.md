@@ -117,6 +117,15 @@ Built at M6.
 Built at M6, except the operational marts, which arrive at M7 with the quality gates. Each
 mart declares and tests the grain stated in [business_questions.md](business_questions.md).
 
+**A business reconciliation is a mart; a platform reconciliation is a quality gate.** Whether
+the bank's ledger agrees with its card network's settlement file is a question the bank asks
+about itself, numbered in `business_questions.md`, so `mart_control_settlement_reconciliation`
+is built with the other marts at M6. Whether the pipeline moved every row from source to gold
+is a question the platform asks about itself, and it belongs with the quality gates and
+`ops` observability at M7. The two are easy to conflate because both compare two totals.
+Specification 006 fixed the milestone of the settlement mart on this ground; it previously
+said M7 here.
+
 | Object | Question | Milestone |
 |---|---|---|
 | `mart_growth_account_activity` | Q1 | M6 |
@@ -134,7 +143,7 @@ mart declares and tests the grain stated in [business_questions.md](business_que
 | `mart_payments_cross_border` | Q13 | M6 |
 | `mart_fraud_device_risk` | Q19 | M6 |
 | `mart_treasury_fx_exposure` | Q14 | M6 |
-| `mart_control_settlement_reconciliation` | Q15 | M7 |
+| `mart_control_settlement_reconciliation` | Q15 | M6 |
 | `mart_control_gl_integrity` | Q16 | M7 |
 | `mart_ops_freshness` | Q17 | M7 |
 | `mart_ops_quality` | Q18 | M7 |
