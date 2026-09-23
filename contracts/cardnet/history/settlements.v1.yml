@@ -9,22 +9,12 @@
 # `card_reference` is classified identifier and tokenised with the same keyed hash as
 # core.cards.card_reference, in the parsed column and in `_raw_payload` alike, so one card
 # resolves to one token whichever feed it arrived through (spec 006 section 4).
-#
-# Version 2, 2026-09-23. On settlement date 2026-09-03 the processor stopped sending
-# `merchant_name`, which the ingest gate classified as a removed column, breaking drift: the
-# whole file was quarantined, both of its batches failed, and the backfill halted naming the
-# field. The platform can do without it: each item's transaction_reference links it to
-# core.transactions and so to its merchant, and the category code still arrives, so the
-# layout without the name is accepted, which is the decision the halt asked for.
-# Version 1 is under history/, and a file for a settlement date before 2026-09-03 is validated
-# against it. `in_force_from` is the day the removal fires at ACCEPTANCE_ANCHOR in
-# generator/settlement/timeline.py, anchor plus 45; a unit test asserts the two agree.
 source_system: cardnet
 source_schema: file
 entity: settlements
 kind: file
-contract_version: 2
-in_force_from: 2026-09-03
+contract_version: 1
+in_force_from: null
 source_of_truth:
   publisher: Nordbank card processor (simulated)
   document: Card processor clearing file, layout 1, contracts/cardnet/README.md
@@ -75,6 +65,10 @@ columns:
   classification: non-personal
 - name: merchant_category_code
   type: character(4)
+  nullable: true
+  classification: non-personal
+- name: merchant_name
+  type: character varying(200)
   nullable: true
   classification: non-personal
 - name: presentment
