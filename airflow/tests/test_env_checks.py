@@ -127,3 +127,14 @@ def test_failures_never_print_the_value() -> None:
     failures, _ = check_env.check(TEMPLATE, leaked)
 
     assert all("hunter2" not in failure for failure in failures)
+
+
+def test_a_generated_secret_never_begins_with_a_dash(monkeypatch) -> None:
+    """One `token_urlsafe` value in sixty-four begins with `-`, which a CLI reads as an option."""
+    import init_env
+
+    drawn = iter(["-leading-dash-value", "-another", "clean-value"])
+    monkeypatch.setattr(init_env.secrets, "token_urlsafe", lambda _n: next(drawn))
+    assert init_env.secret("POSTGRES_AIRFLOW_PASSWORD") == "clean-value"
+    monkeypatch.undo()
+    assert all(not init_env.secret("MINIO_ROOT_PASSWORD").startswith("-") for _ in range(2000))
