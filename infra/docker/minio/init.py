@@ -1,4 +1,4 @@
-"""Provision the lake bucket. Idempotent: re-running changes nothing.
+"""Provision the lake and inbound buckets. Idempotent: re-running changes nothing.
 
 Runs in the project image, with the S3 client the platform already uses, so the stack pulls
 no image for provisioning alone (ADR 0017).
@@ -107,6 +107,12 @@ def provision() -> int:
     wait_for(s3)
     lake = os.environ["LAKE_BUCKET"]
     ensure_bucket(s3, lake)
+    # The inbound bucket is where third parties deliver, before anything is ingested. It is a
+    # separate bucket rather than a prefix of the lake because a delivery carries identifiers
+    # in the clear, and the lake is the one place that must never hold one (ADR 0005).
+    inbound = os.environ["INBOUND_BUCKET"]
+    ensure_bucket(s3, inbound)
+    deny_anonymous(s3, inbound)
     ensure_prefixes(s3, lake)
     deny_anonymous(s3, lake)
     for entry in top_level(s3, lake):
