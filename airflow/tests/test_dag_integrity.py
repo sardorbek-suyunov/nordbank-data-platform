@@ -28,6 +28,12 @@ MINIMUM_TASKS: dict[str, int] = {
     "ops_source_tick": 1,
     "ingest_core_banking": 4,
     "ingest_reference_data": 4,
+    # discover, open, extract, register, gate; the settlement DAG adds its sensor and the macro
+    # series DAG its key check.
+    "ingest_fx_rates": 5,
+    "ingest_card_settlements": 6,
+    "ingest_sanctions_list": 5,
+    "ingest_macro_series": 6,
 }
 
 
@@ -209,3 +215,79 @@ def test_the_contract_root_resolves_in_this_layout() -> None:
     assert contract_root().is_dir()
     assert len(entities("core")) == EXPECTED_ENTITIES["ingest_core_banking"]
     assert len(entities("ref")) == EXPECTED_ENTITIES["ingest_reference_data"]
+
+
+FEED_DAGS = (
+    "ingest_fx_rates",
+    "ingest_card_settlements",
+    "ingest_sanctions_list",
+    "ingest_macro_series",
+)
+
+# One asset per landed entity, spec 006 section 8. The settlement file lands two.
+FEED_ASSETS = {
+    "ingest_fx_rates": {"ingest_fx_rates/fx_rates"},
+    "ingest_card_settlements": {
+        "ingest_card_settlements/settlements",
+        "ingest_card_settlements/settlement_totals",
+    },
+    "ingest_sanctions_list": {"ingest_sanctions_list/entities"},
+    "ingest_macro_series": {"ingest_macro_series/series"},
+}
+
+
+@pytest.mark.parametrize("dag_id", FEED_DAGS)
+def test_a_feed_dag_holds_the_warehouse_pool_only_where_it_touches_the_warehouse(dag_id) -> None:
+    dag = _dagbag().dags[dag_id]
+    assert len(dag.tasks) >= MINIMUM_TASKS[dag_id]
+    pooled = {task.task_id for task in dag.tasks if task.pool == "warehouse_access"}
+    assert pooled == {"open_batches", "register"}, f"{dag_id} pools: {pooled}"
+    for task in dag.tasks:
+        if task.task_id not in pooled:
+            assert task.pool == "default_pool", f"{task.task_id} holds pool {task.pool}"
+
+
+@pytest.mark.parametrize("dag_id", FEED_DAGS)
+def test_a_feed_dag_is_unscheduled_and_registers_on_all_done(dag_id) -> None:
+    dag = _dagbag().dags[dag_id]
+    assert dag.schedule is None and dag.catchup is False
+    assert str(dag.get_task("register").trigger_rule) == "TriggerRule.ALL_DONE"
+    assert str(dag.get_task("gate").trigger_rule) == "TriggerRule.ALL_DONE"
+    assert dag.get_task("gate").upstream_task_ids == {"register", "open_batches"}
+
+
+@pytest.mark.parametrize("dag_id", FEED_DAGS)
+def test_a_feed_dag_emits_one_asset_per_entity(dag_id) -> None:
+    outlets = _dagbag().dags[dag_id].get_task("register").outlets
+    names = {getattr(outlet, "name", None) for outlet in outlets}
+    assert len(outlets) >= 1
+    assert names == FEED_ASSETS[dag_id]
+
+
+@pytest.mark.parametrize("dag_id", FEED_DAGS)
+def test_a_feed_extract_is_mapped_over_the_open_step(dag_id) -> None:
+    extract = _dagbag().dags[dag_id].get_task("extract")
+    expand = getattr(extract, "op_kwargs_expand_input", None) or extract.expand_input
+    assert len(expand.value) >= 1, f"{dag_id}: extract is mapped over nothing"
+    sources = {getattr(operator, "task_id", None) for operator, _key in expand.iter_references()}
+    assert sources == {"open_batches"}
+
+
+def test_the_settlement_dag_waits_with_a_deferrable_sensor_that_holds_no_pool() -> None:
+    dag = _dagbag().dags["ingest_card_settlements"]
+    sensor = dag.get_task("wait_for_file")
+    assert type(sensor).__name__ == "InboundFileSensor"
+    assert sensor.pool == "default_pool"
+    assert hasattr(sensor, "execute_complete")
+    assert "discover_deliveries" in sensor.downstream_task_ids
+
+
+def test_the_macro_series_dag_checks_for_its_key_before_anything_else() -> None:
+    dag = _dagbag().dags["ingest_macro_series"]
+    check = dag.get_task("check_key")
+    assert (
+        type(check).__name__.lower().startswith("_shortcircuit")
+        or "ShortCircuit" in type(check).__name__
+    )
+    assert check.upstream_task_ids == set()
+    assert "discover_deliveries" in check.downstream_task_ids
