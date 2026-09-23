@@ -17,7 +17,7 @@ import os
 from dataclasses import dataclass, field
 
 from nordbank_ops.feeds.cast import CastError, cast
-from nordbank_ops.feeds.fx import FAILED, LANDED, RequestOutcome
+from nordbank_ops.feeds.fx import DISCARDED, FAILED, LANDED, RequestOutcome
 from nordbank_ops.feeds.land import Parsed
 from nordbank_ops.validation import QuarantineReason, Rejection
 
@@ -116,4 +116,8 @@ def fetch_series(names: list[str], contract, *, api_key: str, fetch) -> Fetched:
             f"{o.key}: {o.detail}" for o in failed
         )
         out.parsed = Parsed()
+        for outcome in out.outcomes:
+            if outcome.outcome == LANDED:
+                outcome.outcome, outcome.rows = DISCARDED, 0
+                outcome.detail = "answered; not landed, because the interval failed"
     return out

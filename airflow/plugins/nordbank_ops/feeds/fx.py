@@ -28,6 +28,7 @@ from nordbank_ops.feeds.land import Parsed
 LANDED = "landed"
 ABSENT = "absent"
 FAILED = "failed"
+DISCARDED = "discarded"
 
 
 @dataclass
@@ -237,4 +238,8 @@ def fetch_dates(dates: list[dt.date], contract, *, base_url: str, fetch) -> Fetc
             f"{o.key}: {o.detail}" for o in failed
         )
         out.parsed.records, out.parsed.payloads = [], []
+        for outcome in out.outcomes:
+            if outcome.outcome == LANDED:
+                outcome.outcome, outcome.rows = DISCARDED, 0
+                outcome.detail = "answered; not landed, because the interval failed"
     return out

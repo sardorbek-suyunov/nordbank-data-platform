@@ -160,7 +160,8 @@ def test_an_interval_with_one_failed_date_lands_nothing_and_says_which() -> None
     )
     assert fetched.failure and "2 of 3 date(s) answered" in fetched.failure
     assert fetched.parsed.records == []
-    assert [o.outcome for o in fetched.outcomes] == ["landed", "absent", "failed"]
+    assert [o.outcome for o in fetched.outcomes] == ["discarded", "absent", "failed"]
+    assert all(o.rows == 0 for o in fetched.outcomes)
 
 
 def test_a_date_beyond_all_data_is_absent_not_failed() -> None:
