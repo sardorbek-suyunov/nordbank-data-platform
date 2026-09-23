@@ -413,8 +413,15 @@ of days on which every expected batch for that source was fresh.
 | Core banking | 06:00 UTC daily | 24 hours plus a 2 hour grace |
 | ECB FX rates | Around 16:00 CET on ECB working days, which is 15:00 UTC in summer and 14:00 UTC in winter | 3 hours after the publication time in force on that date; the window is computed from CET and never from a fixed UTC hour |
 | Card settlement files | 08:00 UTC daily | 24 hours plus a 4 hour grace, because the file is produced by a third party |
-| Sanctions list | 09:00 UTC each Monday | 8 days |
+| Sanctions list | 09:00 UTC each Monday, the platform's chosen ingestion cadence | 8 days |
 | FRED macro series | 09:00 UTC on the 15th of the month | 35 days |
+
+The sanctions row measures the cadence the platform chose, not the publisher's. The
+OpenSanctions consolidated list exports four times a day, and its contract records that as the
+publisher's behaviour; the platform ingests weekly because a weekly re-screen is how the
+control is operated, and the SLA measures whether the platform kept to its own choice. A
+publisher that stopped exporting would show here only once the platform's weekly run found
+nothing new to land, which is the platform's freshness rather than the feed's.
 
 **Source columns.** `ops.batch_registry.source_system`, `ops.batch_registry.ended_at`,
 `ops.batch_registry.status`, `ops.freshness_sla.window_hours`. The first was named
