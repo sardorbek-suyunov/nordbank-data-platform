@@ -221,13 +221,18 @@ def _clearing(malformed: float = 0.0, columns=None) -> bytes:
     ).body
 
 
-def _read(body: bytes):
-    return clearing.read(
-        body,
-        _contract("cardnet", "settlements"),
-        _contract("cardnet", "settlement_totals"),
-        TOKENISER,
+def _read(body: bytes, version: int = 1):
+    """Read a clearing file against a given version of the details contract.
+
+    Version 1 is layout 1, which every file built here follows unless a test changes its
+    columns; version 2 is the layout without `merchant_name`.
+    """
+    details = next(
+        c
+        for c in load_history(CONTRACTS / "cardnet")["settlements"]
+        if c.contract_version == version
     )
+    return clearing.read(body, details, _contract("cardnet", "settlement_totals"), TOKENISER)
 
 
 def test_a_clean_file_reads_every_record_with_its_settlement_date() -> None:
@@ -279,6 +284,19 @@ def test_an_extra_column_is_additive_and_a_removed_one_is_breaking() -> None:
     read = _read(_clearing(columns=removed))
     assert read.details.breaking == "removed column(s) merchant_name"
     assert read.totals.breaking == read.details.breaking
+
+
+def test_the_layout_without_the_merchant_name_is_accepted_by_version_2() -> None:
+    from generator.settlement import timeline
+
+    removed = tuple(
+        c for c in (*timeline.BASE_COLUMNS, "interchange_fee_amount") if c != "merchant_name"
+    )
+    read = _read(_clearing(columns=removed), version=2)
+    assert read.details.breaking is None
+    assert [o["column"] for o in read.details.drift] == ["interchange_fee_amount"]
+    assert len(read.details.records) == 30
+    assert all("merchant_name" not in record for record in read.details.records)
 
 
 def test_a_reordered_column_line_is_breaking() -> None:
