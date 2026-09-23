@@ -187,3 +187,96 @@ the runbook states — the window must end on or before today, and 2026-07-20 pl
 2026-09-18 — and it is the anchor specification 005's acceptance run used, so the two
 specifications' evidence describes one history. ADR 0014 records the decision and the
 restriction it places on exercising the repository at other anchors.
+
+### 2026-09-23 — rulings made before implementation
+
+The review of this specification before implementation ruled on more than five points, which
+under the reissue protocol in `docs/specs/README.md` calls for a version 2 with a changelog. The
+rulings came with the instruction to proceed, and reissuing the specification is its author's
+decision, so they are indexed here in the meantime; the implementation follows the rulings
+rather than the text above wherever the two differ, and each has its own record elsewhere.
+
+- **The sanctions list is synthetic in content and real in shape** (ADR 0015). Section 2's
+  "downloaded whole" and criterion 14's "in any landed object" could not both hold: the real
+  list held 300,971 entities when measured. The version is the publisher's own string, not a
+  date derived from publication, because the publisher exports four times a day under a new
+  string each time; a snapshot is identified by its content checksum. Criterion 13's
+  "versioned by publication date" is met as "versioned by the publisher's version, with its
+  export timestamp recorded".
+- **Breaking file drift is a header change, not a type change.** A CSV carries no types, so
+  criterion 5's "changed column type" was observable only in values, where it collides with
+  criterion 4's record-level quarantine. The scripted breaking event removes `merchant_name`,
+  which also gives specification 005's unit-test-only "removed column" kind its first end-to-end
+  proof. Criterion 5 is met with a removed column.
+- **The clearing file carries a trailer**, the processor's own record count and amount total, so
+  that malformed records and settlement breaks are independently settable. Criterion 10
+  reconciles the trailer against the ledger; criterion 4 reconciles records within the file.
+- **It is an issuer clearing file**, carrying the issuer's `card_reference` beside the masked
+  number, which is what makes criterion 11 a property of a tokenised value.
+- **The deferrable sensor stays, with a run that shows it waiting**, and running out of time is
+  an answer — empty batches for the day — rather than a failure.
+- `mart_control_settlement_reconciliation` is built at M6, not M7; section 3 is right and
+  `model_inventory.md` was corrected.
+
+### 2026-09-23 — a partially fetched interval is failed and writes nothing
+
+Section 7 says a partially fetched interval "leaves the batch `written` and the watermark
+unmoved, exactly as in 005". In 005 `written` is the state between the extract phase writing
+objects and the register step registering them. An interval feed does better by not writing
+until every request of the interval has an answer: a partial interval writes nothing, and the
+register step marks its batch `failed` with the dates that did not answer. The watermark is
+unmoved either way, and the next run requests the whole interval again, which `make fault-demo`
+shows. The dates that did answer are recorded in `ops.feed_request` as `discarded`, not
+`landed`, because nothing of them was written.
+
+### 2026-09-23 — one batch per delivered file, keyed on its settlement date
+
+Section 1 says files are ingested "by identity, not by interval". Identity decides whether a file
+lands; a batch still needs a key. A clearing file lands as two batches, one per entity, keyed on
+its settlement date, and in the ingest partition of the day it arrived: a late file for D−3 is
+`settlements-<D−3>-NN` under `ingest_date=<D>`. A day on which the processor sent nothing for
+its own settlement date registers empty batches keyed on that day, so a file for it arriving
+late lands as the next sequence. A snapshot's batch is keyed on the publisher's export time, the
+first interval in the platform with a non-zero time of day, which is what specification 005
+kept the six trailing digits of the batch id for.
+
+### 2026-09-23 — the gate also requires the open step's allocation
+
+Found while building the feed DAGs. With register on `all_done` and the gate as the only leaf
+task, a run whose open step fails leaves nothing allocated, the register step registers nothing,
+the gate reads a summary with no failures, and the run ends green. The feed DAGs' gate takes the
+open step's output as well and fails when there is none. Specification 005's two DAGs have the
+same shape and the same gap; it is fixed there in its own commit, with the measurement.
+
+### 2026-09-23 — four measurements the implementation depended on
+
+- **Airflow's plugin loader registers every file under the plugins folder by its bare name.**
+  `nordbank_ops/feeds/http.py` became `sys.modules['http']` in every Airflow process and the
+  scheduler, API server and DAG processor all failed at start-up. The module is `fetch.py`, and a
+  test refuses any plugin module named like a standard-library one.
+- **A decorated mapped task's expansion input is `op_kwargs_expand_input`**; `expand_input` is an
+  empty placeholder, and section 9's non-empty assertion written against it reported correctly
+  wired DAGs as mapped over nothing.
+- **Pulling a mapped task's XCom returns one value per map index when there are several, and the
+  single value when there is one**, so the register step flattens either shape.
+- **A cleared run keeps the DAG version it was created with**, and there is no CLI option to
+  clear onto the latest one. Measured while fixing the gate: clearing the run that exposed the
+  gap re-ran it with the old gate. A contract change still reaches a cleared run, because
+  contracts are read from disk at run time, which is what the backfill's resume after a
+  contract bump relies on; a code change reaches only new runs.
+- **Airflow's processes keep plugin code they have already imported until they restart.** The
+  gate change produced no new DAG version until the scheduler, DAG processor, triggerer and API
+  server were restarted, after which `ingest_core_banking` and `ingest_reference_data` moved to
+  version 2. The acceptance evidence is therefore taken from a run started on a restarted stack
+  with the final code, not from the run during which fixes were made.
+- **A mapped task expanded to nothing still returns its earlier try's XCom.** On a cleared
+  settlement day whose file had already landed, the extract task had no instances this time,
+  its earlier instance was marked removed, and pulling its XCom returned the earlier report;
+  the register step tried to register a batch that was already registered and the registry
+  refused. The register step now keeps only the reports for batches this run's open step
+  allocated.
+- **The full test suite is the unit and DAG suites.** Criterion 8's "with networking disabled"
+  is met for those by `make test-offline`, which runs them with `--network none`. The integration
+  suite exists to reach the stack's services and cannot run without a network; every suite
+  installs a guard that refuses public addresses, which is what proves the integration suite
+  reaches the stack and nothing beyond it.

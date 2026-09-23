@@ -326,7 +326,16 @@ Raw extracts land in MinIO under the bucket `nordbank-lake`:
 
 ```
 bronze/<source>/<entity>/ingest_date=YYYY-MM-DD/batch_id=<batch_id>/part-NNNN.parquet
+quarantine/<source>/<entity>/ingest_date=YYYY-MM-DD/batch_id=<batch_id>/part-NNNN.parquet
 ```
+
+Third parties deliver to a second bucket, `nordbank-inbound`: the card processor's clearing
+files under `cardnet/`, the sanctions publisher's snapshots under `opensanctions/sanctions/`.
+It stands for the senders' side of the boundary, the way `postgres-source` does for the core
+banking system, and it is a separate bucket rather than a prefix because a delivery carries
+identifiers in the clear and the lake must never hold one (ADR 0013). Nothing downstream of
+ingestion reads it. The simulation keeps the manifests of what it injected into each clearing
+file under `cardnet/_simulation/`, which discovery never lists.
 
 Partitioning is by ingest date rather than business date, so a partition is written once and
 never revisited. Business date filtering happens in silver, where late arrivals can be
@@ -358,6 +367,17 @@ schedules. The measured behaviour and its cost are recorded in ADR 0002.
 
 Pipeline state lives in the `ops` schema: a batch registry with one row per extraction batch,
 per-entity watermarks, run outcomes, and freshness measurements per source.
+
+The external feeds share one DAG shape with the core banking extraction and add a phase in
+front of it for the two delivery modes: `discover` lists and hashes what a publisher delivered,
+without touching the warehouse; `open`, pooled, recognises content that has already landed and
+selects the contract version in force for each batch's interval; `extract`, mapped and
+unpooled, lands one unit — an FX interval, one clearing file, one snapshot; `register`, pooled on
+`all_done`, registers or fails each batch; the gate fails the run. The settlement DAG puts a
+deferrable sensor in front, which gives up its worker while it waits and lets the triggerer
+poll for the day's file; running out of time records the day as having no file rather than
+failing. A delivered file or snapshot is identified by the checksum of its content, recorded in
+`ops.ingested_file`, so a reprocessed or renamed file never lands twice (ADR 0013).
 
 Rerun semantics are precise about what immutability means. A task retry inside a batch that
 has not yet been registered overwrites its own partial output: nothing downstream can see an
