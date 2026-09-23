@@ -384,3 +384,18 @@ def test_a_fred_null_marker_lands_as_a_null() -> None:
     parsed = fred.parse_observations(body, "UNRATE", _contract("fred", "series"))
     assert [r["value"] for r in parsed.records] == [decimal.Decimal("4.3"), None]
     assert Parsed is not None
+
+
+def test_register_keeps_only_the_reports_of_this_runs_allocation() -> None:
+    """A cleared re-run with nothing new must not re-register the earlier try's batches."""
+    from nordbank_ops.feeds.phases import current_reports, flatten_reports
+
+    stale = [
+        {"batch_id": "settlements-20260918T000000-01"},
+        {"batch_id": "settlement_totals-20260918T000000-01"},
+    ]
+    assert current_reports(flatten_reports(stale), []) == []
+    fresh = [[{"batch_id": "fx_rates-20260918T000000-02"}]]
+    allocation = [{"batches": [{"batch_id": "fx_rates-20260918T000000-02"}]}]
+    assert current_reports(flatten_reports(fresh), allocation) == fresh[0]
+    assert current_reports(flatten_reports(stale + fresh[0]), allocation) == fresh[0]
