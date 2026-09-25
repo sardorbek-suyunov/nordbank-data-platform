@@ -12,7 +12,14 @@ defines settlement breaks over `sl_card_settlements` and `fct_gl_entries`, which
 gold and do not exist yet. It applies the same rule to the processor's trailer totals as landed
 in bronze and to the ledger as the source holds it.
 
-Usage: `make feeds-acceptance`.
+**The tables behind the report are dumped with it.** Run 1's warehouse was destroyed by the
+`make nuke` that started run 2, and two of its figures could then be reconciled only from logs,
+and not all of them at all. `--dump DIR` writes the registry, the file identity and sighting
+tables, the request log and the contract versions as CSV, so a later review reconciles from
+tables. Those tables hold no identifier, and that is checked rather than assumed: every dumped
+file is searched for every vault value, by the PII scan's own matcher, before the dump is kept.
+
+Usage: `make feeds-acceptance [RUN=name]`; with RUN, the dump lands in `data/acceptance/<name>/`.
 """
 
 from __future__ import annotations
@@ -66,7 +73,43 @@ def _landed(connection, client, bucket, system: str, entity: str) -> list[dict]:
     return rows
 
 
+DUMPED = (
+    "ops.batch_registry",
+    "ops.ingested_file",
+    "ops.file_sighting",
+    "ops.feed_request",
+    "meta.contract_version",
+)
+
+
+def dump_tables(directory: str) -> int:
+    """Write the tables a review reconciles from, and refuse if any holds a vault value."""
+    import pathlib
+
+    from bronze_pii_scan import Matcher, encodings
+
+    out = pathlib.Path(directory)
+    out.mkdir(parents=True, exist_ok=True)
+    with warehouse.connect(read_only=True) as connection:
+        vault = connection.execute("select token, raw_value from meta.pii_vault").fetchall()
+        for table in DUMPED:
+            target = out / f"{table}.csv"
+            connection.execute(f"copy (select * from {table} order by all) to '{target}' (header)")
+            count = connection.execute(f"select count(*) from {table}").fetchone()[0]
+            print(f"dump: {table}: {count} row(s) to {target.name}")
+    matcher = Matcher([(t, encodings(v)) for t, v in vault if len(v.strip()) >= 6])
+    hits = {
+        path.name: sorted(matcher.tokens_in(path.read_bytes()))
+        for path in sorted(out.glob("*.csv"))
+    }
+    hits = {name: tokens for name, tokens in hits.items() if tokens}
+    print(f"dump: searched {len(DUMPED)} file(s) for {len(vault)} vault value(s): {hits or 'none'}")
+    return 1 if hits else 0
+
+
 def main() -> int:
+    if "--dump" in sys.argv:
+        return dump_tables(sys.argv[sys.argv.index("--dump") + 1])
     client = clients.lake_client()
     lake = clients.lake_bucket()
     import os

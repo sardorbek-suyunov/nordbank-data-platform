@@ -114,8 +114,10 @@ bronze-pii-scan: ## Scan every registered bronze object for a cleartext identifi
 bronze-acceptance: ## Report specification 005's evidence against what the backfill produced
 	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_acceptance.py"
 
-feeds-acceptance: ## Report specification 006's evidence against what the backfill produced
+feeds-acceptance: ## Report specification 006's evidence; RUN=name also dumps its tables to data/acceptance/name/
 	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/feeds_acceptance.py"
+	$(if $(RUN),docker compose exec -T airflow-scheduler bash -c "rm -rf /tmp/acceptance_dump && python /opt/airflow/scripts/feeds_acceptance.py --dump /tmp/acceptance_dump")
+	$(if $(RUN),docker compose cp airflow-scheduler:/tmp/acceptance_dump data/acceptance/$(RUN))
 
 ingest-integrity: ## Check the registry against the lake and the watermarks
 	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/ingest_integrity.py"
