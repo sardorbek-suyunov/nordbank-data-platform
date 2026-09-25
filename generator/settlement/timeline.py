@@ -79,6 +79,17 @@ EVENTS: tuple[FileEvent, ...] = (
 STRADDLING_LATE_OFFSET = 43
 
 
+# One correction is scripted to arrive with the late file it corrects, on the same day, so that
+# every acceptance run has two deliveries for one settlement date in one run: the case in which
+# the registry once gave both files one batch. Chosen by a dry run at ACCEPTANCE_ANCHOR and
+# seed 42, as a late file that carries a break.
+CORRECTED_ON_ARRIVAL_OFFSET = 36
+
+
+def corrected_on_arrival(settlement_date: dt.date, anchor: dt.date) -> bool:
+    return (settlement_date - anchor).days == CORRECTED_ON_ARRIVAL_OFFSET
+
+
 def held_late(settlement_date: dt.date, anchor: dt.date) -> bool:
     """Whether the timeline holds this settlement date's file back, whatever the draw says."""
     return (settlement_date - anchor).days == STRADDLING_LATE_OFFSET

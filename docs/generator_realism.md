@@ -914,6 +914,8 @@ manifest counts it.
 | `settlement.settlement_lag_days` | 1 | Both networks settle the calendar day after clearing |
 | `settlement.late_file_share` | 0.05 | About three late files in a sixty-day window: enough to exercise late arrival, few enough that most days have their own file |
 | `settlement.late_by_days` | 3 | The D−3 case specification 006 names |
+| `settlement.correction_share` | 0.25 | A processor corrects a file it got wrong: a quarter of the files that carried a settlement break are sent again as revision 2 with the break removed. At `ci` that is about seven corrections in sixty-one days, too few for the rate to be measured against a band, so the acceptance report asserts floors instead (at least three corrections, at least one of a late file) and says the band is not asserted at `ci` |
+| `settlement.correction_lag_days` | 1 | The correction is sent the day after the file it corrects; one scripted correction arrives with its late file on the same day, the case that puts two deliveries for one settlement date into one run |
 | `settlement.malformed_record_share` | 0.01 | About one damaged record a day at `ci`, so quarantine has real traffic every week without dominating the file |
 | `settlement.malformed_kind_mix.unparseable_amount` | 0.25 | The four kinds specification 006 names, equally likely |
 | `settlement.malformed_kind_mix.invalid_date` | 0.25 | |

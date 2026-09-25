@@ -3,7 +3,15 @@
 `make generate-settlement-files DATE=...` runs this. On day D the processor delivers the file for
 settlement date D, unless that file is one it sends late, and any file for settlement date D-3
 that it held back. A file is built in the layout the processor uses on the day it sends it, and
-its header says when it was produced, which is that day. Files are written to the inbound
+its header says when it was produced, which is that day.
+
+**Corrections.** A processor corrects a file it got wrong. A share of the files that carried a
+settlement break is sent again the day after they were first sent, as revision 2 of the same
+sequence with the break removed; the platform keeps both, and the highest revision of a
+sequence is the one that counts (architecture.md, "Batch arithmetic"). The correction is a new
+transmission, so its transit damage is drawn afresh. One correction is scripted to arrive on
+the same day as the late file it corrects, the case in which two deliveries for one settlement
+date reach one run (`timeline.CORRECTED_ON_ARRIVAL_OFFSET`). Files are written to the inbound
 bucket; the manifest of what each contains is written beside them under `_simulation/`, where
 the ingestion path never looks.
 
@@ -21,6 +29,7 @@ import datetime as dt
 import decimal
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -61,8 +70,23 @@ select t.transaction_reference,
 """
 
 
-def file_key(settlement_date: dt.date) -> str:
-    return f"{PREFIX}NBK_CLR_{settlement_date:%Y%m%d}_01.csv"
+def file_key(settlement_date: dt.date, revision: int = 1) -> str:
+    base = f"{PREFIX}NBK_CLR_{settlement_date:%Y%m%d}_01"
+    return f"{base}.csv" if revision == 1 else f"{base}_R{revision}.csv"
+
+
+@dataclass(frozen=True)
+class Delivery:
+    """One file the processor sends on a day."""
+
+    settlement_date: dt.date
+    late: bool
+    revision: int = 1
+
+
+def is_corrected(seed: int, settlement_date: dt.date, share: float) -> bool:
+    drawn = SubStreams(seed).stream("settlement.correction", settlement_date.isoformat()).random()
+    return drawn < share
 
 
 def is_late(seed: int, settlement_date: dt.date, share: float, anchor: dt.date) -> bool:
@@ -123,8 +147,17 @@ def inbound_client():
 
 
 def build_file(
-    cursor, settlement_date: dt.date, *, delivered_on: dt.date, anchor, seed, section
+    cursor,
+    settlement_date: dt.date,
+    *,
+    delivered_on: dt.date,
+    anchor,
+    seed,
+    section,
+    revision: int = 1,
 ) -> build.Built:
+    """One file, as sent on `delivered_on`. A revision above 1 is a correction: the same items
+    with no break, and its own draw of transit damage, because it is a new transmission."""
     items = read_items(
         cursor, settlement_date, int(section["settlement_lag_days"]), section["cash_account"]
     )
@@ -132,18 +165,56 @@ def build_file(
     for item in items:
         key = (item.network, item.settlement_currency)
         ledger[key] = ledger.get(key, decimal.Decimal(0)) + item.settlement_amount
-    rng = SubStreams(seed).stream("settlement.file", settlement_date.isoformat())
+    parameters = build.Parameters.from_profile(section)
+    stream = "settlement.file"
+    if revision > 1:
+        parameters.break_warn_share = parameters.break_error_share = 0.0
+        stream = f"settlement.file.revision{revision}"
+    rng = SubStreams(seed).stream(stream, settlement_date.isoformat())
     built = build.build(
         settlement_date=settlement_date,
         items=items,
         columns=timeline.columns(delivered_on, anchor),
-        parameters=build.Parameters.from_profile(section),
+        parameters=parameters,
         rng=rng,
         ledger_totals=ledger,
         created_at=dt.datetime.combine(delivered_on, dt.time(5), tzinfo=dt.UTC),
+        revision=revision,
     )
     built.manifest["events"] = [e.name for e in timeline.active(delivered_on, anchor)]
     return built
+
+
+def plan(cursor, day: dt.date, *, anchor, seed: int, section) -> list[Delivery]:
+    """Everything the processor sends on `day`: the files due, and the corrections of files
+    that carried a break, sent the day after them or, in the scripted case, with them."""
+    share = float(section["late_file_share"])
+    late_by = int(section["late_by_days"])
+    lag = int(section["correction_lag_days"])
+    correction_share = float(section["correction_share"])
+
+    out = [Delivery(s, late) for s, late in due_on(day, anchor, seed, share, late_by)]
+
+    def carried_a_break(settlement_date: dt.date, sent: dt.date) -> bool:
+        first = build_file(
+            cursor, settlement_date, delivered_on=sent, anchor=anchor, seed=seed, section=section
+        )
+        return bool(first.manifest["breaks"])
+
+    sent_before = day - dt.timedelta(days=lag)
+    for settlement_date, late in due_on(sent_before, anchor, seed, share, late_by):
+        if timeline.corrected_on_arrival(settlement_date, anchor):
+            continue
+        if is_corrected(seed, settlement_date, correction_share) and carried_a_break(
+            settlement_date, sent_before
+        ):
+            out.append(Delivery(settlement_date, late, revision=2))
+    for delivery in list(out):
+        if delivery.revision == 1 and timeline.corrected_on_arrival(
+            delivery.settlement_date, anchor
+        ):
+            out.append(Delivery(delivery.settlement_date, delivery.late, revision=2))
+    return sorted(out, key=lambda d: (d.settlement_date, d.revision))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -174,29 +245,27 @@ def main(argv: list[str] | None = None) -> int:
 
         day = first
         while day <= last:
-            due = due_on(
-                day,
-                anchor,
-                int(seed),
-                float(section["late_file_share"]),
-                int(section["late_by_days"]),
-            )
+            due = plan(cursor, day, anchor=anchor, seed=int(seed), section=section)
             if not due:
                 print(f"settlement: {day}: no file due")
-            for settlement_date, late in due:
+            for delivery in due:
                 built = build_file(
                     cursor,
-                    settlement_date,
+                    delivery.settlement_date,
                     delivered_on=day,
                     anchor=anchor,
                     seed=int(seed),
                     section=section,
+                    revision=delivery.revision,
                 )
-                built.manifest.update({"delivered_on": day.isoformat(), "late": late})
-                key = file_key(settlement_date)
+                built.manifest.update({"delivered_on": day.isoformat(), "late": delivery.late})
+                key = file_key(delivery.settlement_date, delivery.revision)
                 m = built.manifest
+                kind = " (late)" if delivery.late else ""
+                if delivery.revision > 1:
+                    kind += f" (correction, revision {delivery.revision})"
                 print(
-                    f"settlement: {day}: {key}{' (late)' if late else ''}: "
+                    f"settlement: {day}: {key}{kind}: "
                     f"{m['detail_records']} record(s), {len(m['breaks'])} break(s), "
                     f"{len(m['malformed'])} malformed, {m['cells']} cell(s), "
                     f"events {','.join(m['events']) or 'none'}"
