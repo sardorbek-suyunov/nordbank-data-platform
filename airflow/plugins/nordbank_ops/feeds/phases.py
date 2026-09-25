@@ -381,6 +381,7 @@ def settlement_discover(context: dict) -> list[dict]:
 
 
 SETTLEMENT_ENTITIES = ("settlements", "settlement_totals")
+NO_ARRIVAL = "no_arrival_within_window"
 
 
 def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) -> list[dict]:
@@ -481,8 +482,10 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
             # No file for this day's settlement date, which is a correct outcome rather than a
             # failure: an empty batch per entity records that the processor was waited for and
             # sent nothing for the day, the way specification 005 records an empty reference
-            # batch. A late file for an earlier date arriving today does not fill that gap, and
-            # when this day's own file arrives late it lands as the next sequence.
+            # batch. It carries the reason, which a delivered empty file does not, so freshness
+            # can tell "nothing arrived" from "an empty day arrived". A late file for an earlier
+            # date arriving today does not fill that gap, and when this day's own file arrives
+            # late it lands as the next sequence.
             taken = _sequences_of(connection, CARDNET, None, f"{start:%Y%m%dT%H%M%S}")
             batches = [
                 _allocate(
@@ -504,7 +507,7 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                 )
                 for entity in SETTLEMENT_ENTITIES
             ]
-            units.append({"file": None, "batches": batches})
+            units.append({"file": None, "batches": batches, "empty_reason": NO_ARRIVAL})
         return units
 
     units = open_unit(CARDNET, allocate)
@@ -531,11 +534,13 @@ def settlement_extract(unit: dict, context: dict) -> list[dict]:
 
     if unit["file"] is None:
         reports = [
-            ExtractReport(entity=b["entity"], batch_id=b["batch_id"], status="written")
+            ExtractReport(entity=b["entity"], batch_id=b["batch_id"], status="written").as_dict()
             for b in (detail_batch, totals_batch)
         ]
-        print("extract: no file for this day; empty batches")
-        return [r.as_dict() for r in reports]
+        for report in reports:
+            report["empty_reason"] = unit.get("empty_reason")
+        print(f"extract: no file for this day; empty batches, {unit.get('empty_reason')}")
+        return reports
 
     file = unit["file"]
     if unit.get("refuse"):
@@ -725,7 +730,6 @@ def sanctions_open(context: dict, candidates: list[dict]) -> list[dict]:
                     f"{conflict} with different content"
                 )
             units.append(unit)
-
         return units
 
     return open_unit(SANCTIONS, allocate)

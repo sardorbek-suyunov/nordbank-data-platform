@@ -10,7 +10,7 @@ contracts:
   contracts are unchanged, and is attempted again, once, when they change;
 - two deliveries for one settlement date in one run get a batch each;
 - a declaration already landed with different content is refused, for files and snapshots;
-- a retried day with no delivery reuses its empty batch rather than allocating another.
+- a day with no delivery says why its batches are empty.
 """
 
 from __future__ import annotations
@@ -232,8 +232,9 @@ def test_a_snapshot_reusing_a_version_string_over_different_content_is_refused(
     ]
 
 
-def test_a_retried_day_with_no_delivery_reuses_its_empty_batch(warehouse, contracts):
+def test_a_day_with_no_delivery_says_why_its_batches_are_empty(warehouse, contracts):
     (unit,) = _open(dt.date(2026, 9, 5), [], found=False)
-    assert unit["file"] is None
+    assert unit["file"] is None and unit["empty_reason"] == phases.NO_ARRIVAL
+    # A retry of the same run reuses the empty batch rather than allocating another.
     (retry,) = _open(dt.date(2026, 9, 5), [], found=False)
     assert retry["batches"][0]["batch_id"] == unit["batches"][0]["batch_id"]

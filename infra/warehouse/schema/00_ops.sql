@@ -28,6 +28,11 @@ create table if not exists ops.extract_watermark (
 -- property of the batch rather than of the record, so a retry reads it back instead of taking
 -- a new clock reading and producing objects that differ from the ones it replaces.
 --
+-- `empty_reason` is null unless a registered batch holds nothing for a reason other than the
+-- source having nothing to say: `no_arrival_within_window` is a feed that was waited for and
+-- delivered nothing, which freshness alerts on, as distinct from a delivered file with no
+-- records, which it does not (spec 006 review, R14).
+--
 -- `rows_landed` counts the whole batch, including the overlap window's re-read of the previous
 -- day. `ops.source_reconciliation` counts a source day. They are different numbers and neither
 -- substitutes for the other.
@@ -49,6 +54,7 @@ create table if not exists ops.batch_registry (
     object_prefix varchar not null,
     status varchar not null,
     failure_reason varchar,
+    empty_reason varchar,
     opened_at timestamptz not null,
     written_at timestamptz,
     ended_at timestamptz,

@@ -141,6 +141,7 @@ def register_feed_run(
                 rows_quarantined=entry["rows_quarantined"],
                 watermark_to=watermark_to,
                 written_at=now,
+                empty_reason=entry.get("empty_reason"),
             )
             registry.mark_registered(connection, batch["batch_id"], now)
             if watermark_to is not None:

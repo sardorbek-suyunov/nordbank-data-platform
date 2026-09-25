@@ -58,6 +58,12 @@ SUPERSEDED_SHAPES: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "ops",
+        "batch_registry",
+        "empty_reason",
+        "specification 006's review gave an empty batch the reason it is empty",
+    ),
+    (
+        "ops",
         "ingested_file",
         "revision",
         "specification 006's review recorded a clearing file's declared sequence and revision",

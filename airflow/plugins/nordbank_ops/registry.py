@@ -162,6 +162,7 @@ def allocate(
             update ops.batch_registry
                set status = ?, rows_read = 0, rows_landed = 0, rows_quarantined = 0,
                    watermark_from = ?, watermark_to = null, failure_reason = null,
+                   empty_reason = null,
                    written_at = null, ended_at = null, triggering_run_id = ?
              where batch_id = ?
             """,
@@ -240,12 +241,15 @@ def mark_written(
     rows_quarantined: int,
     watermark_to: dt.datetime | None,
     written_at: dt.datetime,
+    empty_reason: str | None = None,
 ) -> None:
+    """Record what a batch wrote. `empty_reason` says why a batch holds nothing when the reason
+    is not "the source had nothing": a feed that was waited for and never delivered."""
     connection.execute(
         """
         update ops.batch_registry
            set status = ?, rows_read = ?, rows_landed = ?, rows_quarantined = ?,
-               watermark_to = ?, written_at = ?
+               watermark_to = ?, written_at = ?, empty_reason = ?
          where batch_id = ? and status in (?, ?)
         """,
         [
@@ -255,6 +259,7 @@ def mark_written(
             rows_quarantined,
             watermark_to,
             written_at,
+            empty_reason,
             batch_id,
             OPEN,
             WRITTEN,
