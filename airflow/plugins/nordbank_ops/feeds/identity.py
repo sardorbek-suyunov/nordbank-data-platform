@@ -185,15 +185,23 @@ def declared_conflict(
     business_date: dt.date | None = None,
     file_sequence: int | None = None,
     revision: int | None = None,
+    publisher_version: str | None = None,
 ) -> str | None:
     """The batch that already landed the same declaration with different content, if any.
 
     The sender's declared fields are attributes, never identity (ADR 0013), and they are still
-    a promise: a clearing file's settlement date, sequence and revision name one delivery.
-    The same declaration over different bytes means the sender reused a name it had already
-    given to something else, and landing both would put two contradicting deliveries under
-    one name. It fails loudly instead.
+    a promise: a clearing file's settlement date, sequence and revision, or a snapshot's
+    version string, name one delivery. The same declaration over different bytes means the
+    sender reused a name it had already given to something else, and landing both would put
+    two contradicting deliveries under one name. It fails loudly instead.
     """
+    if publisher_version is not None:
+        row = connection.execute(
+            "select batch_id from ops.ingested_file where source_system = ? "
+            "and publisher_version = ? and content_checksum <> ? limit 1",
+            [source_system, publisher_version, checksum_],
+        ).fetchone()
+        return row[0] if row else None
     if business_date is None or file_sequence is None or revision is None:
         return None
     row = connection.execute(

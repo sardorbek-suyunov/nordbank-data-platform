@@ -9,7 +9,7 @@ contracts:
 - a delivery refused with a verdict is parked: it allocates nothing on later runs while its
   contracts are unchanged, and is attempted again, once, when they change;
 - two deliveries for one settlement date in one run get a batch each;
-- a declaration already landed with different content is refused;
+- a declaration already landed with different content is refused, for files and snapshots;
 - a retried day with no delivery reuses its empty batch rather than allocating another.
 """
 
@@ -191,6 +191,45 @@ def test_the_same_declaration_with_different_content_is_refused(warehouse, contr
     assert unit["refuse"].startswith("declaration conflict")
     assert "settlements-20260901T000000-01" in unit["refuse"]
     assert identity.is_verdict(unit["refuse"])
+
+
+def test_a_snapshot_reusing_a_version_string_over_different_content_is_refused(
+    warehouse, contracts
+):
+    """R8: checksum is identity, the version is an attribute, and a version is never reused."""
+    connection = duckdb.connect(str(warehouse))
+    try:
+        identity.record_ingested(
+            connection,
+            checksum_="sha256:list-a",
+            source_system="opensanctions",
+            entity="entities",
+            key="opensanctions/sanctions/20260914070000-lhy/entities.ftm.json",
+            size=100,
+            business_date=dt.date(2026, 9, 14),
+            publisher_version="20260914070000-lhy",
+            batch_id="entities-20260914T070000-01",
+            now=NOW,
+        )
+    finally:
+        connection.close()
+    candidate = {
+        "key": "opensanctions/sanctions/20260914070000-lhy/entities.ftm.json",
+        "checksum": "sha256:list-b",
+        "size": 101,
+        "version": "20260914070000-lhy",
+        "published_at": "2026-09-14T07:00:00+00:00",
+    }
+    (unit,) = phases.sanctions_open(_context(dt.date(2026, 9, 21)), [candidate])
+    assert unit["refuse"].startswith("declaration conflict: version 20260914070000-lhy")
+
+    # The same content under a new version string is the no-op it always was.
+    same = {**candidate, "checksum": "sha256:list-a", "version": "20260914130000-abc"}
+    assert phases.sanctions_open(_context(dt.date(2026, 9, 21)), [same]) == []
+    # Sighted on the run's day, whatever day the publisher exported on.
+    assert _query(warehouse, "select distinct ingest_date from ops.file_sighting") == [
+        (dt.date(2026, 9, 21),)
+    ]
 
 
 def test_a_retried_day_with_no_delivery_reuses_its_empty_batch(warehouse, contracts):

@@ -710,7 +710,22 @@ def sanctions_open(context: dict, candidates: list[dict]) -> list[dict]:
                 run_id=run_id,
                 now=opened_at,
             )
-            units.append({"snapshot": candidate, "batches": [batch]})
+            unit = {"snapshot": candidate, "batches": [batch]}
+            # A publisher never reuses a version string: the same string over different content
+            # is two publications under one name, and it fails loudly (ADR 0013).
+            conflict = identity.declared_conflict(
+                connection,
+                source_system=SANCTIONS,
+                checksum_=candidate["checksum"],
+                publisher_version=candidate["version"],
+            )
+            if conflict:
+                unit["refuse"] = (
+                    f"declaration conflict: version {candidate['version']} is already landed as "
+                    f"{conflict} with different content"
+                )
+            units.append(unit)
+
         return units
 
     return open_unit(SANCTIONS, allocate)
@@ -724,6 +739,9 @@ def sanctions_extract(unit: dict, context: dict) -> list[dict]:
     (batch,) = unit["batches"]
     snapshot = unit["snapshot"]
     contract = _contract(SANCTIONS, batch)
+    if unit.get("refuse"):
+        print(f"extract: {unit['refuse']}")
+        return [failed(contract, batch, unit["refuse"]).as_dict()]
     inbound, inbound_bucket = _inbound()
     body = identity.read_object(inbound, inbound_bucket, snapshot["key"])
     if identity.checksum(body) != snapshot["checksum"]:
