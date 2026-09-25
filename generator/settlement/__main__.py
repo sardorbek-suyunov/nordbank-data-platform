@@ -11,7 +11,14 @@ sequence with the break removed; the platform keeps both, and the highest revisi
 sequence is the one that counts (architecture.md, "Batch arithmetic"). The correction is a new
 transmission, so its transit damage is drawn afresh. One correction is scripted to arrive on
 the same day as the late file it corrects, the case in which two deliveries for one settlement
-date reach one run (`timeline.CORRECTED_ON_ARRIVAL_OFFSET`). Files are written to the inbound
+date reach one run (`timeline.CORRECTED_ON_ARRIVAL_OFFSET`).
+
+**One transmission is cut off.** On the scripted day the processor's file arrives truncated
+part way through a record (`timeline.CUT_OFF_OFFSET`). The next day the processor sends the
+complete file again under a `_RESEND` name; the day after, its transfer drops the same cut-off
+bytes once more under a `_RETRY` name. The platform refuses the cut-off file as structurally
+malformed and parks it, lands the complete one, and recognises the retry as the parked file
+rather than a new delivery. Files are written to the inbound
 bucket; the manifest of what each contains is written beside them under `_simulation/`, where
 the ingestion path never looks.
 
@@ -70,9 +77,20 @@ select t.transaction_reference,
 """
 
 
-def file_key(settlement_date: dt.date, revision: int = 1) -> str:
+CUT = "cut_off"
+RESEND = "resend"
+RETRY = "retry"
+# How far into the file the cut-off transmission stops: part way through a detail record.
+CUT_OFF_FRACTION = 0.6
+
+
+def file_key(settlement_date: dt.date, revision: int = 1, transmission: str = "") -> str:
     base = f"{PREFIX}NBK_CLR_{settlement_date:%Y%m%d}_01"
-    return f"{base}.csv" if revision == 1 else f"{base}_R{revision}.csv"
+    if revision > 1:
+        base += f"_R{revision}"
+    if transmission in (RESEND, RETRY):
+        base += f"_{transmission.upper()}"
+    return f"{base}.csv"
 
 
 @dataclass(frozen=True)
@@ -82,6 +100,8 @@ class Delivery:
     settlement_date: dt.date
     late: bool
     revision: int = 1
+    # "" for an ordinary transmission, or one of CUT, RESEND and RETRY on the scripted days.
+    transmission: str = ""
 
 
 def is_corrected(seed: int, settlement_date: dt.date, share: float) -> bool:
@@ -214,7 +234,16 @@ def plan(cursor, day: dt.date, *, anchor, seed: int, section) -> list[Delivery]:
             delivery.settlement_date, anchor
         ):
             out.append(Delivery(delivery.settlement_date, delivery.late, revision=2))
-    return sorted(out, key=lambda d: (d.settlement_date, d.revision))
+
+    cut = anchor + dt.timedelta(days=timeline.CUT_OFF_OFFSET)
+    for index, delivery in enumerate(out):
+        if delivery.settlement_date == cut and delivery.revision == 1 and day == cut:
+            out[index] = Delivery(cut, delivery.late, transmission=CUT)
+    if day == cut + dt.timedelta(days=1):
+        out.append(Delivery(cut, False, transmission=RESEND))
+    if day == cut + dt.timedelta(days=2):
+        out.append(Delivery(cut, False, transmission=RETRY))
+    return sorted(out, key=lambda d: (d.settlement_date, d.revision, d.transmission))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -249,21 +278,35 @@ def main(argv: list[str] | None = None) -> int:
             if not due:
                 print(f"settlement: {day}: no file due")
             for delivery in due:
+                # A re-sent or retried transmission is the file as it was produced on the day it
+                # was first sent, not a new one.
+                produced = delivery.settlement_date if delivery.transmission else day
                 built = build_file(
                     cursor,
                     delivery.settlement_date,
-                    delivered_on=day,
+                    delivered_on=produced,
                     anchor=anchor,
                     seed=int(seed),
                     section=section,
                     revision=delivery.revision,
                 )
-                built.manifest.update({"delivered_on": day.isoformat(), "late": delivery.late})
-                key = file_key(delivery.settlement_date, delivery.revision)
+                if delivery.transmission in (CUT, RETRY):
+                    built.body = built.body[: int(len(built.body) * CUT_OFF_FRACTION)]
+                    built.manifest["cut_off_at_byte"] = len(built.body)
+                built.manifest.update(
+                    {
+                        "delivered_on": day.isoformat(),
+                        "late": delivery.late,
+                        "transmission": delivery.transmission or "complete",
+                    }
+                )
+                key = file_key(delivery.settlement_date, delivery.revision, delivery.transmission)
                 m = built.manifest
                 kind = " (late)" if delivery.late else ""
                 if delivery.revision > 1:
                     kind += f" (correction, revision {delivery.revision})"
+                if delivery.transmission:
+                    kind += f" ({delivery.transmission.replace('_', ' ')})"
                 print(
                     f"settlement: {day}: {key}{kind}: "
                     f"{m['detail_records']} record(s), {len(m['breaks'])} break(s), "
