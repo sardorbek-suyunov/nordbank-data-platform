@@ -64,6 +64,14 @@ object rather than sampling it.
   the contract records the date that was last done. This is the same trade the recorded
   fixtures make for the APIs, without even a live probe to catch it, because a live probe of the
   real list is the download this record rules out.
+  Consequence added: 2026-09-25, by specification 006's review. A mitigation that needs no
+  entity: the FollowTheMoney schema the list is published in is itself published, and it is not
+  personal data — it names entity types and their properties, not people. A metadata-only check
+  that compares the contract's documented keys and properties with the published schema would
+  detect format drift without touching an entity. It is adopted as the intended mitigation and
+  not built here: the check needs a live request to the schema's publisher, so it belongs with
+  `make feeds-probe`, which is where every other live comparison is, and it is recorded as a
+  known gap until then.
 - Screening, when it is built, demonstrates the mechanism — resolve through the vault, match
   against a named version, record the match — and says nothing about match quality against
   real names, such as transliteration and alias handling. A real deployment would evaluate
