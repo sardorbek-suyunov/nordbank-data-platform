@@ -121,7 +121,14 @@ def register_feed_run(
             )
 
             if entry["status"] == "failed":
-                registry.mark_failed(connection, batch["batch_id"], entry["failure_reason"], now)
+                registry.mark_failed(
+                    connection,
+                    batch["batch_id"],
+                    entry["failure_reason"],
+                    now,
+                    rows_read=entry.get("rows_read", 0),
+                    rows_quarantined=entry.get("rows_quarantined", 0),
+                )
                 out.failed.append((entity, entry["failure_reason"]))
                 continue
 

@@ -209,6 +209,29 @@ def test_a_failed_batch_keeps_its_reason(connection):
     assert "remittance_reference" in record["failure_reason"]
 
 
+def test_a_failed_batch_keeps_what_it_read_and_quarantined_and_lands_nothing(connection):
+    allocation = open_one(connection)
+    mark_written(
+        connection,
+        allocation.batch_id,
+        rows_read=193,
+        rows_landed=190,
+        rows_quarantined=3,
+        watermark_to=INTERVAL_END,
+        written_at=OPENED_AT,
+    )
+    mark_failed(
+        connection,
+        allocation.batch_id,
+        "breaking drift: removed column(s) merchant_name",
+        OPENED_AT,
+        rows_read=193,
+        rows_quarantined=193,
+    )
+    record = batch(connection, allocation.batch_id)
+    assert (record["rows_read"], record["rows_landed"], record["rows_quarantined"]) == (193, 0, 193)
+
+
 def test_a_registered_batch_cannot_be_failed(connection):
     allocation = open_one(connection)
     mark_written(
