@@ -216,3 +216,30 @@ def test_adding_the_reference_number_moves_no_other_draw() -> None:
     after = _build(items, parameters, columns=added).manifest
     assert before["malformed"] and before["breaks"]
     assert (before["malformed"], before["breaks"]) == (after["malformed"], after["breaks"])
+
+
+def test_the_straddling_late_file_is_sent_after_the_removal_in_the_new_layout() -> None:
+    """R13: settlement date anchor + 43, sent anchor + 46, after the removal at anchor + 45."""
+    _added, removed = timeline.EVENTS
+    settlement = ANCHOR + dt.timedelta(days=timeline.STRADDLING_LATE_OFFSET)
+    sent = settlement + dt.timedelta(days=3)
+    assert settlement < removed.fires_on(ANCHOR) <= sent
+    assert all(s != settlement for s, _ in due_on(settlement, ANCHOR, 42, 0.0, 3))
+    assert (settlement, True) in due_on(sent, ANCHOR, 42, 0.0, 3)
+    assert "merchant_name" in timeline.columns(settlement, ANCHOR)
+    assert "merchant_name" not in timeline.columns(sent, ANCHOR)
+
+
+def test_the_header_says_when_the_file_was_produced() -> None:
+    produced = dt.datetime(2026, 8, 6, 5, 0, tzinfo=dt.UTC)
+    built = build.build(
+        settlement_date=DAY,
+        items=_items(),
+        columns=timeline.BASE_COLUMNS,
+        parameters=_parameters(),
+        rng=random.Random(1),
+        ledger_totals={},
+        created_at=produced,
+    )
+    header = next(csv.reader(io.StringIO(built.body.decode())))
+    assert header == ["H", "NBKPROC", DAY.isoformat(), "01", "1", "2026-08-06T05:00:00Z", "1"]

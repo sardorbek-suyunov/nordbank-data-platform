@@ -3,8 +3,10 @@
 The relational source's scripted drift lives in `generator/drift/timeline.py` and changes a
 table. These events change a file layout, which a relational source cannot express: the
 processor adds a field it did not send before, and later stops sending one. Both fire at an
-offset from the anchor, for the reason the relational timeline gives, and every file whose
-settlement date is on or after an event's day carries it.
+offset from the anchor, for the reason the relational timeline gives, and every file the
+processor **sends** on or after an event's day carries it, whatever settlement date the file
+covers: a sender changes its format at a point in its own time, which is when it sends. A late
+file for a date before a change, sent after it, is in the new layout (ADR 0016).
 
 The removal is the breaking kind specification 005 could prove only by unit test, because the
 relational timeline scripts no column removal. Here it happens end to end.
@@ -69,14 +71,27 @@ EVENTS: tuple[FileEvent, ...] = (
 )
 
 
-def active(settlement_date: dt.date, anchor: dt.date) -> tuple[FileEvent, ...]:
-    return tuple(event for event in EVENTS if event.fires_on(anchor) <= settlement_date)
+# One late file is scripted rather than drawn, so that every acceptance run has a file that
+# straddles the breaking change: its settlement date is two days before the removal fires, and
+# it arrives three days late, one day after it, in the layout without `merchant_name`. Under
+# ADR 0014's selection by settlement date it failed on every run with no way out; under ADR
+# 0016's selection by delivery date it lands.
+STRADDLING_LATE_OFFSET = 43
 
 
-def columns(settlement_date: dt.date, anchor: dt.date) -> tuple[str, ...]:
-    """The detail fields a file for this settlement date carries, in order."""
+def held_late(settlement_date: dt.date, anchor: dt.date) -> bool:
+    """Whether the timeline holds this settlement date's file back, whatever the draw says."""
+    return (settlement_date - anchor).days == STRADDLING_LATE_OFFSET
+
+
+def active(delivered_on: dt.date, anchor: dt.date) -> tuple[FileEvent, ...]:
+    return tuple(event for event in EVENTS if event.fires_on(anchor) <= delivered_on)
+
+
+def columns(delivered_on: dt.date, anchor: dt.date) -> tuple[str, ...]:
+    """The detail fields a file sent on this day carries, in order."""
     out = list(BASE_COLUMNS)
-    for event in active(settlement_date, anchor):
+    for event in active(delivered_on, anchor):
         if event.kind == COLUMN_ADDED:
             out.append(event.column)
         elif event.kind == COLUMN_REMOVED:
