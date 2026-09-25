@@ -45,6 +45,21 @@ CONTRACT_DIRS: tuple[str, ...] = (
 )
 
 
+SCRIPT_DIRS: tuple[str, ...] = (
+    f"{PROJECT_ROOT}/scripts",
+    str(Path(__file__).resolve().parents[3] / "scripts"),
+)
+
+
+def ensure_scripts_on_path() -> None:
+    """Make `scripts/` importable, where the contract model the plugins share lives."""
+    import sys
+
+    for candidate in SCRIPT_DIRS:
+        if Path(candidate).is_dir() and candidate not in sys.path:
+            sys.path.insert(0, candidate)
+
+
 def contract_root() -> Path:
     for candidate in CONTRACT_DIRS:
         if Path(candidate).is_dir():

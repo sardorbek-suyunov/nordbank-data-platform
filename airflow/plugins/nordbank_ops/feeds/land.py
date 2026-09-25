@@ -18,8 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from nordbank_ops.extract import (
-    AUDIT_COLUMNS,
-    QUARANTINE_COLUMNS,
+    PAYLOAD_COLUMN,
     ExtractReport,
     decorate,
     quarantine_rows,
@@ -28,7 +27,7 @@ from nordbank_ops.extract import (
 from nordbank_ops.registry import bronze_prefix, quarantine_prefix
 from nordbank_ops.validation import Rejection, project, validate
 
-PAYLOAD = "_raw_payload"
+PAYLOAD = PAYLOAD_COLUMN
 
 
 @dataclass
@@ -117,7 +116,7 @@ def land(
         batch_id=batch["batch_id"],
         system=contract.source_system,
     )
-    columns = contract.column_names + (PAYLOAD,) + AUDIT_COLUMNS
+    columns = contract.bronze_columns
     key = (
         bronze_prefix(
             contract.source_system, contract.entity, batch["ingest_date"], batch["batch_id"]
@@ -146,7 +145,7 @@ def land(
         )
         + "part-0000.parquet"
     )
-    written = write_parquet(client, bucket, qkey, rows, QUARANTINE_COLUMNS + (PAYLOAD,))
+    written = write_parquet(client, bucket, qkey, rows, contract.quarantine_columns)
     if written:
         report.quarantine_keys.append(written)
     return report
