@@ -289,3 +289,29 @@ def test_the_plan_corrects_a_broken_file_the_next_day_and_the_scripted_one_on_ar
     planned = settlement.plan(None, arrival, anchor=ANCHOR, seed=42, section=section)
     revisions = [d.revision for d in planned if d.settlement_date == scripted]
     assert revisions == [1, 2], "the scripted late file and its correction arrive together"
+
+
+def test_the_cut_off_transmission_is_resent_complete_then_retried_cut_off(monkeypatch) -> None:
+    from generator.settlement import __main__ as settlement
+
+    section = {
+        "late_file_share": 0.0,
+        "late_by_days": 3,
+        "correction_share": 0.0,
+        "correction_lag_days": 1,
+    }
+    monkeypatch.setattr(
+        settlement, "build_file", lambda *_a, **_k: build.Built(body=b"", manifest={"breaks": []})
+    )
+    cut = ANCHOR + dt.timedelta(days=timeline.CUT_OFF_OFFSET)
+
+    def sent(day):
+        return [
+            (d.settlement_date, d.transmission)
+            for d in settlement.plan(None, day, anchor=ANCHOR, seed=42, section=section)
+        ]
+
+    assert sent(cut) == [(cut, settlement.CUT)]
+    assert (cut, settlement.RESEND) in sent(cut + dt.timedelta(days=1))
+    assert (cut, settlement.RETRY) in sent(cut + dt.timedelta(days=2))
+    assert settlement.file_key(cut, transmission=settlement.RETRY).endswith("_01_RETRY.csv")

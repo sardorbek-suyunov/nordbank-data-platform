@@ -90,6 +90,14 @@ def corrected_on_arrival(settlement_date: dt.date, anchor: dt.date) -> bool:
     return (settlement_date - anchor).days == CORRECTED_ON_ARRIVAL_OFFSET
 
 
+# One transmission is scripted to be cut off part way, re-sent complete the next day and
+# retried cut off the day after, so that every acceptance run parks a delivery and shows a
+# renamed copy of it recognised as the same parked file (ADR 0016). Its day falls before the
+# breaking change, so the contracts in force for it change once while it is parked, and it is
+# attempted exactly once more.
+CUT_OFF_OFFSET = 31
+
+
 def held_late(settlement_date: dt.date, anchor: dt.date) -> bool:
     """Whether the timeline holds this settlement date's file back, whatever the draw says."""
     return (settlement_date - anchor).days == STRADDLING_LATE_OFFSET
