@@ -167,6 +167,14 @@ def test_a_late_file_and_its_correction_in_one_run_get_a_batch_each(warehouse, c
     assert not any(unit.get("refuse") for unit in units)
 
 
+def test_a_delivery_and_its_renamed_copy_in_one_run_are_one_attempt(warehouse, contracts):
+    first = _file("sha256:same", "2026-09-10")
+    copy = {**first, "key": "cardnet/NBK_CLR_20260910_01_COPY.csv"}
+    (unit,) = _open(dt.date(2026, 9, 10), [first, copy])
+    sighted = _query(warehouse, "select outcome, batch_id from ops.file_sighting order by 1, 2")
+    assert sighted == [("new", unit["batches"][0]["batch_id"])] * 2
+
+
 def test_the_same_declaration_with_different_content_is_refused(warehouse, contracts):
     first = _file("sha256:one", "2026-09-01")
     connection = duckdb.connect(str(warehouse))

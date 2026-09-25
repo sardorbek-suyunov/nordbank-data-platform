@@ -225,6 +225,7 @@ def _admit(
     parked: dict,
     run_id: str,
     opened_at: dt.datetime,
+    attempted: dict | None = None,
 ) -> str | None:
     """Decide whether a delivery is attempted, and record the sighting when it is not.
 
@@ -236,12 +237,18 @@ def _admit(
     parked while the contracts in force for it are the ones it was refused against, because
     the same bytes read against the same contracts reach the same verdict; it is attempted
     again, once, when they change (ADR 0016).
+
+    `attempted` holds the deliveries this run has already allocated, by checksum. A renamed
+    copy arriving in the same run as the delivery it copies is sighted against that attempt
+    and allocates nothing: two units for one delivery would share its batch.
     """
     from nordbank_ops.feeds import identity
 
     item = identity.Candidate(candidate["key"], candidate["checksum"], candidate["size"])
     held = parked.get(candidate["checksum"])
-    if candidate["checksum"] in landed:
+    if candidate["checksum"] in (attempted or {}):
+        outcome, batch_id = attempted[candidate["checksum"]]
+    elif candidate["checksum"] in landed:
         outcome, batch_id = identity.ALREADY_INGESTED, landed[candidate["checksum"]]
     elif held is not None and held.fingerprints == _in_force(
         connection, chains, entities, selected_on
@@ -397,6 +404,7 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
         parked = identity.parked(connection, CARDNET, checksums)
         units = []
         declared_here: dict[tuple, tuple[str, str]] = {}
+        attempted: dict[str, tuple[str, str]] = {}
         for candidate in candidates:
             outcome = _admit(
                 connection,
@@ -410,6 +418,7 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                 parked=parked,
                 run_id=run_id,
                 opened_at=opened_at,
+                attempted=attempted,
             )
             if outcome is None:
                 continue
@@ -449,6 +458,7 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                 run_id=run_id,
                 now=opened_at,
             )
+            attempted[candidate["checksum"]] = (outcome, batches[0]["batch_id"])
             declaration = (business, candidate["file_sequence"], candidate["revision"])
             conflict = identity.declared_conflict(
                 connection,
