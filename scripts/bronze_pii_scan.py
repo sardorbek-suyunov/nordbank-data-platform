@@ -5,14 +5,28 @@ reintroduces nothing, and it makes the claim stronger than a hand-picked sample 
 "these few identifiers are absent" but "no value that was tokenised appears in cleartext
 anywhere in bronze".
 
-**The scan is byte-wise, not column-wise.** Parquet writes column statistics and dictionary
-pages alongside the data, and a value can survive in either after the column itself has been
-replaced. A scan that decoded the file into columns and looked at those would not see it.
-Reading the object's bytes and searching for the UTF-8 encoding of each value does.
+**Two readings of every object, because either alone misses something.**
 
-**No value is ever printed.** A hit reports the token, the object and the length of the value
-that matched; the value itself stays in the vault. A report that named the cleartext it found
-would be the leak it was written to detect.
+- *The object's bytes.* Parquet writes column statistics into its footer uncompressed, and a
+  value can survive there after the column itself has been replaced. Decoding the file into
+  columns would not see it.
+- *Every value decoded.* The data and dictionary pages are snappy-compressed, and a compressed
+  page does not hold its strings contiguously: snappy replaces a run it has already seen with a
+  back-reference, so a value that shares a prefix with its neighbour is split. Measured at
+  specification 006's review: over 400 card-reference-shaped values written with the platform's
+  own writer, a byte-wise search found none of them in the snappy object and all 400 in the
+  uncompressed one. The byte-wise scan that specifications 005 and 006 first reported was
+  therefore blind to column values; it could see only statistics and literal runs.
+
+**Every encoding the objects use.** A value is searched as itself; with any fixed-width padding
+removed, because a `character(n)` value may be stored padded in one place and trimmed in
+another; as JSON escapes it, both ASCII-escaped and not, because an API payload is a JSON
+document; and with its double quotes doubled, as a CSV payload quotes it. A value is not
+searched with separators around it, because a separator can only make a match stricter.
+
+**No value is ever printed.** A hit reports the token, the object, which reading found it and
+the length of the value that matched; the value itself stays in the vault. A report that named
+the cleartext it found would be the leak it was written to detect.
 
 Two limits are stated rather than left for a reader to assume. A short value can appear inside
 an unrelated byte sequence by chance, so a hit is a candidate rather than a verdict and its
@@ -20,20 +34,88 @@ length is printed for judgement. And a column that is classified `identifier` bu
 every row the source produces contributes nothing to the vault, so the scan proves nothing
 about it; those columns are listed at the end so the coverage claim is honest.
 
+`--plant` proves the scan can fail. It copies one registered clearing-file object, replaces one
+card token in it with the card's cleartext reference, writes the copy with the platform's own
+writer to the scratch bucket, and scans the copy both ways. The byte-wise reading alone is
+reported beside the full one, so the evidence shows what the first version of this scan would
+have concluded.
+
 Runs inside a container: the warehouse is on a named volume.
 """
 
 from __future__ import annotations
 
+import io
+import json
 import sys
 
 sys.path.insert(0, "/opt/airflow/plugins")
 
-from nordbank_ops import clients, warehouse  # noqa: E402
-
 # A value shorter than this is too likely to occur by chance inside unrelated bytes for a hit
 # to mean anything. Reported separately rather than dropped.
 SHORT_VALUE = 6
+
+SCRATCH_BUCKET = "nordbank-fault-demo"
+PLANT_PREFIX = "pii-scan-plant/"
+
+
+def encodings(value: str) -> set[bytes]:
+    """Every byte form a value can take in a bronze or quarantine object."""
+    forms = {value, value.strip()}
+    for form in list(forms):
+        forms.add(json.dumps(form)[1:-1])
+        forms.add(json.dumps(form, ensure_ascii=False)[1:-1])
+        forms.add(form.replace('"', '""'))
+    return {form.encode("utf-8") for form in forms if len(form) >= SHORT_VALUE}
+
+
+def decoded_text(body: bytes) -> bytes:
+    """Every value of every column of a Parquet object, decompressed, one per line."""
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(io.BytesIO(body))
+    parts: list[str] = []
+    for column in table.columns:
+        for value in column.to_pylist():
+            if value is not None:
+                parts.append(value if isinstance(value, str) else str(value))
+    return "\n".join(parts).encode("utf-8")
+
+
+class Matcher:
+    """Every encoded form of every vault value, indexed by its first `SHORT_VALUE` bytes.
+
+    Searching a hundred thousand forms one at a time in each of three thousand objects took
+    nearly nine minutes. Indexing the forms by prefix makes a reading one pass over its bytes:
+    each position is looked up once, and only a prefix that matches is compared in full.
+    """
+
+    def __init__(self, needles: list[tuple[str, set[bytes]]]) -> None:
+        self.by_prefix: dict[bytes, list[tuple[bytes, str]]] = {}
+        for token, forms in needles:
+            for form in forms:
+                self.by_prefix.setdefault(form[:SHORT_VALUE], []).append((form, token))
+
+    def tokens_in(self, haystack: bytes) -> dict[str, int]:
+        found: dict[str, int] = {}
+        index = self.by_prefix
+        for position in range(len(haystack) - SHORT_VALUE + 1):
+            candidates = index.get(haystack[position : position + SHORT_VALUE])
+            if candidates:
+                for form, token in candidates:
+                    if haystack.startswith(form, position):
+                        found.setdefault(token, len(form))
+        return found
+
+
+def find(body: bytes, needles) -> list[tuple[str, str, int]]:
+    """(token, reading, length) for every vault value present in an object."""
+    matcher = needles if isinstance(needles, Matcher) else Matcher(needles)
+    hits = []
+    for reading, haystack in (("bytes", body), ("decoded", decoded_text(body))):
+        for token, length in matcher.tokens_in(haystack).items():
+            hits.append((token, reading, length))
+    return hits
 
 
 def vault_values(connection) -> list[tuple[str, str]]:
@@ -68,11 +150,78 @@ def registered_objects(connection) -> list[str]:
     return prefixes
 
 
-def main() -> int:
+def _keys(client, bucket: str, prefixes) -> list[str]:
+    keys: list[str] = []
+    for prefix in sorted(set(prefixes)):
+        token = None
+        while True:
+            arguments = {"Bucket": bucket, "Prefix": prefix}
+            if token:
+                arguments["ContinuationToken"] = token
+            response = client.list_objects_v2(**arguments)
+            keys.extend(item["Key"] for item in response.get("Contents", []))
+            token = response.get("NextContinuationToken")
+            if not token:
+                break
+    return keys
+
+
+def plant(client, bucket: str, connection) -> int:
+    """Plant one cleartext card reference in a copy of a real object and scan the copy."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    (prefix,) = connection.execute(
+        "select object_prefix from ops.batch_registry where entity = 'settlements' "
+        "and status = 'registered' and rows_landed > 100 order by batch_id limit 1"
+    ).fetchone()
+    (key,) = _keys(client, bucket, [prefix])
+    table = pq.read_table(io.BytesIO(client.get_object(Bucket=bucket, Key=key)["Body"].read()))
+    tokens = table.column("card_reference").to_pylist()
+    victim = tokens[len(tokens) // 2]
+    (raw,) = connection.execute(
+        "select raw_value from meta.pii_vault where token = ?", [victim]
+    ).fetchone()
+    planted = [raw if i == len(tokens) // 2 else t for i, t in enumerate(tokens)]
+    index = table.schema.get_field_index("card_reference")
+    table = table.set_column(index, "card_reference", pa.array(planted, pa.string()))
+
+    buffer = io.BytesIO()
+    pq.write_table(table, buffer, compression="snappy")
+    body = buffer.getvalue()
+    buckets = {b["Name"] for b in client.list_buckets()["Buckets"]}
+    if SCRATCH_BUCKET not in buckets:
+        client.create_bucket(Bucket=SCRATCH_BUCKET)
+    target = PLANT_PREFIX + key
+    client.put_object(Bucket=SCRATCH_BUCKET, Key=target, Body=body)
+
+    hits = find(body, [(victim, encodings(raw))])
+    readings = sorted({reading for _token, reading, _length in hits})
+    print(f"bronze-pii-scan --plant: copied {key}")
+    print(
+        f"bronze-pii-scan --plant: replaced token {victim} with its cleartext "
+        f"({len(raw)} bytes) and wrote {SCRATCH_BUCKET}/{target} with the platform's writer"
+    )
+    print(f"bronze-pii-scan --plant: byte-wise reading alone finds it: {'bytes' in readings}")
+    print(f"bronze-pii-scan --plant: decoded reading finds it: {'decoded' in readings}")
+    client.delete_object(Bucket=SCRATCH_BUCKET, Key=target)
+    print(f"bronze-pii-scan --plant: deleted {SCRATCH_BUCKET}/{target}")
+    if "decoded" not in readings:
+        print("bronze-pii-scan --plant: the scan did NOT catch a planted identifier")
+        return 1
+    print("bronze-pii-scan --plant: caught")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    from nordbank_ops import clients, warehouse
+
     client = clients.lake_client()
     bucket = clients.lake_bucket()
 
     with warehouse.connect(read_only=True) as connection:
+        if "--plant" in argv:
+            return plant(client, bucket, connection)
         pairs = vault_values(connection)
         prefixes = registered_objects(connection)
         # Where each vault value was first seen. A classified identifier column that appears
@@ -88,46 +237,38 @@ def main() -> int:
     with clients.source_cursor() as cursor:
         classified = classified_identifier_columns(cursor)
 
-    short = [(t, v) for t, v in pairs if len(v) < SHORT_VALUE]
-    usable = [(t, v.encode("utf-8")) for t, v in pairs if len(v) >= SHORT_VALUE]
-
-    keys: list[str] = []
-    for prefix in sorted(set(prefixes)):
-        token = None
-        while True:
-            arguments = {"Bucket": bucket, "Prefix": prefix}
-            if token:
-                arguments["ContinuationToken"] = token
-            response = client.list_objects_v2(**arguments)
-            keys.extend(item["Key"] for item in response.get("Contents", []))
-            token = response.get("NextContinuationToken")
-            if not token:
-                break
+    short = [(t, v) for t, v in pairs if len(v.strip()) < SHORT_VALUE]
+    needles = [(t, encodings(v)) for t, v in pairs if len(v.strip()) >= SHORT_VALUE]
+    keys = _keys(client, bucket, prefixes)
 
     print(
         f"bronze-pii-scan: {len(keys)} object(s), "
         f"{sum(1 for k in keys if k.startswith('quarantine/'))} of them quarantine, under "
-        f"{len(set(prefixes))} prefix(es), against {len(pairs)} vault value(s)"
+        f"{len(set(prefixes))} prefix(es), against {len(pairs)} vault value(s) in "
+        f"{sum(len(forms) for _t, forms in needles)} encoded form(s)"
     )
     # A scan of nothing, or for nothing, finds nothing, and would report that as a pass.
-    if not keys or not usable:
+    if not keys or not needles:
         print(
             "bronze-pii-scan: refusing to report a result: "
-            f"{len(keys)} object(s) to scan and {len(usable)} vault value(s) to scan for. "
+            f"{len(keys)} object(s) to scan and {len(needles)} vault value(s) to scan for. "
             "Both must be non-zero for the absence of a hit to mean anything."
         )
         return 2
 
-    hits: list[tuple[str, str, int]] = []
-    scanned = 0
+    matcher = Matcher(needles)
+    hits: list[tuple[str, str, str, int]] = []
+    scanned = decoded = 0
     for key in sorted(keys):
         body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
         scanned += len(body)
-        for token, needle in usable:
-            if needle in body:
-                hits.append((token, key, len(needle)))
+        decoded += len(decoded_text(body))
+        for token, reading, length in find(body, matcher):
+            hits.append((token, key, reading, length))
 
-    print(f"bronze-pii-scan: scanned {scanned / 1_000_000:.1f} MB")
+    print(
+        f"bronze-pii-scan: read {scanned / 1_000_000:.1f} MB, decoded {decoded / 1_000_000:.1f} MB"
+    )
     print(f"bronze-pii-scan: {len(short)} vault value(s) shorter than {SHORT_VALUE} bytes, skipped")
 
     unproven = sorted(
@@ -138,13 +279,13 @@ def main() -> int:
 
     if hits:
         print(f"\nbronze-pii-scan: {len(hits)} candidate hit(s):")
-        for token, key, length in hits[:50]:
-            print(f"  token {token} ({length} bytes) in {key}")
+        for token, key, reading, length in hits[:50]:
+            print(f"  token {token} ({length} bytes, {reading}) in {key}")
         return 1
 
     print(
         "\nbronze-pii-scan: no cleartext identifier found in any registered bronze object or "
-        "any quarantine object"
+        "any quarantine object, in either reading"
     )
     if unproven:
         print(
@@ -157,4 +298,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
