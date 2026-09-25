@@ -74,12 +74,22 @@ def _allocate(
     watermark_from: dt.datetime | None,
     opened_at: dt.datetime,
     run_id: str,
+    selected_on: dt.date | None = None,
     reusable: set[int] | None = None,
 ) -> dict:
+    """Allocate one batch under the contract in force when the sender produced the delivery.
+
+    `selected_on` is that day as the platform observes it (ADR 0016): the run's logical date for
+    an API feed, which is the interval start, so it defaults to that; the ingest date for a
+    delivered file, whose batch is keyed on the settlement date it covers but whose layout is
+    the one its sender used on the day it sent it; and the export time for a snapshot, which is
+    its interval start.
+    """
     from nordbank_ops import contracts as versions
 
     current = chains[entity][-1]
-    version = versions.select(connection, current.source_system, entity, interval_start.date())
+    day = selected_on or interval_start.date()
+    version = versions.select(connection, current.source_system, entity, day)
     contract = versions.body(chains, entity, version)
     key = registry.BatchKey(
         source_system=contract.source_system, entity=entity, interval_start=interval_start
@@ -316,6 +326,8 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
             own = _sequences_of(
                 connection, CARDNET, candidate["checksum"], f"{interval:%Y%m%dT%H%M%S}"
             )
+            # Keyed on the settlement date the file covers; read against the contract in force
+            # on the day it was delivered, which is the ingest date (ADR 0016).
             batches = [
                 _allocate(
                     connection,
@@ -326,6 +338,7 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                     watermark_from=None,
                     opened_at=opened_at,
                     run_id=run_id,
+                    selected_on=day,
                     reusable=own,
                 )
                 for entity in ("settlements", "settlement_totals")
