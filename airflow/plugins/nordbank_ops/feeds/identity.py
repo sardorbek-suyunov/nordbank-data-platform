@@ -24,6 +24,17 @@ from typing import Any
 
 NEW = "new"
 ALREADY_INGESTED = "already_ingested"
+PARKED = "parked"
+REATTEMPTED = "reattempted"
+
+# The failure reasons that are a verdict on the delivery itself. The same bytes read against
+# the same contracts reach the same verdict every time, so a delivery refused with one of these
+# is parked rather than attempted again on every run (ADR 0016).
+VERDICTS: tuple[str, ...] = ("breaking drift", "structurally malformed")
+
+
+def is_verdict(reason: str | None) -> bool:
+    return bool(reason) and str(reason).startswith(VERDICTS)
 
 
 @dataclass(frozen=True)
@@ -89,6 +100,81 @@ def landed_as(connection: Any, checksums: list[str]) -> dict[str, str]:
         checksums,
     ).fetchall()
     return {checksum_: batch_id for checksum_, batch_id in rows}
+
+
+@dataclass(frozen=True)
+class Parked:
+    """A delivery whose last attempt was refused with a verdict, and the contracts it met."""
+
+    batch_id: str
+    reason: str
+    fingerprints: tuple[tuple[str, str], ...]
+
+
+def parked(connection: Any, source_system: str, checksums: list[str]) -> dict[str, Parked]:
+    """For each checksum that is parked, what parked it and against which contracts.
+
+    **Derived, not stored.** A delivery is parked when the batch its most recent attempt
+    allocated failed with a verdict. The attempt is its latest `new` or `reattempted` sighting,
+    the verdict is on the registry row, and the contracts are the fingerprints of the versions
+    that row and its sibling batches recorded, so the parked state has one source and cannot
+    disagree with the registry. A parked delivery has no `ops.ingested_file` row: it did not
+    land (ADR 0013).
+    """
+    if not checksums:
+        return {}
+    placeholders = ", ".join("?" for _ in checksums)
+    rows = connection.execute(
+        f"""
+        with attempts as (
+            select content_checksum, batch_id,
+                   row_number() over (
+                       partition by content_checksum order by seen_at desc
+                   ) as recency
+              from ops.file_sighting
+             where source_system = ? and outcome in ('{NEW}', '{REATTEMPTED}')
+               and content_checksum in ({placeholders})
+        )
+        select a.content_checksum, b.batch_id, b.failure_reason
+          from attempts a
+          join ops.batch_registry b on b.batch_id = a.batch_id
+         where a.recency = 1 and b.status = 'failed'
+        """,  # noqa: S608 - placeholders and module constants
+        [source_system, *checksums],
+    ).fetchall()
+    out: dict[str, Parked] = {}
+    for checksum_, batch_id, reason in rows:
+        if not is_verdict(reason):
+            continue
+        out[checksum_] = Parked(
+            batch_id=batch_id,
+            reason=reason,
+            fingerprints=attempt_fingerprints(connection, source_system, batch_id),
+        )
+    return out
+
+
+def sibling_suffix(batch_id: str) -> str:
+    """What the batches of one delivery share: the interval and sequence after the entity."""
+    return batch_id.split("-", 1)[1]
+
+
+def attempt_fingerprints(
+    connection: Any, source_system: str, batch_id: str
+) -> tuple[tuple[str, str], ...]:
+    """The (entity, contract fingerprint) pairs one attempt at a delivery was read against."""
+    rows = connection.execute(
+        """
+        select b.entity, v.contract_fingerprint
+          from ops.batch_registry b
+          join meta.contract_version v
+            on v.source_system = b.source_system and v.entity = b.entity
+           and v.contract_version = b.contract_version
+         where b.source_system = ? and b.batch_id like ?
+        """,
+        [source_system, "%-" + sibling_suffix(batch_id)],
+    ).fetchall()
+    return tuple(sorted((entity, fingerprint) for entity, fingerprint in rows))
 
 
 def record_sighting(

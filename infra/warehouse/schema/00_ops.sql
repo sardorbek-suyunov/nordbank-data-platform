@@ -180,6 +180,12 @@ create table if not exists ops.ingested_file (
 -- Every time discovery sees a file, and what it concluded. The evidence that a reprocessed or
 -- renamed file was recognised rather than merely not duplicated: a sighting of a known checksum
 -- under a new key is recorded as `already_ingested` with the batch it landed as.
+--
+-- `parked` is a delivery whose last attempt was refused with a verdict on the delivery and
+-- whose contracts in force have not changed since; nothing is allocated for it, and the
+-- sighting names the failed batch. `reattempted` is the same delivery attempted again because
+-- the contracts in force for it changed (ADR 0016). The parked state is derived from these
+-- rows and the registry, not stored a second time.
 create table if not exists ops.file_sighting (
     content_checksum varchar not null,
     source_system varchar not null,
@@ -189,7 +195,7 @@ create table if not exists ops.file_sighting (
     batch_id varchar,
     triggering_run_id varchar not null,
     seen_at timestamptz not null,
-    check (outcome in ('new', 'already_ingested'))
+    check (outcome in ('new', 'already_ingested', 'parked', 'reattempted'))
 );
 
 -- One row per request an interval feed made: how many attempts it took, the status of the
