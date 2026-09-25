@@ -248,11 +248,27 @@ def mark_written(
     )
 
 
-def mark_failed(connection: Any, batch_id: str, reason: str, ended_at: dt.datetime) -> None:
+def mark_failed(
+    connection: Any,
+    batch_id: str,
+    reason: str,
+    ended_at: dt.datetime,
+    *,
+    rows_read: int = 0,
+    rows_quarantined: int = 0,
+) -> None:
+    """Fail a batch, keeping what it read and what it quarantined.
+
+    A failed batch lands nothing by definition, so `rows_landed` is zero whatever the extract
+    step wrote before it failed; what it read and what it refused are kept, because for a
+    delivery refused whole they are the record of what was refused, and the quarantine index
+    holds the same count row by row (`make ingest-integrity` checks the two agree).
+    """
     connection.execute(
-        "update ops.batch_registry set status = ?, failure_reason = ?, ended_at = ? "
+        "update ops.batch_registry set status = ?, failure_reason = ?, ended_at = ?, "
+        "rows_read = ?, rows_landed = 0, rows_quarantined = ? "
         "where batch_id = ? and status <> ?",
-        [FAILED, reason, ended_at, batch_id, REGISTERED],
+        [FAILED, reason, ended_at, rows_read, rows_quarantined, batch_id, REGISTERED],
     )
 
 

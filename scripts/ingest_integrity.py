@@ -21,7 +21,13 @@ graceful run should be able to answer the same four questions at any time.
    the platform has forgotten to re-read rows nothing has landed. This is the failure the
    whole split exists to prevent.
 
-Exit code 0 when 1, 2 and 4 are clean, whatever 3 says. Runs inside a container.
+5. **Does every terminal batch's quarantined count equal its rows in the quarantine index?**
+   One fact in two places: the registry's `rows_quarantined`, written by the register step from
+   the extract step's report, and `dq.quarantine_log`, indexed by the same step from the
+   quarantine objects. Two representations of one fact need a check, and this is it, for
+   failed batches as much as registered ones.
+
+Exit code 0 when 1, 2, 4 and 5 are clean, whatever 3 says. Runs inside a container.
 """
 
 from __future__ import annotations
@@ -55,6 +61,22 @@ def main() -> int:
               from ops.extract_watermark w order by w.entity
             """
         ).fetchall()
+
+        disagreeing = connection.execute(
+            """
+            select b.batch_id, b.status, b.rows_quarantined, coalesce(q.rows, 0)
+              from ops.batch_registry b
+              left join (select batch_id, count(*) as rows from dq.quarantine_log
+                          group by batch_id) q using (batch_id)
+             where b.status in ('registered', 'failed')
+               and b.rows_quarantined <> coalesce(q.rows, 0)
+             order by b.batch_id
+            """
+        ).fetchall()
+        (quarantined_total,) = connection.execute(
+            "select coalesce(sum(rows_quarantined), 0) from ops.batch_registry "
+            "where status in ('registered', 'failed')"
+        ).fetchone()
 
     print("batches by status:")
     for status, count in by_status:
@@ -96,13 +118,20 @@ def main() -> int:
     for entity, held, by_batch, registered in ahead[:20]:
         print(f"   {entity}: watermark {held} from {by_batch}, highest registered {registered}")
 
+    print(
+        f"\n5. terminal batches whose quarantined count differs from the quarantine index: "
+        f"{len(disagreeing)} (registry total {quarantined_total})"
+    )
+    for batch_id, status, claimed, indexed in disagreeing[:20]:
+        print(f"   {batch_id} ({status}): registry {claimed}, quarantine index {indexed}")
+
     # An empty registry has no open batch, no missing object and no watermark ahead of
     # anything, so every question above answers "none". That is not a clean registry.
     if not batches:
         print("\nintegrity: nothing to check, the registry holds no batch")
         return 2
 
-    clean = not still_open and not missing and not ahead
+    clean = not still_open and not missing and not ahead and not disagreeing
     print(f"\nintegrity: {'clean' if clean else 'NOT CLEAN'} across {len(batches)} batch(es)")
     return 0 if clean else 1
 

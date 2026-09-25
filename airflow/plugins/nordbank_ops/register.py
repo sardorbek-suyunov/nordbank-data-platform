@@ -372,7 +372,17 @@ def register_run(
             report.drift_rows += record_drift(connection, batch, entry.get("drift", []), now)
 
             if entry["status"] == "failed":
-                registry.mark_failed(connection, batch["batch_id"], entry["failure_reason"], now)
+                registry.mark_failed(
+                    connection,
+                    batch["batch_id"],
+                    entry["failure_reason"],
+                    now,
+                    rows_read=entry.get("rows_read", 0),
+                    rows_quarantined=entry.get("rows_quarantined", 0),
+                )
+                report.quarantine_rows_loaded += load_quarantine(
+                    connection, client, bucket, entry.get("quarantine_keys", [])
+                )
                 report.failed.append((entity, entry["failure_reason"]))
                 continue
 
