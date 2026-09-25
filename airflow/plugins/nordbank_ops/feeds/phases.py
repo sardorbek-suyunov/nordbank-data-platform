@@ -3,8 +3,8 @@
 The shape is specification 005's, with one phase added in front for the two delivery modes:
 
 - **discover**, no warehouse access: list and hash what the publisher has delivered;
-- **open**, pooled: recognise what has already landed, choose the contract version in force for
-  each batch's interval, and allocate batches, in one transaction;
+- **open**, pooled: recognise what has already landed or is parked, choose the contract version
+  in force for each batch, and allocate batches, in one transaction;
 - **extract**, mapped, no warehouse access: fetch or read, parse, validate, tokenise, land;
 - **register**, pooled, `all_done`: register what wrote and fail what did not, in one
   transaction;
@@ -181,6 +181,18 @@ def open_unit(system: str, allocate) -> list[dict]:
     return units
 
 
+def _in_force(connection, chains: dict, entities: tuple[str, ...], day: dt.date) -> tuple:
+    """The (entity, fingerprint) pairs of the contracts a delivery would be read against today."""
+    from nordbank_ops import contracts as versions
+
+    pairs = []
+    for entity in entities:
+        current = chains[entity][-1]
+        version = versions.select(connection, current.source_system, entity, day)
+        pairs.append((entity, versions.body(chains, entity, version).fingerprint))
+    return tuple(sorted(pairs))
+
+
 def _sequences_of(connection, system: str, checksum_: str | None, stamp: str) -> set[int]:
     """The batch sequences of one interval already allocated to a delivery, or to any.
 
@@ -198,6 +210,57 @@ def _sequences_of(connection, system: str, checksum_: str | None, stamp: str) ->
         arguments,
     ).fetchall()
     return {int(batch_id.rsplit("-", 1)[1]) for (batch_id,) in rows}
+
+
+def _admit(
+    connection,
+    chains: dict,
+    *,
+    system: str,
+    entities: tuple[str, ...],
+    candidate: dict,
+    day: dt.date,
+    selected_on: dt.date,
+    landed: dict,
+    parked: dict,
+    run_id: str,
+    opened_at: dt.datetime,
+) -> str | None:
+    """Decide whether a delivery is attempted, and record the sighting when it is not.
+
+    Returns the sighting outcome for an attempt, `new` or `reattempted`, or None when nothing is
+    to be allocated. `day` is the run's, which the sighting is recorded under; `selected_on` is
+    the day whose contracts the delivery would be read against.
+
+    A delivery already landed is recognised by its checksum. A delivery that is parked is left
+    parked while the contracts in force for it are the ones it was refused against, because
+    the same bytes read against the same contracts reach the same verdict; it is attempted
+    again, once, when they change (ADR 0016).
+    """
+    from nordbank_ops.feeds import identity
+
+    item = identity.Candidate(candidate["key"], candidate["checksum"], candidate["size"])
+    held = parked.get(candidate["checksum"])
+    if candidate["checksum"] in landed:
+        outcome, batch_id = identity.ALREADY_INGESTED, landed[candidate["checksum"]]
+    elif held is not None and held.fingerprints == _in_force(
+        connection, chains, entities, selected_on
+    ):
+        outcome, batch_id = identity.PARKED, held.batch_id
+        print(f"open: {candidate['key']} is parked ({held.reason}); its contracts are unchanged")
+    else:
+        return identity.NEW if held is None else identity.REATTEMPTED
+    identity.record_sighting(
+        connection,
+        item,
+        source_system=system,
+        ingest_date=day,
+        outcome=outcome,
+        batch_id=batch_id,
+        run_id=run_id,
+        now=opened_at,
+    )
+    return None
 
 
 # --- ECB FX rates ------------------------------------------------------------------------------
@@ -294,6 +357,9 @@ def settlement_discover(context: dict) -> list[dict]:
     return out
 
 
+SETTLEMENT_ENTITIES = ("settlements", "settlement_totals")
+
+
 def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) -> list[dict]:
     from nordbank_ops.feeds import identity
 
@@ -302,26 +368,31 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
     opened_at = dt.datetime.now(dt.UTC)
 
     def allocate(connection, chains):
-        landed = identity.landed_as(connection, [c["checksum"] for c in candidates])
+        checksums = [c["checksum"] for c in candidates]
+        landed = identity.landed_as(connection, checksums)
+        parked = identity.parked(connection, CARDNET, checksums)
         units = []
         for candidate in candidates:
-            item = identity.Candidate(candidate["key"], candidate["checksum"], candidate["size"])
-            if candidate["checksum"] in landed:
-                identity.record_sighting(
-                    connection,
-                    item,
-                    source_system=CARDNET,
-                    ingest_date=day,
-                    outcome=identity.ALREADY_INGESTED,
-                    batch_id=landed[candidate["checksum"]],
-                    run_id=run_id,
-                    now=opened_at,
-                )
+            outcome = _admit(
+                connection,
+                chains,
+                system=CARDNET,
+                entities=SETTLEMENT_ENTITIES,
+                candidate=candidate,
+                day=day,
+                selected_on=day,
+                landed=landed,
+                parked=parked,
+                run_id=run_id,
+                opened_at=opened_at,
+            )
+            if outcome is None:
                 continue
-            if not candidate["settlement_date"]:
-                business = day
-            else:
-                business = dt.date.fromisoformat(candidate["settlement_date"])
+            business = (
+                dt.date.fromisoformat(candidate["settlement_date"])
+                if candidate["settlement_date"]
+                else day
+            )
             interval = _midnight(business)
             own = _sequences_of(
                 connection, CARDNET, candidate["checksum"], f"{interval:%Y%m%dT%H%M%S}"
@@ -341,14 +412,14 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                     selected_on=day,
                     reusable=own,
                 )
-                for entity in ("settlements", "settlement_totals")
+                for entity in SETTLEMENT_ENTITIES
             ]
             identity.record_sighting(
                 connection,
-                item,
+                identity.Candidate(candidate["key"], candidate["checksum"], candidate["size"]),
                 source_system=CARDNET,
                 ingest_date=day,
-                outcome=identity.NEW,
+                outcome=outcome,
                 batch_id=batches[0]["batch_id"],
                 run_id=run_id,
                 now=opened_at,
@@ -383,7 +454,7 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                     }
                     - taken,
                 )
-                for entity in ("settlements", "settlement_totals")
+                for entity in SETTLEMENT_ENTITIES
             ]
             units.append({"file": None, "batches": batches})
         return units
@@ -535,27 +606,31 @@ def sanctions_open(context: dict, candidates: list[dict]) -> list[dict]:
     opened_at = dt.datetime.now(dt.UTC)
 
     def allocate(connection, chains):
-        landed = identity.landed_as(connection, [c["checksum"] for c in candidates])
+        checksums = [c["checksum"] for c in candidates]
+        landed = identity.landed_as(connection, checksums)
+        parked = identity.parked(connection, SANCTIONS, checksums)
         units = []
         for candidate in candidates:
-            item = identity.Candidate(candidate["key"], candidate["checksum"], candidate["size"])
-            if candidate["checksum"] in landed:
-                identity.record_sighting(
-                    connection,
-                    item,
-                    source_system=SANCTIONS,
-                    ingest_date=day,
-                    outcome=identity.ALREADY_INGESTED,
-                    batch_id=landed[candidate["checksum"]],
-                    run_id=run_id,
-                    now=opened_at,
-                )
+            published = dt.datetime.fromisoformat(candidate["published_at"])
+            outcome = _admit(
+                connection,
+                chains,
+                system=SANCTIONS,
+                entities=("entities",),
+                candidate=candidate,
+                day=day,
+                selected_on=published.date(),
+                landed=landed,
+                parked=parked,
+                run_id=run_id,
+                opened_at=opened_at,
+            )
+            if outcome is None:
                 print(
                     f"open: sanctions version {candidate['version']} has content already landed "
-                    f"as {landed[candidate['checksum']]}; nothing to do"
+                    "or parked; nothing to do"
                 )
                 continue
-            published = dt.datetime.fromisoformat(candidate["published_at"])
             batch = _allocate(
                 connection,
                 chains,
@@ -571,10 +646,10 @@ def sanctions_open(context: dict, candidates: list[dict]) -> list[dict]:
             )
             identity.record_sighting(
                 connection,
-                item,
+                identity.Candidate(candidate["key"], candidate["checksum"], candidate["size"]),
                 source_system=SANCTIONS,
                 ingest_date=day,
-                outcome=identity.NEW,
+                outcome=outcome,
                 batch_id=batch["batch_id"],
                 run_id=run_id,
                 now=opened_at,

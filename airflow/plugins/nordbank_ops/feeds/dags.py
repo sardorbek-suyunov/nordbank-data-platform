@@ -99,8 +99,9 @@ def build_feed_dag(
                 # A verdict on the delivery will be the same verdict on a retry, so it fails
                 # without one, as a breaking drift does at specification 005. A fetch that ran
                 # out of attempts may succeed on the task's retry, so it keeps it.
-                verdicts = ("breaking drift", "structurally malformed")
-                if all(str(r["failure_reason"]).startswith(verdicts) for r in failed):
+                from nordbank_ops.feeds.identity import is_verdict
+
+                if all(is_verdict(r["failure_reason"]) for r in failed):
                     from nordbank_ops.phases import _fail_without_retrying
 
                     raise _fail_without_retrying(message)
