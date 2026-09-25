@@ -26,6 +26,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import decimal
+import hashlib
 import io
 import random
 from dataclasses import dataclass, field
@@ -146,6 +147,34 @@ def _break_delta(
     return delta if rng.random() < 0.5 else -delta
 
 
+def _luhn(digits: str) -> str:
+    """The Luhn check digit for a string of digits."""
+    total = 0
+    for position, digit in enumerate(reversed(digits)):
+        value = int(digit) * (2 if position % 2 == 0 else 1)
+        total += value - 9 if value > 9 else value
+    return str((10 - total % 10) % 10)
+
+
+def acquirer_reference_number(item: Item) -> str:
+    """The acquirer's reference for the item: 23 digits, a check digit last.
+
+    A format digit, the acquirer's six-digit identifier, the clearing date as the last digit of
+    the year and the day of the year, an eleven-digit sequence, and a Luhn check digit: the
+    layout acquirers use. The acquirer generates it and the issuer's ledger does not hold it, so
+    the platform has no other source of it and nothing to contradict (the spec 006 review, R4).
+    It is derived from the transaction reference rather than drawn from the file's random
+    stream, so adding the field moves no other draw.
+    """
+    digest = hashlib.sha256(item.transaction_reference.encode("utf-8")).hexdigest()
+    acquirer = f"{int(digest[:8], 16) % 900_000 + 100_000:06d}"
+    day = item.clearing_date
+    julian = f"{day.year % 10}{day.timetuple().tm_yday:03d}"
+    sequence = f"{int(digest[8:24], 16) % 10**11:011d}"
+    body = f"7{acquirer}{julian}{sequence}"
+    return body + _luhn(body)
+
+
 def _row(item: Item, amount: decimal.Decimal, columns: tuple[str, ...]) -> list[str]:
     values = {
         "record_type": "D",
@@ -160,9 +189,8 @@ def _row(item: Item, amount: decimal.Decimal, columns: tuple[str, ...]) -> list[
         "presentment": "CP" if item.is_card_present else "CNP",
         "settlement_currency": item.settlement_currency,
         "settlement_amount": _amount(amount),
-        # The interchange the issuer earns on the item, sent once the processor starts sending
-        # it. A flat 0.2 per cent: the field exists to be additive drift, not to be priced.
-        "interchange_fee_amount": _amount(abs(amount) * decimal.Decimal("0.002")),
+        # Sent once the processor starts sending it: the additive drift event.
+        "acquirer_reference_number": acquirer_reference_number(item),
     }
     return [values[name] for name in columns]
 

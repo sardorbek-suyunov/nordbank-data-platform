@@ -47,13 +47,15 @@ class FileEvent:
 
 
 EVENTS: tuple[FileEvent, ...] = (
-    # The processor starts sending the interchange fee on each item. Additive: the platform
-    # logs it and does not land it, and nothing fails.
+    # The processor starts sending the acquirer's reference number on each item. Additive: the
+    # platform logs it and does not land it, and nothing fails. A field no other source the
+    # platform reads carries, so the drift event cannot create a second, contradicting source
+    # of anything (the spec 006 review replaced an interchange amount here for that reason).
     FileEvent(
-        name="clearing_interchange_fee_added",
+        name="clearing_acquirer_reference_added",
         kind=COLUMN_ADDED,
         offset_days=20,
-        column="interchange_fee_amount",
+        column="acquirer_reference_number",
     ),
     # The processor stops sending the merchant name. Breaking: the whole file is quarantined,
     # its batch fails and the backfill halts until a person publishes a contract version that

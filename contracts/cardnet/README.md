@@ -64,3 +64,14 @@ reconciling the file against itself (landed plus quarantined to records read).
 | `settlement_amount` | Four decimal places, positive where the bank owes the network, negative where the network owes the bank |
 
 Settlement is one calendar day after clearing for both networks.
+
+## Fields the processor added later
+
+| Field | From | Meaning | Classification |
+|---|---|---|---|
+| `acquirer_reference_number` | anchor plus 20 | The acquirer's 23-digit reference for the clearing record: a format digit, the acquirer's six-digit identifier, the clearing date as year digit and day of year, an eleven-digit sequence and a Luhn check digit | `non-personal`: it identifies a clearing record, an event, not a person, the same reasoning that makes `transaction_reference` non-personal; the record reaches a person only through `card_reference`, which is classified and tokenised |
+
+No contract describes it: it is additive drift, logged and not landed, and it survives in bronze
+in each record's `_raw_payload`. It has no counterpart in the core banking source or any other
+feed, which is why it was chosen: an additive field that duplicated something the platform
+already sources, such as an interchange amount, would be a second source of that fact.
