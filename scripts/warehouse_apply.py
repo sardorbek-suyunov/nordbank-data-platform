@@ -56,6 +56,12 @@ SUPERSEDED_SHAPES: tuple[tuple[str, str, str, str], ...] = (
         "specification 006 split in_force_from into source-time in_force_from and real-time "
         "first_seen_at",
     ),
+    (
+        "ops",
+        "ingested_file",
+        "revision",
+        "specification 006's review recorded a clearing file's declared sequence and revision",
+    ),
 )
 
 

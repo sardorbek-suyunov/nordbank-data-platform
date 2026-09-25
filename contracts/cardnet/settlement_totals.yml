@@ -56,3 +56,19 @@ columns:
   nullable: false
   classification: non-personal
   origin: header
+# The sender's revision of this file: 1 for the file as first sent, higher for a corrected
+# re-send of the same settlement date and sequence. An attribute, never identity: within one
+# sequence the highest revision replaces the others, across sequences files add
+# (architecture.md, "Batch arithmetic").
+- name: revision
+  type: integer
+  nullable: false
+  classification: non-personal
+  origin: header
+# The header's `created_at`: when the processor produced the file, which since ADR 0016 is the
+# day it was delivered. Renamed because created_at is reserved for audit columns.
+- name: file_created_at
+  type: timestamp with time zone
+  nullable: false
+  classification: non-personal
+  origin: header

@@ -166,6 +166,8 @@ def register_feed_run(
                     publisher_version=delivery.get("publisher_version"),
                     batch_id=batch["batch_id"],
                     now=now,
+                    file_sequence=delivery.get("file_sequence"),
+                    revision=delivery.get("revision"),
                 )
                 out.files_recorded += int(recorded)
 
