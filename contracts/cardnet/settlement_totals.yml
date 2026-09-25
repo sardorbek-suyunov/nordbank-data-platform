@@ -4,6 +4,17 @@
 # the detail records it wrote, before transmission. These are the file side of the settlement
 # reconciliation (Q15, metric_definitions.md), which compares them with the ledger; the detail
 # records are reconciled separately, against the trailer's count, by landed plus quarantined.
+#
+# The truncation gate is the end record, not these. A file whose last line is not a `Z` record,
+# or whose `Z` count differs from the detail records it holds, is structurally malformed: the
+# whole file is refused and both of its batches fail. A per-cell gate — each `T` count against
+# the detail records read for that network and currency — was considered and rejected, because
+# a record damaged in transit cannot always be put in a cell. Measured on specification 006's
+# second acceptance run: 9 quarantined records had a blank network and 5 a blank currency, in
+# 13 files, and 30 more had the wrong field count, so no field of theirs can be trusted by
+# position. Every one of those files was complete, and a per-cell gate would have failed it as
+# truncated. The cell totals belong to the reconciliation, where a difference is a finding
+# rather than a refusal.
 source_system: cardnet
 source_schema: file
 entity: settlement_totals

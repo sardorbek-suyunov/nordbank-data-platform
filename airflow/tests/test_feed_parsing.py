@@ -322,6 +322,18 @@ def test_a_structurally_broken_file_is_refused_whole(mutate, fault) -> None:
     assert read.structural_fault and read.structural_fault.startswith(fault)
 
 
+@pytest.mark.parametrize("keep", [0.9, 0.66, 0.34])
+def test_a_transmission_cut_off_part_way_is_refused_by_the_end_record(keep) -> None:
+    """R11: the end record is the truncation gate. A file cut at an arbitrary byte, mid-record
+    included, has no `Z` line, and the whole file is refused before any record is read."""
+    body = _clearing()
+    cut = body[: int(len(body) * keep)]
+    assert not cut.rstrip(b"\n").split(b"\n")[-1].startswith(b"Z,")
+    read = _read(cut)
+    assert read.structural_fault == "the last line is not an end record"
+    assert read.details.records == [] and read.details.refused == []
+
+
 def test_the_header_lands_its_sequence_revision_and_production_time() -> None:
     read = _read(_clearing())
     assert (read.file_sequence, read.revision) == (1, 1)
