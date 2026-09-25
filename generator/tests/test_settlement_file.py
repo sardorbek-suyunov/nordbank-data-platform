@@ -170,8 +170,8 @@ def test_the_layout_follows_the_scripted_timeline() -> None:
     after_add = timeline.columns(added.fires_on(ANCHOR), ANCHOR)
     after_remove = timeline.columns(removed.fires_on(ANCHOR), ANCHOR)
     assert before == timeline.BASE_COLUMNS
-    assert after_add == (*timeline.BASE_COLUMNS, "interchange_fee_amount")
-    assert "merchant_name" not in after_remove and "interchange_fee_amount" in after_remove
+    assert after_add == (*timeline.BASE_COLUMNS, "acquirer_reference_number")
+    assert "merchant_name" not in after_remove and "acquirer_reference_number" in after_remove
 
 
 def test_a_late_file_is_delivered_three_days_after_its_settlement_date() -> None:
@@ -193,3 +193,26 @@ def test_a_late_file_is_delivered_three_days_after_its_settlement_date() -> None
         assert settlement_date not in on_time
     assert all(day >= ANCHOR for day in late)
     assert due_on(ANCHOR - dt.timedelta(days=1), ANCHOR, 42, 0.05, 3) == []
+
+
+def test_the_acquirer_reference_number_is_23_digits_with_a_valid_check_digit() -> None:
+    items = _items()
+    numbers = [build.acquirer_reference_number(item) for item in items]
+    assert len(numbers) >= 40
+    assert all(len(n) == 23 and n.isdigit() for n in numbers)
+    assert all(build._luhn(n[:-1]) == n[-1] for n in numbers)
+    assert len(set(numbers)) == len(numbers)
+    assert build._luhn("7992739871") == "3"
+
+
+def test_adding_the_reference_number_moves_no_other_draw() -> None:
+    """The additive field is derived, not drawn, so the file's defects do not move with it."""
+    items = _items()
+    parameters = _parameters(
+        malformed_record_share=0.2, break_warn_share=0.3, break_error_share=0.3
+    )
+    before = _build(items, parameters, columns=timeline.BASE_COLUMNS).manifest
+    added = (*timeline.BASE_COLUMNS, "acquirer_reference_number")
+    after = _build(items, parameters, columns=added).manifest
+    assert before["malformed"] and before["breaks"]
+    assert (before["malformed"], before["breaks"]) == (after["malformed"], after["breaks"])

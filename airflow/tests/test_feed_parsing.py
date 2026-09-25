@@ -289,7 +289,7 @@ def test_malformed_records_are_refused_individually_with_their_reasons() -> None
 def test_an_extra_column_is_additive_and_a_removed_one_is_breaking() -> None:
     from generator.settlement import timeline
 
-    added = (*timeline.BASE_COLUMNS, "interchange_fee_amount")
+    added = (*timeline.BASE_COLUMNS, "acquirer_reference_number")
     read = _read(_clearing(columns=added))
     assert read.details.breaking is None
     assert [o["kind"] for o in read.details.drift] == ["additive"]
@@ -305,11 +305,11 @@ def test_the_layout_without_the_merchant_name_is_accepted_by_version_2() -> None
     from generator.settlement import timeline
 
     removed = tuple(
-        c for c in (*timeline.BASE_COLUMNS, "interchange_fee_amount") if c != "merchant_name"
+        c for c in (*timeline.BASE_COLUMNS, "acquirer_reference_number") if c != "merchant_name"
     )
     read = _read(_clearing(columns=removed), version=2)
     assert read.details.breaking is None
-    assert [o["column"] for o in read.details.drift] == ["interchange_fee_amount"]
+    assert [o["column"] for o in read.details.drift] == ["acquirer_reference_number"]
     assert len(read.details.records) == 30
     assert all("merchant_name" not in record for record in read.details.records)
 
