@@ -79,6 +79,8 @@ DUMPED = (
     "ops.file_sighting",
     "ops.feed_request",
     "meta.contract_version",
+    "meta.schema_drift_log",
+    "dq.quarantine_log",
 )
 
 
