@@ -108,8 +108,8 @@ backfill: ## Tick, deliver and ingest one day at a time (FROM= TO= [DEFER_DEMO=]
 bronze-stats: ## Landed and quarantined counts by entity and ingest date (ALL=1 for every status)
 	docker compose exec -T -e ALL=$(ALL) airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_stats.py"
 
-bronze-pii-scan: ## Scan every registered bronze object for a cleartext identifier
-	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_pii_scan.py"
+bronze-pii-scan: ## Scan every registered bronze object for a cleartext identifier (PLANT=1 proves it can fail)
+	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_pii_scan.py $(if $(PLANT),--plant,)"
 
 bronze-acceptance: ## Report specification 005's evidence against what the backfill produced
 	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/bronze_acceptance.py"
