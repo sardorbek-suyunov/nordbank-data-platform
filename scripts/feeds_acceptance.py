@@ -177,7 +177,7 @@ def main() -> int:
             "and b.status = 'registered' order by 1",
         )
         outcomes = collections.Counter(outcome for _k, outcome, _n in requests)
-        absent = [key for key, outcome, _n in requests if outcome == "absent"]
+        absent = [key for key, outcome, _n in requests if outcome == "absent_no_publication"]
         weekdays = collections.Counter(dt.date.fromisoformat(k).strftime("%a") for k in absent)
         print(f"  requests: {dict(outcomes)}; absent dates by weekday: {dict(weekdays)}")
         rates = _landed(connection, client, lake, "ecb", "fx_rates")
