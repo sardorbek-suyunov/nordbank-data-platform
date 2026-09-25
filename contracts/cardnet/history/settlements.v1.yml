@@ -25,7 +25,8 @@ format:
   encoding: utf-8
   header_record:
     type: H
-    fields: [record_type, processor_id, settlement_date, file_sequence, created_at, layout_version]
+    fields: [record_type, processor_id, settlement_date, file_sequence, revision, created_at,
+      layout_version]
   column_line: true
   detail_record_type: D
   trailer_record:
@@ -95,6 +96,22 @@ columns:
   origin: header
 - name: processor_id
   type: character varying(20)
+  nullable: false
+  classification: non-personal
+  origin: header
+# The sender's revision of this file: 1 for the file as first sent, higher for a corrected
+# re-send of the same settlement date and sequence. An attribute, never identity: within one
+# sequence the highest revision replaces the others, across sequences files add
+# (architecture.md, "Batch arithmetic").
+- name: revision
+  type: integer
+  nullable: false
+  classification: non-personal
+  origin: header
+# The header's `created_at`: when the processor produced the file, which since ADR 0016 is the
+# day it was delivered. Renamed because created_at is reserved for audit columns.
+- name: file_created_at
+  type: timestamp with time zone
   nullable: false
   classification: non-personal
   origin: header

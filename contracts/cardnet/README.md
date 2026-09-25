@@ -26,7 +26,7 @@ The first field of every line says what the line is.
 
 | Line | First field | Fields |
 |---|---|---|
-| 1 | `H` | `record_type, processor_id, settlement_date, file_sequence, created_at, layout_version` |
+| 1 | `H` | `record_type, processor_id, settlement_date, file_sequence, revision, created_at, layout_version` |
 | 2 | `record_type` | The column line: the names of the detail fields, in order |
 | 3 to n | `D` | One detail record per cleared transaction, fields as named by line 2 |
 | after the details | `T` | `record_type, network, settlement_currency, record_count, amount_total`, one per network and currency |
@@ -34,6 +34,12 @@ The first field of every line says what the line is.
 
 The header's settlement date and file sequence make every file's bytes distinct, so an empty
 day's file cannot collide with another's.
+
+**Sequence and revision are different things.** `file_sequence` numbers the files the processor
+sends for one settlement date, and files with different sequences add up. `revision` numbers
+the versions of one of those files: 1 as first sent, higher for a correction, and the highest
+revision of a sequence replaces the lower ones. The same settlement date, sequence and revision
+never names two different files.
 
 **The trailer is the sender's control total.** `record_count` and `amount_total` are computed
 by the processor over every detail record it wrote for that network and currency, before

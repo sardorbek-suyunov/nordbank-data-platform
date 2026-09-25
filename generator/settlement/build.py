@@ -202,8 +202,14 @@ def build(
     parameters: Parameters,
     rng: random.Random,
     ledger_totals: dict[tuple[str, str], decimal.Decimal],
+    file_sequence: int = 1,
+    revision: int = 1,
 ) -> Built:
-    """The file's bytes and the manifest of what was injected into it."""
+    """The file's bytes and the manifest of what was injected into it.
+
+    The header declares the settlement date, the file's sequence for that date and its
+    revision: 1 as first sent, higher for a corrected re-send of the same sequence.
+    """
     items = sorted(items, key=lambda item: item.transaction_reference)
     amounts = {item.transaction_reference: item.settlement_amount for item in items}
 
@@ -282,7 +288,8 @@ def build(
             "H",
             parameters.processor_id,
             settlement_date.isoformat(),
-            "01",
+            f"{file_sequence:02d}",
+            str(revision),
             f"{settlement_date.isoformat()}T05:00:00Z",
             "1",
         ]
@@ -295,6 +302,8 @@ def build(
 
     manifest = {
         "settlement_date": settlement_date.isoformat(),
+        "file_sequence": file_sequence,
+        "revision": revision,
         "columns": list(columns),
         "detail_records": len(rows),
         "cells": len(cells),

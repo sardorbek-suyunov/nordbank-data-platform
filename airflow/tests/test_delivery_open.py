@@ -9,6 +9,7 @@ contracts:
 - a delivery refused with a verdict is parked: it allocates nothing on later runs while its
   contracts are unchanged, and is attempted again, once, when they change;
 - two deliveries for one settlement date in one run get a batch each;
+- a declaration already landed with different content is refused;
 - a retried day with no delivery reuses its empty batch rather than allocating another.
 """
 
@@ -23,7 +24,7 @@ import duckdb
 import pytest
 import yaml
 from nordbank_ops import registry
-from nordbank_ops.feeds import phases
+from nordbank_ops.feeds import identity, phases
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SCHEMA_DIR = ROOT / "infra" / "warehouse" / "schema"
@@ -164,6 +165,32 @@ def test_a_late_file_and_its_correction_in_one_run_get_a_batch_each(warehouse, c
     ids = [b["batch_id"] for unit in units for b in unit["batches"]]
     assert len(ids) == len(set(ids)) == 4
     assert not any(unit.get("refuse") for unit in units)
+
+
+def test_the_same_declaration_with_different_content_is_refused(warehouse, contracts):
+    first = _file("sha256:one", "2026-09-01")
+    connection = duckdb.connect(str(warehouse))
+    try:
+        identity.record_ingested(
+            connection,
+            checksum_="sha256:one",
+            source_system="cardnet",
+            entity="settlements",
+            key=first["key"],
+            size=100,
+            business_date=dt.date(2026, 9, 1),
+            publisher_version=None,
+            batch_id="settlements-20260901T000000-01",
+            now=NOW,
+            file_sequence=1,
+            revision=1,
+        )
+    finally:
+        connection.close()
+    (unit,) = _open(dt.date(2026, 9, 2), [_file("sha256:two", "2026-09-01")])
+    assert unit["refuse"].startswith("declaration conflict")
+    assert "settlements-20260901T000000-01" in unit["refuse"]
+    assert identity.is_verdict(unit["refuse"])
 
 
 def test_a_retried_day_with_no_delivery_reuses_its_empty_batch(warehouse, contracts):

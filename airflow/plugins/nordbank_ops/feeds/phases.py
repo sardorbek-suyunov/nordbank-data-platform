@@ -342,17 +342,40 @@ def expected_prefix(day: dt.date) -> str:
     return f"{settlement_prefix()}NBK_CLR_{day:%Y%m%d}_"
 
 
+def _header(first_line: bytes, fields: list[str]) -> dict:
+    """The header record's declared fields, by the contract's names, or empty if it is not one."""
+    import csv
+    import io
+
+    text = first_line.decode("utf-8", errors="replace")
+    row = next(csv.reader(io.StringIO(text)), [])
+    if not row or row[0] != "H":
+        return {}
+    return dict(zip(fields, row, strict=False))
+
+
+def _as_int(value: str | None) -> int | None:
+    return int(value) if value and value.isdigit() else None
+
+
 def settlement_discover(context: dict) -> list[dict]:
     from nordbank_ops.feeds import identity
 
     client, bucket = _inbound()
+    fields = _chains(CARDNET)["settlements"][-1].format["header_record"]["fields"]
     found = identity.discover(client, bucket, settlement_prefix(), ".csv")
     out = []
     for candidate in found:
         head = identity.read_object(client, bucket, candidate.key).split(b"\n", 1)[0]
-        fields = head.decode("utf-8", errors="replace").split(",")
-        settlement_date = fields[2] if len(fields) > 2 and fields[0] == "H" else None
-        out.append({**candidate.as_dict(), "settlement_date": settlement_date})
+        header = _header(head, fields)
+        out.append(
+            {
+                **candidate.as_dict(),
+                "settlement_date": header.get("settlement_date") or None,
+                "file_sequence": _as_int(header.get("file_sequence")),
+                "revision": _as_int(header.get("revision")),
+            }
+        )
     print(f"discover: {len(out)} file(s) under {bucket}/{settlement_prefix()}")
     return out
 
@@ -372,6 +395,7 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
         landed = identity.landed_as(connection, checksums)
         parked = identity.parked(connection, CARDNET, checksums)
         units = []
+        declared_here: dict[tuple, tuple[str, str]] = {}
         for candidate in candidates:
             outcome = _admit(
                 connection,
@@ -424,7 +448,31 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                 run_id=run_id,
                 now=opened_at,
             )
-            units.append({"file": candidate, "batches": batches})
+            declaration = (business, candidate["file_sequence"], candidate["revision"])
+            conflict = identity.declared_conflict(
+                connection,
+                source_system=CARDNET,
+                checksum_=candidate["checksum"],
+                business_date=business,
+                file_sequence=candidate["file_sequence"],
+                revision=candidate["revision"],
+            )
+            earlier = declared_here.get(declaration)
+            if conflict is None and earlier and earlier[1] != candidate["checksum"]:
+                conflict = earlier[0]
+            if None not in declaration:
+                declared_here.setdefault(
+                    declaration, (batches[0]["batch_id"], candidate["checksum"])
+                )
+            unit = {"file": candidate, "batches": batches}
+            if conflict:
+                unit["refuse"] = (
+                    f"declaration conflict: {candidate['key']} declares settlement date "
+                    f"{business}, sequence {candidate['file_sequence']}, revision "
+                    f"{candidate['revision']}, which {conflict} already carries with different "
+                    "content"
+                )
+            units.append(unit)
 
         todays = any(
             unit["file"]["settlement_date"] == day.isoformat() for unit in units if unit["file"]
@@ -490,6 +538,12 @@ def settlement_extract(unit: dict, context: dict) -> list[dict]:
         return [r.as_dict() for r in reports]
 
     file = unit["file"]
+    if unit.get("refuse"):
+        print(f"extract: {unit['refuse']}")
+        return [
+            failed(detail_contract, detail_batch, unit["refuse"]).as_dict(),
+            failed(totals_contract, totals_batch, unit["refuse"]).as_dict(),
+        ]
     inbound, inbound_bucket = _inbound()
     body = identity.read_object(inbound, inbound_bucket, file["key"])
     if identity.checksum(body) != file["checksum"]:
@@ -506,6 +560,8 @@ def settlement_extract(unit: dict, context: dict) -> list[dict]:
         "checksum": file["checksum"],
         "size": file["size"],
         "business_date": read.settlement_date.isoformat() if read.settlement_date else None,
+        "file_sequence": read.file_sequence,
+        "revision": read.revision,
     }
     if read.structural_fault:
         reason = f"structurally malformed file {file['key']}: {read.structural_fault}"

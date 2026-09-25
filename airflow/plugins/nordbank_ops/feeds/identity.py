@@ -30,7 +30,7 @@ REATTEMPTED = "reattempted"
 # The failure reasons that are a verdict on the delivery itself. The same bytes read against
 # the same contracts reach the same verdict every time, so a delivery refused with one of these
 # is parked rather than attempted again on every run (ADR 0016).
-VERDICTS: tuple[str, ...] = ("breaking drift", "structurally malformed")
+VERDICTS: tuple[str, ...] = ("breaking drift", "structurally malformed", "declaration conflict")
 
 
 def is_verdict(reason: str | None) -> bool:
@@ -177,6 +177,33 @@ def attempt_fingerprints(
     return tuple(sorted((entity, fingerprint) for entity, fingerprint in rows))
 
 
+def declared_conflict(
+    connection: Any,
+    *,
+    source_system: str,
+    checksum_: str,
+    business_date: dt.date | None = None,
+    file_sequence: int | None = None,
+    revision: int | None = None,
+) -> str | None:
+    """The batch that already landed the same declaration with different content, if any.
+
+    The sender's declared fields are attributes, never identity (ADR 0013), and they are still
+    a promise: a clearing file's settlement date, sequence and revision name one delivery.
+    The same declaration over different bytes means the sender reused a name it had already
+    given to something else, and landing both would put two contradicting deliveries under
+    one name. It fails loudly instead.
+    """
+    if business_date is None or file_sequence is None or revision is None:
+        return None
+    row = connection.execute(
+        "select batch_id from ops.ingested_file where source_system = ? and business_date = ? "
+        "and file_sequence = ? and revision = ? and content_checksum <> ? limit 1",
+        [source_system, business_date, file_sequence, revision, checksum_],
+    ).fetchone()
+    return row[0] if row else None
+
+
 def record_sighting(
     connection: Any,
     candidate: Candidate,
@@ -220,6 +247,8 @@ def record_ingested(
     publisher_version: str | None,
     batch_id: str,
     now: dt.datetime,
+    file_sequence: int | None = None,
+    revision: int | None = None,
 ) -> bool:
     """Record a file as landed. False if its checksum had already landed, which is refused
     upstream and would mean two batches raced for one file."""
@@ -232,8 +261,8 @@ def record_ingested(
         """
         insert into ops.ingested_file (
             content_checksum, source_system, entity, object_key, byte_size, business_date,
-            publisher_version, batch_id, first_ingested_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            file_sequence, revision, publisher_version, batch_id, first_ingested_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             checksum_,
@@ -242,6 +271,8 @@ def record_ingested(
             key,
             size,
             business_date,
+            file_sequence,
+            revision,
             publisher_version,
             batch_id,
             now,

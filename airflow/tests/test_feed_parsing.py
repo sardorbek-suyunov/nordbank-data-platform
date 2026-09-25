@@ -322,6 +322,15 @@ def test_a_structurally_broken_file_is_refused_whole(mutate, fault) -> None:
     assert read.structural_fault and read.structural_fault.startswith(fault)
 
 
+def test_the_header_lands_its_sequence_revision_and_production_time() -> None:
+    read = _read(_clearing())
+    assert (read.file_sequence, read.revision) == (1, 1)
+    assert read.file_created_at == dt.datetime(2026, 8, 3, 5, 0, tzinfo=dt.UTC)
+    record = read.details.records[0]
+    assert record["revision"] == 1 and record["file_created_at"] == read.file_created_at
+    assert "created_at" not in record
+
+
 # --- the sanctions snapshot ------------------------------------------------------------------
 
 

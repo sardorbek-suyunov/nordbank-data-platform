@@ -164,7 +164,9 @@ create table if not exists ops.task_failure (
 -- `business_date` is the settlement date a file covers or the publication date of a snapshot.
 -- `publisher_version` is a snapshot's own version string, which identifies a publication and
 -- is recorded, but is not the identity: the publisher can issue a new version string over the
--- same content, and that is a no-op here.
+-- same content, and that is a no-op here. `file_sequence` and `revision` are what a clearing
+-- file's header declares. They too are attributes, not identity, and they are a promise: the
+-- same declaration, or the same version string, over different content fails loudly.
 create table if not exists ops.ingested_file (
     content_checksum varchar primary key,
     source_system varchar not null,
@@ -172,6 +174,8 @@ create table if not exists ops.ingested_file (
     object_key varchar not null,
     byte_size bigint not null,
     business_date date,
+    file_sequence integer,
+    revision integer,
     publisher_version varchar,
     batch_id varchar not null,
     first_ingested_at timestamptz not null

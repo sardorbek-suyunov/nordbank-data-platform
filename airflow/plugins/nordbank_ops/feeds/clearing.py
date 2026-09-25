@@ -34,11 +34,18 @@ from nordbank_ops.validation import QuarantineReason, Rejection
 
 WRONG_FIELD_COUNT = "record has {got} fields and the column line names {expected}"
 
+# Header fields that land under another name. The sender calls the file's production time
+# `created_at`, which conventions.md reserves for the audit column every table carries, so it
+# lands as `file_created_at`; the contract's header layout keeps the sender's name.
+HEADER_RENAMES = {"file_created_at": "created_at"}
+
 
 @dataclass
 class ClearingFile:
     settlement_date: dt.date | None = None
     file_sequence: int | None = None
+    revision: int | None = None
+    file_created_at: dt.datetime | None = None
     processor_id: str | None = None
     column_line: list[str] = field(default_factory=list)
     details: Parsed = field(default_factory=Parsed)
@@ -129,18 +136,24 @@ def read(body: bytes, detail_contract, totals_contract, tokeniser) -> ClearingFi
         return out
 
     header = dict(zip(detail_contract.format["header_record"]["fields"], rows[0], strict=False))
-    try:
-        out.settlement_date = cast(header.get("settlement_date"), "date")
-        out.file_sequence = cast(header.get("file_sequence"), "integer")
-    except CastError as exc:
-        out.structural_fault = f"the header record does not parse: {exc}"
-        return out
-    out.processor_id = header.get("processor_id")
-    header_values = {
-        "settlement_date": out.settlement_date,
-        "file_sequence": out.file_sequence,
-        "processor_id": out.processor_id,
-    }
+    header_values = {}
+    for column in detail_contract.columns:
+        if column.origin != "header":
+            continue
+        raw = header.get(HEADER_RENAMES.get(column.name, column.name))
+        try:
+            header_values[column.name] = cast(raw, column.data_type)
+        except CastError as exc:
+            out.structural_fault = f"the header record does not parse: {exc}"
+            return out
+        if header_values[column.name] is None and not column.is_nullable:
+            out.structural_fault = f"the header record has no {column.name}"
+            return out
+    out.settlement_date = header_values.get("settlement_date")
+    out.file_sequence = header_values.get("file_sequence")
+    out.revision = header_values.get("revision")
+    out.file_created_at = header_values.get("file_created_at")
+    out.processor_id = header_values.get("processor_id")
 
     out.column_line = rows[1]
     expected = detail_contract.record_columns
