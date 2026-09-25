@@ -243,3 +243,49 @@ def test_the_header_says_when_the_file_was_produced() -> None:
     )
     header = next(csv.reader(io.StringIO(built.body.decode())))
     assert header == ["H", "NBKPROC", DAY.isoformat(), "01", "1", "2026-08-06T05:00:00Z", "1"]
+
+
+def test_a_correction_is_revision_2_of_the_same_sequence_under_its_own_key() -> None:
+    from generator.settlement.__main__ import file_key
+
+    assert file_key(DAY) == "cardnet/NBK_CLR_20260803_01.csv"
+    assert file_key(DAY, 2) == "cardnet/NBK_CLR_20260803_01_R2.csv"
+    built = build.build(
+        settlement_date=DAY,
+        items=_items(),
+        columns=timeline.BASE_COLUMNS,
+        parameters=_parameters(),
+        rng=random.Random(1),
+        ledger_totals={},
+        revision=2,
+    )
+    header = next(csv.reader(io.StringIO(built.body.decode())))
+    assert header[3:5] == ["01", "2"] and built.manifest["revision"] == 2
+
+
+def test_the_plan_corrects_a_broken_file_the_next_day_and_the_scripted_one_on_arrival(
+    monkeypatch,
+) -> None:
+    from generator.settlement import __main__ as settlement
+
+    section = {
+        "late_file_share": 0.05,
+        "late_by_days": 3,
+        "correction_share": 1.0,
+        "correction_lag_days": 1,
+    }
+    broken = {ANCHOR + dt.timedelta(days=4)}
+
+    def fake_build(_cursor, settlement_date, **_kwargs):
+        return build.Built(body=b"", manifest={"breaks": [1] if settlement_date in broken else []})
+
+    monkeypatch.setattr(settlement, "build_file", fake_build)
+    day_after = ANCHOR + dt.timedelta(days=5)
+    planned = settlement.plan(None, day_after, anchor=ANCHOR, seed=42, section=section)
+    assert settlement.Delivery(ANCHOR + dt.timedelta(days=4), False, 2) in planned
+
+    scripted = ANCHOR + dt.timedelta(days=timeline.CORRECTED_ON_ARRIVAL_OFFSET)
+    arrival = scripted + dt.timedelta(days=3)
+    planned = settlement.plan(None, arrival, anchor=ANCHOR, seed=42, section=section)
+    revisions = [d.revision for d in planned if d.settlement_date == scripted]
+    assert revisions == [1, 2], "the scripted late file and its correction arrive together"

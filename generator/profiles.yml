@@ -754,6 +754,10 @@ defaults:
     # A file held back and delivered late_by_days after its settlement date.
     late_file_share: 0.05
     late_by_days: 3
+    # A file that carried a settlement break is corrected, as revision 2 with the break removed,
+    # at this share, sent correction_lag_days after the file it corrects.
+    correction_share: 0.25
+    correction_lag_days: 1
     # Per detail record, damaged in transit after the trailer was computed.
     malformed_record_share: 0.01
     malformed_kind_mix:
