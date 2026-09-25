@@ -1,6 +1,6 @@
 # 0014 — The contract in force for a batch is chosen by its interval
 
-Status: Accepted
+Status: Superseded by ADR 0016 for how a contract version is selected; its other decisions stand
 Date: 2026-09-23
 
 ## Context
