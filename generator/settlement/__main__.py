@@ -2,8 +2,10 @@
 
 `make generate-settlement-files DATE=...` runs this. On day D the processor delivers the file for
 settlement date D, unless that file is one it sends late, and any file for settlement date D-3
-that it held back. Files are written to the inbound bucket; the manifest of what each contains
-is written beside them under `_simulation/`, where the ingestion path never looks.
+that it held back. A file is built in the layout the processor uses on the day it sends it, and
+its header says when it was produced, which is that day. Files are written to the inbound
+bucket; the manifest of what each contains is written beside them under `_simulation/`, where
+the ingestion path never looks.
 
 Idempotent: a file is a pure function of the ledger, the seed and its settlement date, so
 delivering the same day twice writes the same bytes to the same key. It reads the source with
@@ -63,8 +65,9 @@ def file_key(settlement_date: dt.date) -> str:
     return f"{PREFIX}NBK_CLR_{settlement_date:%Y%m%d}_01.csv"
 
 
-def is_late(seed: int, settlement_date: dt.date, share: float) -> bool:
-    return SubStreams(seed).stream("settlement.late", settlement_date.isoformat()).random() < share
+def is_late(seed: int, settlement_date: dt.date, share: float, anchor: dt.date) -> bool:
+    drawn = SubStreams(seed).stream("settlement.late", settlement_date.isoformat()).random()
+    return drawn < share or timeline.held_late(settlement_date, anchor)
 
 
 def due_on(
@@ -76,10 +79,10 @@ def due_on(
     bank's, starts where the simulation does.
     """
     due = []
-    if day >= anchor and not is_late(seed, day, share):
+    if day >= anchor and not is_late(seed, day, share, anchor):
         due.append((day, False))
     held = day - dt.timedelta(days=late_by)
-    if held >= anchor and is_late(seed, held, share):
+    if held >= anchor and is_late(seed, held, share, anchor):
         due.append((held, True))
     return sorted(due)
 
@@ -119,7 +122,9 @@ def inbound_client():
     ), values.get("INBOUND_BUCKET", "nordbank-inbound")
 
 
-def build_file(cursor, settlement_date: dt.date, *, anchor, seed, section) -> build.Built:
+def build_file(
+    cursor, settlement_date: dt.date, *, delivered_on: dt.date, anchor, seed, section
+) -> build.Built:
     items = read_items(
         cursor, settlement_date, int(section["settlement_lag_days"]), section["cash_account"]
     )
@@ -131,12 +136,13 @@ def build_file(cursor, settlement_date: dt.date, *, anchor, seed, section) -> bu
     built = build.build(
         settlement_date=settlement_date,
         items=items,
-        columns=timeline.columns(settlement_date, anchor),
+        columns=timeline.columns(delivered_on, anchor),
         parameters=build.Parameters.from_profile(section),
         rng=rng,
         ledger_totals=ledger,
+        created_at=dt.datetime.combine(delivered_on, dt.time(5), tzinfo=dt.UTC),
     )
-    built.manifest["events"] = [e.name for e in timeline.active(settlement_date, anchor)]
+    built.manifest["events"] = [e.name for e in timeline.active(delivered_on, anchor)]
     return built
 
 
@@ -179,7 +185,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"settlement: {day}: no file due")
             for settlement_date, late in due:
                 built = build_file(
-                    cursor, settlement_date, anchor=anchor, seed=int(seed), section=section
+                    cursor,
+                    settlement_date,
+                    delivered_on=day,
+                    anchor=anchor,
+                    seed=int(seed),
+                    section=section,
                 )
                 built.manifest.update({"delivered_on": day.isoformat(), "late": late})
                 key = file_key(settlement_date)

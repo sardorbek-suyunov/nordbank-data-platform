@@ -232,12 +232,16 @@ def build(
     ledger_totals: dict[tuple[str, str], decimal.Decimal],
     file_sequence: int = 1,
     revision: int = 1,
+    created_at: dt.datetime | None = None,
 ) -> Built:
     """The file's bytes and the manifest of what was injected into it.
 
     The header declares the settlement date, the file's sequence for that date and its
-    revision: 1 as first sent, higher for a corrected re-send of the same sequence.
+    revision: 1 as first sent, higher for a corrected re-send of the same sequence. `created_at`
+    is when the processor produced the file, which is the day it sends it; by default 05:00 UTC
+    on the settlement date, the day an on-time file is sent.
     """
+    created_at = created_at or dt.datetime.combine(settlement_date, dt.time(5), tzinfo=dt.UTC)
     items = sorted(items, key=lambda item: item.transaction_reference)
     amounts = {item.transaction_reference: item.settlement_amount for item in items}
 
@@ -318,7 +322,7 @@ def build(
             settlement_date.isoformat(),
             f"{file_sequence:02d}",
             str(revision),
-            f"{settlement_date.isoformat()}T05:00:00Z",
+            created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "1",
         ]
     )
