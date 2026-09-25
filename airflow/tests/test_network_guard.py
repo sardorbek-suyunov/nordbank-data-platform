@@ -29,3 +29,17 @@ def test_loopback_is_allowed() -> None:
         server.listen(1)
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
             client.connect(server.getsockname())
+
+
+@pytest.mark.integration
+def test_the_integration_suite_refuses_a_public_address_inside_the_stack() -> None:
+    """R16: the suite that is allowed to reach the stack's services still cannot leave.
+
+    Runs inside the scheduler container, which does have a route out, so only the guard can
+    produce this refusal: the assertion is on the guard's own exception, not on any connection
+    error, which an offline machine would raise without a guard at all.
+    """
+    import requests
+
+    with pytest.raises(ExternalNetworkError, match="1.1.1.1"):
+        requests.get("https://1.1.1.1/", timeout=5)
