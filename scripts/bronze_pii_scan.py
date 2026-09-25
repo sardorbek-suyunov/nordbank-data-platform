@@ -24,6 +24,11 @@ another; as JSON escapes it, both ASCII-escaped and not, because an API payload 
 document; and with its double quotes doubled, as a CSV payload quotes it. A value is not
 searched with separators around it, because a separator can only make a match stricter.
 
+**A name on the sanctions list is the list's, not the bank's.** A vault value found in a
+sanctions snapshot is excused only when the publisher's delivered file carries it too, which is
+what a screening match looks like and what the M3 fixture plants on purpose; it is counted and
+reported, never silently dropped.
+
 **No value is ever printed.** A hit reports the token, the object, which reading found it and
 the length of the value that matched; the value itself stays in the vault. A report that named
 the cleartext it found would be the leak it was written to detect.
@@ -73,7 +78,7 @@ def decoded_text(body: bytes) -> bytes:
     """Every value of every column of a Parquet object, decompressed, one per line."""
     import pyarrow.parquet as pq
 
-    table = pq.read_table(io.BytesIO(body))
+    table = pq.read_table(io.BytesIO(body), use_threads=False)
     parts: list[str] = []
     for column in table.columns:
         for value in column.to_pylist():
@@ -213,6 +218,32 @@ def plant(client, bucket: str, connection) -> int:
     return 0
 
 
+def _not_carried_by_the_list(client, key, deliveries, matcher, found, carried) -> list:
+    """The hits in a sanctions object that the publisher's own file does not carry.
+
+    A sanctions list is a list of names, and a name on it can equal a name the bank vaulted:
+    that is a screening match, and the M3 fixture plants exactly such names so screening has
+    something to find. Such a value in the landed snapshot is the list's content, not a leak
+    of the bank's data. It is excused only on proof: the same value must be in the file the
+    publisher delivered, read from the inbound bucket. Anything else is a hit.
+    """
+    import os
+
+    batch_id = key.split("batch_id=", 1)[1].split("/", 1)[0]
+    source = deliveries.get(batch_id)
+    if source is None:
+        return found
+    delivered = client.get_object(Bucket=os.environ["INBOUND_BUCKET"], Key=source)["Body"].read()
+    in_delivery = matcher.tokens_in(delivered)
+    remaining = []
+    for token, reading, length in found:
+        if token in in_delivery:
+            carried.add(token)
+        else:
+            remaining.append((token, reading, length))
+    return remaining
+
+
 def main(argv: list[str]) -> int:
     from nordbank_ops import clients, warehouse
 
@@ -233,6 +264,12 @@ def main(argv: list[str]) -> int:
                 "select distinct first_seen_entity, first_seen_column from meta.pii_vault"
             ).fetchall()
         }
+        deliveries = dict(
+            connection.execute(
+                "select batch_id, object_key from ops.ingested_file "
+                "where source_system = 'opensanctions'"
+            ).fetchall()
+        )
 
     with clients.source_cursor() as cursor:
         classified = classified_identifier_columns(cursor)
@@ -258,12 +295,16 @@ def main(argv: list[str]) -> int:
 
     matcher = Matcher(needles)
     hits: list[tuple[str, str, str, int]] = []
+    carried: set[str] = set()
     scanned = decoded = 0
     for key in sorted(keys):
         body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
         scanned += len(body)
         decoded += len(decoded_text(body))
-        for token, reading, length in find(body, matcher):
+        found = find(body, matcher)
+        if found and "/opensanctions/" in key:
+            found = _not_carried_by_the_list(client, key, deliveries, matcher, found, carried)
+        for token, reading, length in found:
             hits.append((token, key, reading, length))
 
     print(
@@ -277,6 +318,10 @@ def main(argv: list[str]) -> int:
         if (table, column) not in sighted
     )
 
+    print(
+        f"bronze-pii-scan: {len(carried)} vault value(s) found in sanctions snapshots and "
+        "present in the publisher's delivered file itself: list content, not a leak"
+    )
     if hits:
         print(f"\nbronze-pii-scan: {len(hits)} candidate hit(s):")
         for token, key, reading, length in hits[:50]:
