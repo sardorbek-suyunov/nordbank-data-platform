@@ -210,8 +210,8 @@ create table if not exists ops.file_sighting (
 
 -- One row per request an interval feed made: how many attempts it took, the status of the
 -- last one, and whether it landed rows, found the date unpublished, or failed. A date the
--- publisher did not publish is `absent` with zero rows, which is how bronze records a gap
--- without writing a row for it. A request that was answered inside an interval that failed as
+-- publisher did not publish is `absent_no_publication` with zero rows and the date the API
+-- answered with in `detail`, which is how bronze records a gap without writing a row for it. A request that was answered inside an interval that failed as
 -- a whole is `discarded`: it succeeded, and nothing was written, because an interval lands
 -- entirely or not at all.
 create table if not exists ops.feed_request (
@@ -226,5 +226,5 @@ create table if not exists ops.feed_request (
     rows_landed bigint not null,
     requested_at timestamptz not null,
     primary key (batch_id, request_key),
-    check (outcome in ('landed', 'absent', 'failed', 'discarded'))
+    check (outcome in ('landed', 'absent_no_publication', 'failed', 'discarded'))
 );

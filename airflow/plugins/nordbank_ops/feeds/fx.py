@@ -7,7 +7,10 @@ answers HTTP 200 with the previous publication's rates and that publication's da
 day after the measurement, which came back dated 2026-09-22. Only a date beyond all data
 returns 404. So a response is landed only when its `date` equals the date requested; otherwise
 nothing is written for the date, which is how bronze records a gap: as an absence, with the
-request logged as `absent` in `ops.feed_request`. Carrying the last rate forward is silver's
+request logged as `absent_no_publication` in `ops.feed_request`, with the date the API
+answered with. That status is distinct from `landed` (rows written) and `discarded` (answered
+for itself, inside an interval that failed and wrote nothing), and the count of unpublished
+dates is read from it. Carrying the last rate forward is silver's
 job, and doing it here would destroy the evidence that the gap existed.
 
 The same rule makes a rate for a simulated day ahead of the real clock impossible to fabricate:
@@ -26,7 +29,7 @@ from dataclasses import dataclass, field
 from nordbank_ops.feeds.land import Parsed
 
 LANDED = "landed"
-ABSENT = "absent"
+ABSENT = "absent_no_publication"
 FAILED = "failed"
 DISCARDED = "discarded"
 
@@ -58,6 +61,14 @@ class Fetched:
     parsed: Parsed = field(default_factory=Parsed)
     outcomes: list[RequestOutcome] = field(default_factory=list)
     failure: str | None = None
+
+
+def _answered_date(body: bytes) -> str:
+    """The publication date a response is for, as the API stated it, for the request log."""
+    try:
+        return str(json.loads(body).get("date") or "no date")
+    except (ValueError, AttributeError):
+        return "an unreadable body"
 
 
 def dates_to_fetch(watermark: dt.date | None, day: dt.date) -> list[dt.date]:
@@ -217,7 +228,7 @@ def fetch_dates(dates: list[dt.date], contract, *, base_url: str, fetch) -> Fetc
         if breaking:
             out.parsed.breaking = breaking
         outcome = LANDED if records else ABSENT
-        detail = None if records else "the response is for an earlier publication date"
+        detail = None if records else f"answered with {_answered_date(result.body)}; nothing landed"
         out.outcomes.append(
             RequestOutcome(
                 requested.isoformat(),

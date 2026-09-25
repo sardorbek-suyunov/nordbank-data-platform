@@ -103,6 +103,17 @@ def test_a_response_dated_before_the_date_asked_lands_nothing() -> None:
     assert (records, payloads, breaking) == ([], [], None)
 
 
+def test_an_unpublished_date_is_logged_with_the_date_the_api_answered_with() -> None:
+    """R19: absent_no_publication, distinct from landed and discarded, and it says why."""
+    fetch = _scripted({"2026-07-25": (200, FRIDAY)})
+    fetched = fx.fetch_dates(
+        [dt.date(2026, 7, 25)], _contract("ecb", "fx_rates"), base_url="https://x/v1", fetch=fetch
+    )
+    (outcome,) = fetched.outcomes
+    assert (outcome.outcome, outcome.rows) == ("absent_no_publication", 0)
+    assert outcome.detail == "answered with 2026-07-24; nothing landed"
+
+
 def test_a_changed_response_shape_is_breaking() -> None:
     reshaped = b'[{"date":"2026-07-24","base":"EUR","quote":"USD","rate":1.1377}]'
     body = json.dumps({"base": "EUR", "date": "2026-07-24", "rates": {}}).encode()
@@ -160,7 +171,11 @@ def test_an_interval_with_one_failed_date_lands_nothing_and_says_which() -> None
     )
     assert fetched.failure and "2 of 3 date(s) answered" in fetched.failure
     assert fetched.parsed.records == []
-    assert [o.outcome for o in fetched.outcomes] == ["discarded", "absent", "failed"]
+    assert [o.outcome for o in fetched.outcomes] == [
+        "discarded",
+        "absent_no_publication",
+        "failed",
+    ]
     assert all(o.rows == 0 for o in fetched.outcomes)
 
 
@@ -170,7 +185,7 @@ def test_a_date_beyond_all_data_is_absent_not_failed() -> None:
         [dt.date(2026, 12, 25)], _contract("ecb", "fx_rates"), base_url="https://x/v1", fetch=fetch
     )
     assert fetched.failure is None
-    assert [o.outcome for o in fetched.outcomes] == ["absent"]
+    assert [o.outcome for o in fetched.outcomes] == ["absent_no_publication"]
 
 
 # --- the clearing file -----------------------------------------------------------------------
