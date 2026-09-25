@@ -4,6 +4,8 @@ What these prove, against a real DuckDB warehouse with the schema applied and th
 contract tree, and no object store, because the open step reads only the warehouse and the
 contracts:
 
+- a delivered file is read against the contract in force on the day it was delivered, not on
+  the settlement date it covers;
 - two deliveries for one settlement date in one run get a batch each;
 - a retried day with no delivery reuses its empty batch rather than allocating another.
 """
@@ -77,6 +79,15 @@ def _file(checksum: str, settlement: str, *, sequence: int = 1, revision: int = 
 
 def _open(day: dt.date, candidates: list[dict], found: bool = True) -> list[dict]:
     return phases.settlement_open(_context(day), candidates, {"found": found})
+
+
+def test_a_file_is_read_against_the_contract_of_its_delivery_date(warehouse, contracts):
+    """R13(c): a late file for 2026-09-01 delivered on 2026-09-04, after version 2 took over."""
+    (unit,) = _open(dt.date(2026, 9, 4), [_file("sha256:late", "2026-09-01")])
+    detail = next(b for b in unit["batches"] if b["entity"] == "settlements")
+    assert detail["batch_id"].startswith("settlements-20260901T000000-")
+    assert detail["ingest_date"] == "2026-09-04"
+    assert detail["contract_version"] == 2
 
 
 def test_a_late_file_and_its_correction_in_one_run_get_a_batch_each(warehouse, contracts):
