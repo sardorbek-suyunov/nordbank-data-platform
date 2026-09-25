@@ -74,6 +74,7 @@ def _allocate(
     watermark_from: dt.datetime | None,
     opened_at: dt.datetime,
     run_id: str,
+    reusable: set[int] | None = None,
 ) -> dict:
     from nordbank_ops import contracts as versions
 
@@ -93,6 +94,7 @@ def _allocate(
         watermark_from=watermark_from,
         opened_at=opened_at,
         triggering_run_id=run_id,
+        reusable=reusable,
     )
     batch = registry.batch(connection, allocation.batch_id)
     return {
@@ -167,6 +169,25 @@ def open_unit(system: str, allocate) -> list[dict]:
             connection.execute("rollback")
             raise
     return units
+
+
+def _sequences_of(connection, system: str, checksum_: str | None, stamp: str) -> set[int]:
+    """The batch sequences of one interval already allocated to a delivery, or to any.
+
+    With a checksum, the sequences that delivery was allocated before, which are the only ones
+    it may reuse. With None, the sequences allocated to any delivery at all, which an empty
+    batch must not reuse.
+    """
+    arguments = [system, f"%-{stamp}-%"]
+    where = "source_system = ? and batch_id like ?"
+    if checksum_ is not None:
+        where += " and content_checksum = ?"
+        arguments.append(checksum_)
+    rows = connection.execute(
+        f"select distinct batch_id from ops.file_sighting where {where} and batch_id is not null",  # noqa: S608
+        arguments,
+    ).fetchall()
+    return {int(batch_id.rsplit("-", 1)[1]) for (batch_id,) in rows}
 
 
 # --- ECB FX rates ------------------------------------------------------------------------------
@@ -291,16 +312,21 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                 business = day
             else:
                 business = dt.date.fromisoformat(candidate["settlement_date"])
+            interval = _midnight(business)
+            own = _sequences_of(
+                connection, CARDNET, candidate["checksum"], f"{interval:%Y%m%dT%H%M%S}"
+            )
             batches = [
                 _allocate(
                     connection,
                     chains,
                     entity,
-                    interval_start=_midnight(business),
+                    interval_start=interval,
                     ingest_date=day,
                     watermark_from=None,
                     opened_at=opened_at,
                     run_id=run_id,
+                    reusable=own,
                 )
                 for entity in ("settlements", "settlement_totals")
             ]
@@ -325,6 +351,7 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
             # sent nothing for the day, the way specification 005 records an empty reference
             # batch. A late file for an earlier date arriving today does not fill that gap, and
             # when this day's own file arrives late it lands as the next sequence.
+            taken = _sequences_of(connection, CARDNET, None, f"{start:%Y%m%dT%H%M%S}")
             batches = [
                 _allocate(
                     connection,
@@ -335,6 +362,13 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                     watermark_from=None,
                     opened_at=opened_at,
                     run_id=run_id,
+                    reusable={
+                        sequence
+                        for sequence, _status in registry.existing_batches(
+                            connection, registry.BatchKey(CARDNET, entity, start)
+                        )
+                    }
+                    - taken,
                 )
                 for entity in ("settlements", "settlement_totals")
             ]
@@ -518,6 +552,9 @@ def sanctions_open(context: dict, candidates: list[dict]) -> list[dict]:
                 watermark_from=None,
                 opened_at=opened_at,
                 run_id=run_id,
+                reusable=_sequences_of(
+                    connection, SANCTIONS, candidate["checksum"], f"{published:%Y%m%dT%H%M%S}"
+                ),
             )
             identity.record_sighting(
                 connection,

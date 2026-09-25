@@ -201,6 +201,17 @@ def test_registering_an_unknown_batch_is_refused(connection):
         mark_registered(connection, "accounts-20260101T000000-01", OPENED_AT)
 
 
+def test_a_second_delivery_for_one_interval_in_one_run_gets_its_own_batch():
+    """The correction and the late file it corrects, arriving together (spec 006 review)."""
+    from nordbank_ops.registry import choose_sequence
+
+    # The late file was allocated 02 a moment ago and is still open; the empty day holds 01.
+    existing = [(1, REGISTERED), (2, "open")]
+    assert choose_sequence(existing) == (2, True)
+    assert choose_sequence(existing, reusable=set()) == (3, False)
+    assert choose_sequence(existing, reusable={2}) == (2, True)
+
+
 def test_a_failed_batch_keeps_its_reason(connection):
     allocation = open_one(connection)
     mark_failed(connection, allocation.batch_id, "type_changed on remittance_reference", OPENED_AT)

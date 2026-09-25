@@ -63,20 +63,33 @@ def format_batch_id(entity: str, interval_start: dt.datetime, sequence: int) -> 
     return f"{entity}-{interval_start:%Y%m%dT%H%M%S}-{sequence:02d}"
 
 
-def choose_sequence(existing: list[tuple[int, str]]) -> tuple[int, bool]:
+def choose_sequence(
+    existing: list[tuple[int, str]], reusable: set[int] | None = None
+) -> tuple[int, bool]:
     """The sequence to use, and whether it reuses an existing batch.
 
     `existing` is every (sequence, status) already recorded for this entity and interval.
+    `reusable`, when given, is the sequences the caller may reuse; None means any.
 
     - An `open` or `written` batch is reused, which is the retry, the cleared task and the
       backfill reprocess, all three of which look identical from the registry.
     - Otherwise, if anything is recorded, the next sequence, so a `registered` partition is
       never modified and a `failed` one is never overwritten.
     - Otherwise 01.
+
+    **A delivered file may reuse only its own batch.** One interval can receive two deliveries
+    in one run — a late file and its correction for the same settlement date, say — and the
+    second allocation then finds the first one's batch still `open`. Reusing it would put two
+    files into one batch, and one would overwrite the other's objects. So a file's allocation
+    passes the sequences allocated to that file before, and anything else is not reusable.
     """
     if not existing:
         return 1, False
-    unregistered = [sequence for sequence, status in existing if status in UNREGISTERED]
+    unregistered = [
+        sequence
+        for sequence, status in existing
+        if status in UNREGISTERED and (reusable is None or sequence in reusable)
+    ]
     if unregistered:
         return max(unregistered), True
     return max(sequence for sequence, _ in existing) + 1, False
@@ -134,9 +147,10 @@ def allocate(
     watermark_from: dt.datetime | None,
     opened_at: dt.datetime,
     triggering_run_id: str,
+    reusable: set[int] | None = None,
 ) -> Allocation:
     """Reserve a batch id, inserting an `open` row unless an unregistered batch is reused."""
-    sequence, reused = choose_sequence(existing_batches(connection, key))
+    sequence, reused = choose_sequence(existing_batches(connection, key), reusable)
     batch_id = format_batch_id(key.entity, key.interval_start, sequence)
     prefix = bronze_prefix(key.source_system, key.entity, ingest_date, batch_id)
 
