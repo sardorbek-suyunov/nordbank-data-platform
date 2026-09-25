@@ -60,6 +60,52 @@ CLASSIFICATIONS: frozenset[str] = frozenset(
 # shape's fields: the absence of a kind is not a permissive default.
 RELATIONAL = "relational"
 AUTHORED_KINDS: frozenset[str] = frozenset({"file", "api", "snapshot"})
+
+# The columns the platform adds to every bronze record, and what each one holds in each
+# ingestion mode. `conventions.md` states the same table for a reader, and a test holds the two
+# to one another; the writers take the column lists from here.
+AUDIT_COLUMNS: tuple[str, ...] = ("_ingested_at", "_source_file", "_batch_id", "_source_system")
+PAYLOAD_COLUMN = "_raw_payload"
+AUDIT_MEANING: dict[str, dict[str, str]] = {
+    "_ingested_at": {
+        RELATIONAL: "the batch's opened_at: real wall-clock time, read once and kept on retry",
+        "file": "the batch's opened_at: real wall-clock time, read once and kept on retry",
+        "snapshot": "the batch's opened_at: real wall-clock time, read once and kept on retry",
+        "api": "the batch's opened_at: real wall-clock time, read once and kept on retry",
+    },
+    "_source_file": {
+        RELATIONAL: "the schema-qualified relation read, such as core.accounts",
+        "file": "`<inbound bucket>/<object key>` of the delivered file the record came from",
+        "snapshot": "`<inbound bucket>/<object key>` of the snapshot's entities file",
+        "api": "the endpoint requested, with `<date>` standing for the date the record is for",
+    },
+    "_batch_id": {
+        RELATIONAL: "the batch: entity, the run's logical date, sequence",
+        "file": "the batch: entity, the settlement date the file covers, sequence",
+        "snapshot": "the batch: entity, the publisher's export time, sequence",
+        "api": "the batch: entity, the run's logical date, sequence",
+    },
+    "_source_system": {
+        RELATIONAL: "corebank",
+        "file": "the sender, such as cardnet",
+        "snapshot": "the publisher, such as opensanctions",
+        "api": "the publisher, such as ecb or fred",
+    },
+}
+
+# One row per refused record, the same shape in every mode; an authored mode adds the record's
+# payload, because for a file or an API the payload is the evidence of what was refused.
+QUARANTINE_COLUMNS: tuple[str, ...] = (
+    "batch_id",
+    "source_system",
+    "entity",
+    "record_key",
+    "column_name",
+    "reason",
+    "offending_value",
+    "value_is_tokenised",
+    "quarantined_at",
+)
 AUTHORED_FIELDS: tuple[str, ...] = (
     "source_system",
     "source_schema",
@@ -140,6 +186,17 @@ class Contract:
     def record_columns(self) -> tuple[str, ...]:
         """The columns that are fields of the record, in the order the format delivers them."""
         return tuple(c.name for c in self.columns if c.origin == "record")
+
+    @property
+    def bronze_columns(self) -> tuple[str, ...]:
+        """A bronze record: the contract's columns, the payload if authored, the audit columns."""
+        payload = (PAYLOAD_COLUMN,) if self.is_authored else ()
+        return self.column_names + payload + AUDIT_COLUMNS
+
+    @property
+    def quarantine_columns(self) -> tuple[str, ...]:
+        """A quarantine record: the one shape, and the payload if authored."""
+        return QUARANTINE_COLUMNS + ((PAYLOAD_COLUMN,) if self.is_authored else ())
 
     @property
     def qualified_relation(self) -> str:

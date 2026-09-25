@@ -24,11 +24,15 @@ import io
 from dataclasses import dataclass, field
 from typing import Any
 
+from nordbank_ops.ingest import ensure_scripts_on_path
 from nordbank_ops.schema_drift import DriftReport, classify
 from nordbank_ops.tokenise import Tokeniser
 from nordbank_ops.validation import Rejection, project, validate
 
-AUDIT_COLUMNS: tuple[str, ...] = ("_ingested_at", "_source_file", "_batch_id", "_source_system")
+ensure_scripts_on_path()
+
+# The column shapes are the contract model's; re-exported for the writers and their tests.
+from data_contract import AUDIT_COLUMNS, PAYLOAD_COLUMN, QUARANTINE_COLUMNS  # noqa: E402, F401
 
 
 # The extract task hands these back to the register step. No data, no cleartext: counts, the
@@ -242,19 +246,6 @@ def quarantine_rows(
     return out
 
 
-QUARANTINE_COLUMNS: tuple[str, ...] = (
-    "batch_id",
-    "source_system",
-    "entity",
-    "record_key",
-    "column_name",
-    "reason",
-    "offending_value",
-    "value_is_tokenised",
-    "quarantined_at",
-)
-
-
 # --- the phase ------------------------------------------------------------------------------
 
 
@@ -316,7 +307,7 @@ def extract_entity(
         system=contract.source_system,
     )
 
-    bronze_columns = contract.column_names + AUDIT_COLUMNS
+    bronze_columns = contract.bronze_columns
     from nordbank_ops.registry import bronze_prefix, quarantine_prefix
 
     bronze_key = (
@@ -344,7 +335,7 @@ def extract_entity(
         )
         + "part-0000.parquet"
     )
-    written = write_parquet(client, bucket, quarantine_key, rejected, QUARANTINE_COLUMNS)
+    written = write_parquet(client, bucket, quarantine_key, rejected, contract.quarantine_columns)
     if written:
         report.quarantine_keys.append(written)
 

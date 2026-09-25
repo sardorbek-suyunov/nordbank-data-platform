@@ -104,6 +104,41 @@ So a bronze object written during the backfill sits under `ingest_date=2026-08-2
 record in it carries an `_ingested_at` in real September. The two disagreeing is the design,
 not a defect, and a reader who reconciles them will find the simulation.
 
+### Bronze audit columns, per ingestion mode
+
+Every bronze record carries four audit columns, and what each holds depends on how the source
+was ingested. `scripts/data_contract.py` defines the same table, which the writers read, and a
+test holds this one to it.
+
+| Column | Mode | Holds |
+|---|---|---|
+| `_ingested_at` | relational | the batch's opened_at: real wall-clock time, read once and kept on retry |
+| `_ingested_at` | file | the batch's opened_at: real wall-clock time, read once and kept on retry |
+| `_ingested_at` | snapshot | the batch's opened_at: real wall-clock time, read once and kept on retry |
+| `_ingested_at` | api | the batch's opened_at: real wall-clock time, read once and kept on retry |
+| `_source_file` | relational | the schema-qualified relation read, such as core.accounts |
+| `_source_file` | file | `<inbound bucket>/<object key>` of the delivered file the record came from |
+| `_source_file` | snapshot | `<inbound bucket>/<object key>` of the snapshot's entities file |
+| `_source_file` | api | the endpoint requested, with `<date>` standing for the date the record is for |
+| `_batch_id` | relational | the batch: entity, the run's logical date, sequence |
+| `_batch_id` | file | the batch: entity, the settlement date the file covers, sequence |
+| `_batch_id` | snapshot | the batch: entity, the publisher's export time, sequence |
+| `_batch_id` | api | the batch: entity, the run's logical date, sequence |
+| `_source_system` | relational | corebank |
+| `_source_system` | file | the sender, such as cardnet |
+| `_source_system` | snapshot | the publisher, such as opensanctions |
+| `_source_system` | api | the publisher, such as ecb or fred |
+
+A record from a file, snapshot or API source also carries `_raw_payload`, the record as
+received with identifiers tokenised (ADR 0005). A relational record carries none: the row as
+extracted is the payload.
+
+**The quarantine record** has one shape in every mode: `batch_id`, `source_system`, `entity`,
+`record_key`, `column_name`, `reason`, `offending_value`, `value_is_tokenised`,
+`quarantined_at`; and `_raw_payload` for a file, snapshot or API source, where the payload is
+the evidence of what was refused. `offending_value` holds the token, never the cleartext, for an
+identifier.
+
 ## Numeric types
 
 | Kind of value | Type | Notes |
