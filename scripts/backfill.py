@@ -52,8 +52,11 @@ are both in the container, and nothing can reach all three from one place.
    for together.
 
 A day is complete when core banking registered all forty-five entities for it and every feed
-due that day has a successful run. A feed run that fails halts the loop exactly as a failed
-core batch does, naming the batch and the reason.
+due that day has a successful run. A feed run that fails on breaking drift halts the loop as a
+failed core batch does, naming the batch and the reason, because a person resolves it with a
+contract commit. A delivery refused as structurally malformed or for a declaration conflict
+does not halt it: the sender resolves those by sending again, the delivery is parked (ADR 0016)
+and the run stays failed in Airflow, so the loop reports it and goes on to the next day.
 
 **One day demonstrates the sensor waiting.** `--defer-demo DATE` triggers the settlement DAG on
 that day *before* the clearing file is delivered, watches its sensor task until Airflow reports
@@ -230,6 +233,14 @@ def deliver(day: dt.date, *, settlement_files: bool = True) -> None:
     )
     if completed.returncode != 0:
         raise SystemExit(f"backfill: publishing the sanctions list for {day} failed")
+
+
+# Refusals a sender resolves by sending again, not a person by committing a contract.
+SENDER_RESOLVES = ("structurally malformed", "declaration conflict")
+
+
+def sender_resolves(reason: str | None) -> bool:
+    return bool(reason) and str(reason).startswith(SENDER_RESOLVES)
 
 
 def feed_failures(run_id: str) -> list[dict]:
@@ -478,6 +489,14 @@ def main(argv: list[str]) -> int:
                         }
                     ]
                 )
+        for_the_sender = [f for f in failed_feeds if sender_resolves(f["failure_reason"])]
+        for failure in for_the_sender:
+            print(
+                f"backfill: {day}: {failure['entity']} parked, for the sender to resolve: "
+                f"{failure['failure_reason']}",
+                flush=True,
+            )
+        failed_feeds = [f for f in failed_feeds if f not in for_the_sender]
         if failed_feeds:
             return halt(day, failed_feeds)
 
