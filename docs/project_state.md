@@ -111,7 +111,7 @@ its area.
 |---|---|
 | [conventions.md](conventions.md) | Naming, numeric types, currency provenance, dimensional modelling, tests, commits, contribution workflow |
 | [architecture.md](architecture.md) | Sources and ingestion patterns, layer contracts, storage layout, orchestration, consumption, security, scale profiles |
-| [pii_classification.md](pii_classification.md) | The four column classes and the handling rule for each |
+| [pii_classification.md](pii_classification.md) | The five column classes and the handling rule for each |
 | [metric_definitions.md](metric_definitions.md) | The exact rule behind every term a model could compute two defensible ways |
 | [model_inventory.md](model_inventory.md) | Every planned model with its layer, grain, inputs, the questions it serves and the milestone that builds it |
 | [business_questions.md](business_questions.md) | The nineteen questions gold is measured against, and the coverage rule in both directions |

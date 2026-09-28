@@ -234,9 +234,10 @@ SCD2 dimension, and neither is optional.
 
 ## Data classification
 
-Every column in every contract carries one of four classifications: `identifier`,
-`quasi-identifier`, `sensitive` or `non-personal`. The classification decides whether the
-column is tokenised at extraction, generalised before gold, access-restricted, or left alone.
+Every column in every contract carries one of five classifications: `identifier`,
+`quasi-identifier`, `sensitive`, `pseudonymous_key` or `non-personal`. The classification
+decides whether the column is tokenised at extraction, generalised before gold,
+access-restricted, or left alone.
 The taxonomy and the handling rule for each class are in
 [pii_classification.md](pii_classification.md).
 
