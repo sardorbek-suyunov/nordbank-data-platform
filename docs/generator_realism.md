@@ -939,10 +939,41 @@ every one landing at the severity it was drawn for and no cell skipped; five lat
 
 Two events change the file's layout, at an offset from the anchor like the relational timeline
 (`generator/settlement/timeline.py`). At anchor plus 20 the processor starts sending
-`interchange_fee_amount` on every item, which is additive. At anchor plus 45 it stops sending
-`merchant_name`, which is breaking: the whole file is quarantined, its batch fails, and the
-backfill halts for a contract decision. A removed column is the breaking kind specification
-005 could prove only by unit test, because the relational timeline scripts none.
+`acquirer_reference_number` on every item, which is additive. At anchor plus 45 it stops sending
+`merchant_name`, which is breaking: without a contract version that accepts the new layout the
+whole file is quarantined, its batch fails, and the backfill halts for a contract decision. A
+removed column is the breaking kind specification 005 could prove only by unit test, because
+the relational timeline scripts none.
+
+**The layout is the one of the day a file is sent**, and so is the header's `created_at`: a
+sender changes its format when it sends, whatever settlement date a file covers. Until the
+review of specification 006 the layout followed the settlement date, which made a late file
+straddling a change impossible to generate and the platform's handling of one untested.
+
+**The added field is the acquirer reference number**, a 23-digit number with a Luhn check digit
+derived from the transaction reference. It replaced a flat 0.2 per cent interchange amount,
+which the second acceptance run measured contradicting `ref.interchange_rates` on 2,804 of 6,967
+rows: 1,394 intra-EEA consumer credit items against the regulated 0.3 per cent, 844 commercial
+and outbound items where the rate is null by decision, and 566 items with no merchant region.
+An additive field exists here to be drift, and one that duplicated a fact the platform already
+sources would be a second, contradicting source of it. The reference number is derived rather
+than drawn, so adding it moves no other draw in the file.
+
+### Scripted deliveries
+
+Three deliveries are scripted rather than drawn, so that every acceptance run exercises them.
+
+| Offset | Delivery | What it exercises |
+|---|---|---|
+| anchor plus 31 | The day's file arrives cut off part way through a record; the next day the complete file is sent again as `_RESEND`, and the day after the cut-off bytes arrive again as `_RETRY` | A structurally malformed delivery parked, the renamed copy recognised as the same parked file, and the complete file landing |
+| anchor plus 36 | A late file carrying a break, and its correction, arrive on the same day, three days late | Two deliveries for one settlement date in one run, each with its own batch |
+| anchor plus 43 | The file is held back and sent three days late, the day after `merchant_name` is removed, in the new layout | A late file straddling a breaking change, read against the contract of its delivery date (ADR 0016) |
+
+Measured on the third acceptance run (seed 42, anchor 2026-07-20): six late files, five drawn
+and one scripted; nine corrections, eight drawn at 0.25 and one scripted, two of them of a late
+file; 37 injected breaks, 13 of them removed by a correction that landed and 24 remaining after
+the batch arithmetic, every one detected at its severity; the cut-off file parked on 57
+sightings under two keys and attempted once more when the contracts in force for it changed.
 
 ## Deliberately unrealistic
 
