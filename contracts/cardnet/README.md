@@ -19,6 +19,12 @@ document and nothing about how the file was made.
   endings.
 - A file for settlement date D normally arrives on D. A late file arrives three days after its
   settlement date.
+- A correction is sent as `NBK_CLR_<YYYYMMDD>_<NN>_R<revision>.csv`, the day after the file it
+  corrects. A transmission sent again after a failure carries `_RESEND`, and a copy the
+  processor's transfer drops again carries `_RETRY`. None of these names is identity either.
+- A file is produced, and laid out, on the day it is sent: its header's `created_at` is that
+  day, and its layout is the one the processor used that day, whatever settlement date it
+  covers.
 
 ## Records
 
