@@ -329,33 +329,67 @@ Each day ticks the source, delivers the processor's clearing files and the sanct
 list, runs reference data and then core banking, and then the feeds due that day together. The
 order and the reasons are in `scripts/backfill.py`. At `ci` a day takes about two minutes.
 
-**The loop halts on a failed batch and says why.** Two halts are scripted into the timeline.
+**The loop halts on a failed batch that a person must resolve, and says why.** A breaking drift
+halts it, because the resolution is a contract commit. A delivery refused as structurally
+malformed or for a declaration conflict does not: the sender resolves it by sending again, the
+file is parked (ADR 0016), its run stays failed in Airflow, and the loop prints
+`parked, for the sender to resolve` and goes on. The acceptance history scripts one such
+delivery, a transmission cut off on anchor plus 31 and re-sent complete the next day.
+
+Two breaking changes are scripted into the timeline, and with every contract committed neither
+halts.
 
 - `core.payments` widens `remittance_reference` at anchor plus 37. With contract-of-the-time in
   place this no longer halts: `payments` version 2 is committed with `in_force_from` 2026-08-26,
   so the day the widening fires selects it and the days before select version 1.
 - The processor stops sending `merchant_name` at anchor plus 45, 2026-09-03, which is a removed
-  column and breaking. The whole file is quarantined, its batches fail and the loop halts. The
-  resolution is a contract decision: move `contracts/cardnet/settlements.yml` to
+  column and breaking. With `settlements` version 2 committed, every file the processor sends
+  from that day is read against it, including the scripted late file for 2026-09-01 sent on
+  2026-09-04 (ADR 0016). Without version 2, the whole file is quarantined, its batches fail and
+  the loop halts; the resolution is a contract decision: move `contracts/cardnet/settlements.yml` to
   `contracts/cardnet/history/settlements.v1.yml`, write version 2 without the field and with
   `in_force_from: 2026-09-03`, commit both, and run the same backfill command again. It resumes
   on the failed day, re-runs only the feed that failed, and lands the file under version 2.
 
-**After changing code under `airflow/plugins/`, restart Airflow** before trusting a run:
-`docker compose restart airflow-scheduler airflow-dag-processor airflow-triggerer
-airflow-apiserver`. Its processes keep plugin modules they have already imported, so a change
-reaches neither the DAG structure nor the tasks until they restart. And a cleared run keeps the
-DAG version it was created with, so a code fix is tested with a new run, not by clearing an old
-one. A contract change needs neither: contracts are read from disk at run time.
+**Resuming after a code fix.** `make backfill` resumes by **clearing** the runs of the day it
+stopped on, with `airflow tasks clear`, because Airflow allows one run per logical date. Two
+things then decide what code the cleared run executes, and both were measured.
+
+- Airflow's processes keep plugin modules they have already imported, so a change under
+  `airflow/plugins/` reaches neither the DAG structure nor the tasks until they restart:
+  `docker compose restart airflow-scheduler airflow-dag-processor airflow-triggerer
+  airflow-apiserver`.
+- A cleared run does not move cleanly onto the DAG's latest version. Measured on Airflow 3.3.2
+  with `ops_stack_healthcheck`: after the DAG file changed and a new version was parsed,
+  `airflow tasks clear` re-ran three of the run's four tasks on the new version and one on the
+  old, a run spanning two versions. The CLI has no option to choose. The REST endpoint
+  `POST /api/v2/dags/{dag_id}/clearTaskInstances` with `"run_on_latest_version": true` re-ran all
+  four on the new version. A DAG's `rerun_with_latest_version` parameter sets that default for
+  the REST endpoints, and the CLI's clear does not read it.
+
+So the procedure after a code fix, before resuming: restart the four processes, wait until the
+DAG's new version appears (`GET /api/v2/dags/{dag_id}/dagVersions`), clear the stopped day's
+runs through the REST endpoint with `run_on_latest_version` set, and only then run
+`make backfill` again, which finds those runs and waits for them. A contract change needs none
+of this: contracts are read from disk at run time, which is what the resume after a contract
+bump relies on.
 
 **Evidence targets**, each run after the backfill because the warehouse excludes readers while a
 writer holds it:
 
-- `make feeds-acceptance` — the evidence per criterion of specification 006, including the
-  settlement reconciliation against the injected breaks.
-- `make bronze-pii-scan` — the byte-wise scan, over bronze and quarantine objects.
+- `make feeds-acceptance RUN=name` — the evidence per criterion of specification 006, including
+  the settlement reconciliation by the batch arithmetic, the corrections, parking and the
+  straddling late file; with `RUN` it also dumps the tables behind it to
+  `data/acceptance/<name>/`, searched for vault values before they are kept.
+- `uv run python scripts/compare_runs.py data/acceptance/<a> data/acceptance/<b>` — two runs
+  figure by figure, from their dumps; every difference is to be attributed.
+- `make bronze-pii-scan` — every bronze and quarantine object read twice, as bytes and as
+  decoded values, for every vault value in every encoding; `PLANT=1` plants a cleartext card
+  reference in a copy of a real object and shows the scan catch it.
 - `make fault-demo` — retry and no partial registration against injected faults, in a scratch
   warehouse and bucket.
+- `make parking-demo` — a refused delivery parked across three runs and released by a contract
+  bump, in a scratch warehouse, buckets and contract tree.
 - `make test-offline` — the unit and DAG suites with no network.
 - `make feeds-probe` — the live APIs against the recorded fixtures; needs the network, and is
   how an upstream change is noticed.
