@@ -47,6 +47,12 @@ holds only what ingestion wrote.
   sighting naming the batch it already landed as.
 - A corrected re-send lands as a new batch, and the correction is visible downstream as two
   batches for one settlement date rather than as an overwrite.
+  Consequence added: 2026-09-25, by specification 006's review. Two batches for one settlement
+  date must not be summed. The header declares a revision as well as a sequence, both recorded
+  as attributes: files with different sequences add, and within one sequence the highest
+  revision replaces the others (`architecture.md`, "Batch arithmetic"). The same declaration
+  over different content is refused, and so is a snapshot version string reused over different
+  content, because a sender's declaration is still a promise even though it is not identity.
 - **Two genuinely different deliveries with identical bytes are one file.** For the settlement
   feed that would be two empty days, each file being a header, a column line and a trailer with
   nothing between them. It is prevented by the file rather than by the platform: the header
