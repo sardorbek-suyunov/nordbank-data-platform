@@ -183,22 +183,35 @@ def main() -> int:
 
         # --- 3 -----------------------------------------------------------------------------
         heading(3, "a late file lands in the partition of its arrival")
+        # Every clearing file registered after its settlement date: a late file, a correction
+        # sent the day after the file it corrects, or a transmission sent again complete.
         late = _rows(
             connection,
-            "select batch_id, ingest_date, cast(interval_start as date), object_prefix, "
-            "rows_landed "
-            "from ops.batch_registry where source_system = 'cardnet' and entity = 'settlements' "
-            "and status = 'registered' and cast(interval_start as date) < ingest_date "
-            "order by batch_id",
+            "select b.batch_id, b.ingest_date, cast(b.interval_start as date), b.object_prefix, "
+            "b.rows_landed, f.object_key, f.revision "
+            "from ops.batch_registry b join ops.ingested_file f using (batch_id) "
+            "where b.source_system = 'cardnet' and b.entity = 'settlements' "
+            "and b.status = 'registered' and cast(b.interval_start as date) < b.ingest_date "
+            "order by b.batch_id",
         )
-        for batch_id, ingest_date, settlement_date, prefix, landed in late:
+        kinds = collections.Counter()
+        for batch_id, ingest_date, settlement_date, prefix, landed, key, revision in late:
             rows = _parquet(client, lake, prefix)
             attribute = sorted({str(r["settlement_date"]) for r in rows})
-            print(
-                f"  {batch_id}: settlement date {settlement_date}, landed {landed} row(s) in "
-                f"{prefix} (ingest date {ingest_date}); settlement_date on its rows: {attribute}"
+            kind = (
+                "correction"
+                if revision > 1
+                else "sent again complete"
+                if key.endswith("_RESEND.csv")
+                else "late file"
             )
-        print(f"  late files: {len(late)}")
+            kinds[kind] += 1
+            print(
+                f"  {batch_id} ({kind}, {key.rsplit('/', 1)[1]}): settlement date "
+                f"{settlement_date}, landed {landed} row(s) in {prefix} (ingest date "
+                f"{ingest_date}); settlement_date on its rows: {attribute}"
+            )
+        print(f"  registered after their settlement date: {dict(kinds)}")
 
         # --- 5 -----------------------------------------------------------------------------
         heading(5, "additive drift lands and logs; a removed column fails the whole file")
@@ -212,6 +225,25 @@ def main() -> int:
         )
         for entity, column, kind, action, count, first, last in drift:
             print(f"  {entity}.{column}: {kind}, {action}, {count} batch(es), {first} to {last}")
+        # Evidence of additive drift survives in bronze even though no parsed column carries it:
+        # the payload is the line as delivered, so every row of every batch that logged the
+        # added field must carry one more field than the contract's column line (R5).
+        added = _rows(
+            connection,
+            "select d.batch_id, b.object_prefix, b.contract_version from meta.schema_drift_log d "
+            "join ops.batch_registry b using (batch_id) where d.drift_kind = 'additive' "
+            "and d.source_system = 'cardnet' and b.status = 'registered' order by 1",
+        )
+        expected_fields = {1: 13, 2: 12}
+        carrying = 0
+        for _batch_id, prefix, version in added:
+            payloads = [r["_raw_payload"] for r in _parquet(client, lake, prefix)]
+            widths = {len(next(csv.reader(io.StringIO(p)))) for p in payloads}
+            carrying += bool(payloads) and widths == {expected_fields[version]}
+        print(
+            f"  registered batches that logged an additive field: {len(added)} (floor 40); "
+            f"whose every payload carries it: {carrying}"
+        )
 
         # --- 6 -----------------------------------------------------------------------------
         heading(6, "FX rates for every publication date; weekends and holidays absent")
@@ -417,20 +449,106 @@ def main() -> int:
         )[0]
         print(f"  ingested clearing files: {counts[0]}, distinct checksums: {counts[1]}")
 
+        # --- R15: corrections and the batch arithmetic --------------------------------------
+        heading("R15", "corrections: the highest revision of a sequence replaces the others")
+        files = _rows(
+            connection,
+            "select f.business_date, f.file_sequence, f.revision, f.object_key, b.ingest_date, "
+            "f.batch_id from ops.ingested_file f join ops.batch_registry b using (batch_id) "
+            "where f.source_system = 'cardnet' order by 1, 2, 3",
+        )
+        first_sent = {
+            (day, sequence): ingested
+            for day, sequence, revision, _k, ingested, _b in files
+            if revision == 1
+        }
+        corrections = [f for f in files if f[2] > 1]
+        of_late = [f for f in corrections if first_sent.get((f[0], f[1]), f[0]) > f[0]]
+        same_day = [f for f in corrections if first_sent.get((f[0], f[1])) == f[4]]
+        for day, sequence, revision, key, ingested, batch_id in corrections:
+            original = first_sent.get((day, sequence))
+            print(
+                f"  {key.rsplit('/', 1)[1]}: settlement date {day}, sequence {sequence}, revision "
+                f"{revision}, ingested {ingested} as {batch_id}; revision 1 ingested {original}"
+            )
+        print(
+            f"  corrections landed: {len(corrections)} (floor 3: "
+            f"{'met' if len(corrections) >= 3 else 'NOT MET'}); corrections of a late file: "
+            f"{len(of_late)} (floor 1: {'met' if of_late else 'NOT MET'}); arriving in the same "
+            f"run as the file they correct: {len(same_day)}"
+        )
+        print(
+            "  the correction rate, 0.25 of break-carrying files, is not asserted at ci: sixty-one "
+            "days hold too few break-carrying files for a band to mean anything"
+        )
+        for day, sequence, _revision, _k, ingested, _batch in same_day:
+            pair = [f[5] for f in files if f[0] == day and f[1] == sequence]
+            print(
+                f"  same run, {ingested}: settlement date {day} sequence {sequence} landed as "
+                f"{', '.join(pair)}, distinct batches: {len(set(pair)) == len(pair)}"
+            )
+
+        # --- R13: delivery-date selection and parking --------------------------------------
+        heading("R13", "a file is read against the contract of its delivery date; refusals park")
+        straddling = _rows(
+            connection,
+            "select f.object_key, f.business_date, b.ingest_date, b.contract_version, b.status, "
+            "b.rows_read from ops.ingested_file f join ops.batch_registry b using (batch_id) "
+            "where f.source_system = 'cardnet' and f.business_date < date '2026-09-03' "
+            "and b.ingest_date >= date '2026-09-03' and b.entity = 'settlements'",
+        )
+        for key, day, ingested, version, status, read in straddling:
+            print(
+                f"  straddling late file {key.rsplit('/', 1)[1]}: settlement date {day}, "
+                f"delivered and ingested {ingested}, read against settlements version {version}: "
+                f"{status}, {read} record(s) read"
+            )
+        empty = _rows(
+            connection,
+            "select coalesce(empty_reason, 'delivered'), count(*) from ops.batch_registry "
+            "where source_system = 'cardnet' and entity = 'settlements' and status = 'registered' "
+            "and rows_read = 0 group by 1 order by 1",
+        )
+        print(f"  empty settlement batches by reason: {dict(empty)}")
+        never_landed = _rows(
+            connection,
+            "select s.content_checksum, s.object_key, s.outcome, count(*), min(s.ingest_date), "
+            "max(s.ingest_date) from ops.file_sighting s "
+            "where s.source_system = 'cardnet' and s.content_checksum not in "
+            "(select content_checksum from ops.ingested_file) group by all order by 5, 2, 3",
+        )
+        for checksum, key, outcome, count, first, last in never_landed:
+            print(
+                f"  never landed {checksum[:19]} {key.rsplit('/', 1)[1]}: {outcome} {count} "
+                f"time(s), {first} to {last}"
+            )
+        refused = _rows(
+            connection,
+            "select batch_id, ingest_date, contract_version, rows_read, rows_quarantined, "
+            "failure_reason from ops.batch_registry where source_system = 'cardnet' "
+            "and entity = 'settlements' and status = 'failed' order by batch_id",
+        )
+        for batch_id, ingested, version, read, quarantined, reason in refused:
+            print(
+                f"  failed {batch_id}, ingested {ingested}, version {version}, read {read}, "
+                f"quarantined {quarantined}: {reason[:110]}"
+            )
+
         # --- 15 ----------------------------------------------------------------------------
-        heading(15, "contract of the time: the version in force follows the interval")
+        heading(15, "contract of the time: the version in force follows the day of the delivery")
         versions = _rows(
             connection,
             "select source_system, entity, contract_version, min(cast(interval_start as date)), "
             "max(cast(interval_start as date)), count(*) filter (where status = 'registered'), "
-            "count(*) filter (where status = 'failed') from ops.batch_registry "
+            "count(*) filter (where status = 'failed'), min(ingest_date), max(ingest_date) "
+            "from ops.batch_registry "
             "where (source_system, entity) in (('corebank','payments'), ('cardnet','settlements')) "
             "group by all order by 1, 2, 3",
         )
-        for system, entity, version, first, last, registered, failed_count in versions:
+        for system, entity, version, first, last, registered, failed_count, seen, until in versions:
             print(
-                f"  {system}.{entity} version {version}: intervals {first} to {last}, "
-                f"{registered} registered, {failed_count} failed"
+                f"  {system}.{entity} version {version}: intervals {first} to {last}, ingested "
+                f"{seen} to {until}, {registered} registered, {failed_count} failed"
             )
         recorded = _rows(
             connection,
@@ -450,13 +568,43 @@ def main() -> int:
     return 0
 
 
-def reconcile(*, connection, client, lake: str, inbound: str, totals: list[dict]) -> None:
-    from generator.settlement.build import severity
+def severity(file_total: D, ledger_total: D) -> str | None:
+    """The severity metric_definitions.md assigns to a difference, implemented here rather than
+    imported from the simulation, which labels the breaks it injects with its own copy of the
+    rule: a probe that used the injector's function would agree with it by construction.
 
+    Any non-zero difference is a break. `warn` when it is below 0.1 per cent of the absolute
+    file total and below 100 units; `error` at or above either threshold.
+    """
+    difference = abs(file_total - ledger_total)
+    if difference == 0:
+        return None
+    if difference < D("0.001") * abs(file_total) and difference < D("100"):
+        return "warn"
+    return "error"
+
+
+def reconcile(*, connection, client, lake: str, inbound: str, totals: list[dict]) -> None:
+    # The batch arithmetic for a delivered file (architecture.md): within one of the sender's
+    # file sequences the highest revision replaces the others, and sequences add. Summing every
+    # batch of a settlement date would count a corrected file twice; that sum is computed too,
+    # so the report shows what the rule prevents.
+    highest: dict[tuple, int] = {}
+    for r in totals:
+        key = (r["settlement_date"], r["file_sequence"])
+        highest[key] = max(highest.get(key, 0), r["revision"])
     file_side: dict[tuple, D] = {}
+    summed: dict[tuple, D] = {}
     for r in totals:
         key = (r["settlement_date"], r["network"], r["settlement_currency"])
-        file_side[key] = r["amount_total"]
+        summed[key] = summed.get(key, D(0)) + r["amount_total"]
+        if r["revision"] == highest[(r["settlement_date"], r["file_sequence"])]:
+            file_side[key] = file_side.get(key, D(0)) + r["amount_total"]
+    doubled = sorted(k for k in summed if summed[k] != file_side.get(k))
+    print(
+        f"  cells a sum of every batch would get wrong (a corrected file counted twice): "
+        f"{len(doubled)}, over {len({k[0] for k in doubled})} settlement date(s)"
+    )
     with clients.source_cursor() as cursor:
         cursor.execute(
             """
@@ -490,14 +638,25 @@ def reconcile(*, connection, client, lake: str, inbound: str, totals: list[dict]
         f"{cells - len(detected)}; breaks: {dict(by_severity)}"
     )
 
+    # What the processor injected, from the manifests the simulation keeps. A break in a file
+    # that a correction replaced is expected to be gone after the arithmetic, so only breaks
+    # in the highest revision that landed are expected to be detected.
     injected = {}
+    corrected_away = 0
     listing = client.list_objects_v2(Bucket=inbound, Prefix="cardnet/_simulation/")
     for item in listing.get("Contents", []):
         manifest = json.loads(client.get_object(Bucket=inbound, Key=item["Key"])["Body"].read())
         day = dt.date.fromisoformat(manifest["settlement_date"])
+        revision = manifest.get("revision", 1)
+        if manifest.get("transmission") == "cut_off" or revision != highest.get(
+            (day, manifest.get("file_sequence", 1)), revision
+        ):
+            corrected_away += len(manifest["breaks"]) * (manifest.get("transmission") != "cut_off")
+            continue
         for entry in manifest["breaks"]:
             key = (day, entry["network"], entry["settlement_currency"])
             injected[key] = (entry["expected_severity"], D(entry["delta"]))
+    print(f"  injected breaks removed by a correction that landed: {corrected_away}")
     in_window = {k: v for k, v in injected.items() if k[0] in {c[0] for c in file_side}}
     agree = [k for k in in_window if k in detected and detected[k] == in_window[k]]
     missed = [k for k in in_window if k not in detected]
