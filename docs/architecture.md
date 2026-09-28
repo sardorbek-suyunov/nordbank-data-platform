@@ -10,9 +10,9 @@ machine; the cloud footprint exists only to prove the transformation layer is po
 | Source | Type | Load pattern | Cadence |
 |---|---|---|---|
 | Core banking (Postgres, synthetic) | Relational OLTP | Incremental by watermark on `updated_at`, soft deletes | Daily |
-| ECB FX rates (Frankfurter API) | REST API | Interval, one request per date; unpublished dates absent in bronze, gap-filled in silver | Daily |
+| ECB FX rates (ECB the publisher of record, Frankfurter the transport) | REST API | Interval, one request per date; unpublished dates absent in bronze, gap-filled in silver | Daily |
 | Card network settlement files | CSV in object storage | File arrival, identity by content checksum; a late file lands in the partition of its arrival | Daily |
-| Sanctions / PEP list (OpenSanctions schema, synthetic content) | Bulk snapshot | Full refresh, versioned by the publisher's version string | Weekly by platform choice; the publisher exports four times a day |
+| Sanctions / PEP list (OpenSanctions schema, synthetic content) | Bulk snapshot | Full refresh, versioned by the simulated publisher's version string | Weekly by platform choice; the real publisher exports four times a day |
 | Macro indicators (FRED) | REST API | Incremental append | Monthly |
 
 ### Ingestion pattern per source
@@ -81,18 +81,23 @@ to `dq` for investigation rather than deleting them automatically. It runs on it
 cadence, independent of the daily incremental load, and is implemented at M7 with the rest of
 the reconciliation work.
 
-**ECB FX rates.** The API is queried once per date, for the run's logical date. The ECB
-publishes on working days only, at around 16:00 CET, which is 15:00 UTC in summer and 14:00 UTC
+**ECB FX rates.** The European Central Bank is the publisher of record: the reference rates
+are the ECB's, and it is the ECB's calendar that decides which dates have one. Frankfurter is
+the transport, a free API that serves the ECB's rates by date, and the contract names both. The
+API is queried once per date, for the run's logical date. The ECB publishes on working days only, at around 16:00 CET, which is 15:00 UTC in summer and 14:00 UTC
 in winter. Nothing in the platform assumes a fixed UTC publication hour: the freshness window
 for this source is derived from the CET publication time and the daylight saving offset in
 force on the day, which is why the window is stated with a grace rather than as a deadline.
 
 **A date the ECB did not publish is absent in bronze, and the API does not say so.** Measured
 against Frankfurter v1: a request for a Saturday, a TARGET holiday or a date after the latest
-publication returns HTTP 200 with the previous publication's rates and that publication's date
-in the `date` field; only a date beyond all data returns 404. So the landing rule is that a
-response is written only when its `date` equals the date requested, and otherwise nothing is
-written — not a null row and not a flagged row. That comparison is the whole control, and it
+publication falls back to the latest earlier publication, returning HTTP 200 with that
+publication's rates and its date in the `date` field; only a date beyond all data returns 404.
+So the landing rule is that the date returned must equal the date requested: a response is
+written only then, and otherwise nothing is written — not a null row and not a flagged row. The
+request is logged in `ops.feed_request` as `absent_no_publication` with the date the API
+answered with, which is distinct from `landed` and from `discarded`, and the count of
+unpublished dates is read from that status. That comparison is the whole control, and it
 also makes a rate for a simulated day ahead of the real clock impossible to fabricate: the API
 answers such a request with an earlier date, and the rule lands nothing.
 
@@ -110,9 +115,21 @@ partitions by ingest date and never rewrites a registered partition (ADR 0008), 
 settlement date D−3 arriving today is today's batch. What is rebuilt for the affected
 settlement dates is the reconciliation mart, at M6.
 
-**Sanctions and PEP list.** The snapshot is loaded whole and stored under the publisher's own
-version string, with the publisher's export timestamp recorded as its publication time. A
-snapshot whose content checksum the platform has already landed is a no-op. Screening results
+A file is read against the contract in force on the day it was delivered, the ingest date, not
+on the settlement date it covers: a sender changes its format when it sends, so a late file sent
+after a format change is in the new layout (ADR 0016). A file refused with a verdict on the
+delivery — breaking drift, a structurally malformed file, a header declaring what an earlier
+file already declared — is parked: it stays in the inbound bucket, every run records it as
+parked and allocates nothing for it, and it is attempted again only when the contracts in force
+for it change. A day on which the processor sent nothing registers empty batches whose
+`empty_reason` is `no_arrival_within_window`, which freshness alerts on, as distinct from a
+delivered file with no records, which carries no reason and does not alert.
+
+**Sanctions and PEP list.** The snapshot is loaded whole and stored under the simulated
+publisher's version string, with its export timestamp recorded as the publication time. A
+snapshot whose content checksum the platform has already landed is a no-op, whatever version
+string it carries; the same version string over different content fails loudly, because a
+publisher never reuses one. Screening results
 reference the version they were produced against, so a past decision can be explained with the
 list as it stood that day.
 
@@ -129,9 +146,34 @@ real list holds some three hundred thousand designated persons and entities; lan
 put real special-category personal data into a lake that feeds a publicly deployed application
 at M9, with no lawful basis and no retention story.
 
-**Macro indicators.** Series are appended monthly. Revisions to already published periods are
-expected; the load is an upsert keyed on series and period, and the previous value is kept in
-the silver history.
+**Macro indicators.** Series are requested monthly, every observation of a series each time.
+Revisions to already published periods are expected: a revised observation arrives under a
+later `realtime_start` and lands as a new row in a new batch, because bronze is append-only, and
+silver keeps the history and reads the latest vintage of each period.
+
+### Batch arithmetic, per ingestion mode
+
+A batch is the unit of landing, and it is not the unit of arithmetic. How the batches of one
+business day combine differs by mode, and summing them is right for one mode only.
+
+- **Relational.** Batches overlap. Each run re-reads the tail of the previous day through the
+  watermark's overlap, so two batches can hold the same row, and a day re-run after a failure is
+  read whole twice. A day's landing is the covering batch's, the one whose window opened at or
+  before the start of the day; the others' rows are re-reads, kept as landings and never added
+  (`ops.source_reconciliation_daily`).
+- **File.** A clearing file's header declares its settlement date, the sender's `file_sequence`
+  and a `revision`, recorded as attributes of every record, never as identity. Files with
+  different sequences add. Within one sequence, the highest declared revision replaces the
+  others, whatever order they arrived in. The same settlement date, sequence and revision over
+  different content fails loudly. The registry's `batch_sequence` is the platform's allocation
+  and plays no part: a late file is batch 02 behind the empty batch of the day it did not
+  arrive on, and still the sender's sequence 01. An empty `no_arrival_within_window` batch
+  contributes nothing.
+- **Snapshot.** One batch is the whole list. A later export replaces an earlier one, and two
+  exports are never added.
+- **API, interval.** Each requested date or series lands once, in the batch of the run that
+  answered it. FX dates do not overlap; a FRED series re-sent with revisions lands again, and
+  silver keeps each period's latest vintage.
 
 ### The simulation is not part of the platform
 
