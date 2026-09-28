@@ -219,7 +219,7 @@ def plant(client, bucket: str, connection) -> int:
 
 
 def _not_carried_by_the_list(client, key, deliveries, matcher, found, carried) -> list:
-    """The hits in a sanctions object that the publisher's own file does not carry.
+    """The hits in a sanctions object that the simulated publisher's file does not carry.
 
     A sanctions list is a list of names, and a name on it can equal a name the bank vaulted:
     that is a screening match, and the M3 fixture plants exactly such names so screening has
