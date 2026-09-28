@@ -9,8 +9,7 @@ decision is unchanged.
 Consequence added: 2026-09-21, by specification 005. The committed default moved from 55432 to
 15432: 55432 is inside the Windows dynamic port range, so any application's loopback
 connection can hold it and the container then comes up with no published port at all. Measured
-then and recorded in `docs/runbook.md`. The identity assertion this record introduced is what
-turned that into an error rather than a connection to nothing.
+then and recorded in `docs/runbook.md`.
 
 ## Context
 
