@@ -438,8 +438,17 @@ control is operated, and the SLA measures whether the platform kept to its own c
 publisher that stopped exporting would show here only once the platform's weekly run found
 nothing new to land, which is the platform's freshness rather than the feed's.
 
+**A registered batch is not always a delivery.** When the processor sends nothing for a day,
+the settlement feed registers an empty batch per entity so the day is accounted for, and marks
+it `empty_reason = no_arrival_within_window`. Such a batch does not make the feed fresh: the
+day is late until a file for it lands, and M7's freshness check alerts on it. A delivered file
+with no records registers an empty batch with no reason, and that day is fresh, because the
+processor did deliver. The two were indistinguishable in the registry until specification
+006's review, which is why the reason exists.
+
 **Source columns.** `ops.batch_registry.source_system`, `ops.batch_registry.ended_at`,
-`ops.batch_registry.status`, `ops.freshness_sla.window_hours`. The first was named
+`ops.batch_registry.status`, `ops.batch_registry.empty_reason`,
+`ops.freshness_sla.window_hours`. The first was named
 `ops.batch_registry.source` here until M4 built the table; the delivered column is
 `source_system`, matching the `_source_system` audit column on every bronze record.
 
