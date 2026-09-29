@@ -85,6 +85,7 @@ def open_phase(*, source_schema: str, context: dict) -> list[dict]:
     lag = _extract_lag()
 
     allocations: list[dict] = []
+    already: list[str] = []
     with warehouse.connect(read_only=False) as connection:
         connection.execute("begin transaction")
         try:
@@ -102,6 +103,19 @@ def open_phase(*, source_schema: str, context: dict) -> list[dict]:
                     entity=entity,
                     interval_start=interval_start,
                 )
+                # An interval that already has a registered batch for this entity is done. A
+                # cleared or re-triggered run of a day that succeeded, or a backfill resuming a
+                # day it stopped part way through, lands nothing for it, as a delivered file
+                # already ingested lands nothing. Before this, the registry's sequence rule gave
+                # it a second batch that re-read the same window. A failed batch is not
+                # registered, so a halted day is still re-attempted. There is no way to force a
+                # deliberate re-extraction of a registered interval; one would need a flag.
+                if any(
+                    status == registry.REGISTERED
+                    for _sequence, status in registry.existing_batches(connection, key)
+                ):
+                    already.append(entity)
+                    continue
                 allocation = registry.allocate(
                     connection,
                     key,
@@ -133,7 +147,10 @@ def open_phase(*, source_schema: str, context: dict) -> list[dict]:
             raise
 
     reused = sum(1 for a in allocations if a["reused"])
-    print(f"open: {len(allocations)} batch(es) for {interval_start.date()}, {reused} reused")
+    print(
+        f"open: {len(allocations)} batch(es) for {interval_start.date()}, {reused} reused, "
+        f"{len(already)} entit(y/ies) already registered for the interval and skipped"
+    )
     return allocations
 
 
@@ -209,6 +226,12 @@ def register_phase(*, source_schema: str, context: dict) -> dict:
     if isinstance(reports, dict):
         reports = [reports]
     reports = [r for r in reports if r]
+    # Only reports for batches this run's open step allocated. When the open step skips every
+    # entity of an interval already registered, the mapped extract expands to nothing and its
+    # XCom still returns the earlier try's reports, for batches that are already registered;
+    # the feed register step learned the same (`feeds.phases.current_reports`).
+    allocated = {a["batch_id"] for a in context["ti"].xcom_pull(task_ids="open_batches") or []}
+    reports = [r for r in reports if r["batch_id"] in allocated]
     reported = {r["entity"] for r in reports}
 
     with warehouse.connect(read_only=False) as connection:

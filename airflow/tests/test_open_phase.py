@@ -87,3 +87,34 @@ def test_the_open_step_selects_the_contract_of_the_interval(warehouse) -> None:
     assert {a["entity"]: a["contract_version"] for a in on}["payments"] == 2
     assert {v for e, v in version.items() if e != "payments"} == {1}
     assert len(version) == EXPECTED["core"]
+
+
+def _set_status(path: Path, status: str, entity: str | None = None) -> None:
+    connection = duckdb.connect(str(path))
+    try:
+        where = "" if entity is None else " where entity = ?"
+        connection.execute(
+            f"update ops.batch_registry set status = ?{where}",  # noqa: S608 - fixed text
+            [status] + ([entity] if entity else []),
+        )
+    finally:
+        connection.close()
+
+
+def test_a_registered_interval_allocates_nothing_on_a_later_run(warehouse) -> None:
+    """F1: a cleared or re-run success, or a resumed day, lands nothing for a registered entity."""
+    day = dt.date(2026, 8, 1)
+    first = open_phase(source_schema="ref", context=_context(day))
+    assert len(first) == EXPECTED["ref"]
+    _set_status(warehouse, "registered")
+    assert open_phase(source_schema="ref", context=_context(day)) == []
+
+
+def test_only_the_unregistered_entities_of_an_interval_are_allocated_again(warehouse) -> None:
+    day = dt.date(2026, 8, 1)
+    open_phase(source_schema="core", context=_context(day))
+    _set_status(warehouse, "registered")
+    _set_status(warehouse, "failed", entity="payments")
+    again = open_phase(source_schema="core", context=_context(day))
+    # A failed batch is not registered, so a halted day is attempted again, at the next sequence.
+    assert [(a["entity"], a["batch_id"][-2:]) for a in again] == [("payments", "02")]
