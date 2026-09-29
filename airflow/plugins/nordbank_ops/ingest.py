@@ -144,12 +144,14 @@ def failure_callback(context: Any) -> None:
 
 def build_ingest_dag(*, dag_id: str, source_schema: str, doc: str):
     """Build one ingestion DAG over one source schema."""
-    from airflow.sdk import Asset, dag, task
+    from airflow.sdk import AssetAlias, dag, task
 
-    from nordbank_ops import warehouse
+    from nordbank_ops import assets, warehouse
 
     known = entities(source_schema)
-    outlets = [Asset(name=f"{dag_id}/{entity}") for entity in known]
+    # One alias, through which register adds an event per batch it registered; a declared Asset
+    # would emit whenever the task succeeds, registered or not (`nordbank_ops.assets`).
+    outlets = [AssetAlias(name=assets.alias_name(dag_id))]
 
     @dag(
         dag_id=dag_id,
@@ -182,11 +184,20 @@ def build_ingest_dag(*, dag_id: str, source_schema: str, doc: str):
 
             return extract_phase(source_schema=source_schema, batch=batch, context=context)
 
-        @task(pool=warehouse.POOL_NAME, trigger_rule="all_done", outlets=outlets)
+        @task(
+            pool=warehouse.POOL_NAME,
+            trigger_rule="all_done",
+            outlets=outlets,
+            doc_md=assets.described(dag_id, tuple(known)),
+        )
         def register(**context) -> dict:
             from nordbank_ops.phases import register_phase
 
-            return register_phase(source_schema=source_schema, context=context)
+            summary = register_phase(source_schema=source_schema, context=context)
+            assets.emit(
+                context["outlet_events"], dag_id, tuple(known), summary["registered_batches"]
+            )
+            return summary
 
         # `retries=0`: the gate's failure is a verdict on the run rather than a mishap. A run
         # with a failed batch will still have one on the retry, so retrying only delays the

@@ -186,11 +186,15 @@ def test_the_ingestion_dags_are_unscheduled_with_catchup_off(dag_id: str) -> Non
 
 @pytest.mark.parametrize("dag_id", INGEST_DAGS)
 def test_one_asset_is_emitted_per_entity(dag_id: str) -> None:
-    dag = _dagbag().dags[dag_id]
-    outlets = dag.get_task("register").outlets
-    assert len(outlets) == EXPECTED_ENTITIES[dag_id]
-    names = {getattr(outlet, "name", None) for outlet in outlets}
-    assert all(name and name.startswith(f"{dag_id}/") for name in names), names
+    from nordbank_ops import assets
+
+    register = _dagbag().dags[dag_id].get_task("register")
+    # One alias, through which the step adds an event per registered batch and nothing else.
+    assert [type(o).__name__ for o in register.outlets] == ["AssetAlias"]
+    assert register.outlets[0].name == assets.alias_name(dag_id)
+    names = assets.emittable(register.doc_md)
+    assert len(names) == EXPECTED_ENTITIES[dag_id]
+    assert all(name.startswith(f"{dag_id}/") for name in names), names
 
 
 @pytest.mark.parametrize("dag_id", INGEST_DAGS)
