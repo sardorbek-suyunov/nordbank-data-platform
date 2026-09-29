@@ -142,6 +142,7 @@ its area.
 | [0009](adr/0009-numbered-sql-migrations.md) | Accepted | Numbered idempotent SQL over Alembic or Flyway, with the measured cost of the deferred balance trigger and the partitioning decision |
 | [0010](adr/0010-sanctions-screening-through-the-vault.md) | Accepted | Sanctions screening resolves tokens through the vault rather than screening at ingest |
 | [0011](adr/0011-copy-loader-with-explicit-identity-keys.md) | Accepted | `COPY` supplies the primary keys into columns that stay `generated always`; foreign keys come off for the load; the ledger analyses before it commits |
+| [0017](adr/0017-mirrored-minio-server.md) | Accepted | The MinIO server from an unmodified mirror pinned by the upstream digest; bucket provisioning with boto3, and no `mc` image |
 
 Milestone checkpoints are in [checkpoints/](checkpoints/), one per completed milestone.
 
@@ -202,6 +203,7 @@ Deferred work, with the milestone that owns it:
 | Lineage, erasure DAG, PII vault, access control roles | M8 |
 | Power BI, Streamlit, the `exports/` snapshot task | M9 |
 | BigQuery target, Terraform | M10 |
+| Replace the frozen MinIO mirror with a maintained S3-compatible server (ADR 0017) | M10 |
 
 ## Follow-ups outstanding from M2 and M3
 
