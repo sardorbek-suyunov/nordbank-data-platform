@@ -40,27 +40,17 @@ def probe_database(service: str, user: str, database: str) -> tuple[str, str]:
 
 
 def probe_bucket(bucket: str) -> tuple[str, str]:
-    script = (
-        'mc alias set local "$MINIO_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" '
-        f'>/dev/null && mc ls "local/{bucket}"'
+    # Only stdout is the listing: compose writes its own container progress lines to stderr.
+    result = subprocess.run(
+        ["docker", "compose", "run", "--rm", "--no-deps", "minio-init", "probe", bucket],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    code, output = run(
-        [
-            "docker",
-            "compose",
-            "run",
-            "--rm",
-            "--no-deps",
-            "--entrypoint",
-            "/bin/sh",
-            "minio-init",
-            "-c",
-            script,
-        ]
-    )
-    if code != 0:
-        return FAIL, output.splitlines()[-1] if output else "mc ls failed"
-    entries = [line for line in output.splitlines() if line.strip()]
+    if result.returncode != 0:
+        output = (result.stdout + result.stderr).strip()
+        return FAIL, output.splitlines()[-1] if output else "bucket listing failed"
+    entries = [line for line in result.stdout.splitlines() if line.strip()]
     return PASS, f"{len(entries)} top-level entries"
 
 
