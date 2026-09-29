@@ -36,6 +36,8 @@ from nordbank_ops import registry
 @dataclass
 class RegisterReport:
     registered: list[str] = field(default_factory=list)
+    # One entry per registered batch, which is what the register step emits asset events for.
+    registered_batches: list[dict] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
     vault_rows_added: int = 0
     quarantine_rows_loaded: int = 0
@@ -49,6 +51,7 @@ class RegisterReport:
     def as_dict(self) -> dict:
         return {
             "registered": self.registered,
+            "registered_batches": self.registered_batches,
             "failed": [{"entity": entity, "reason": reason} for entity, reason in self.failed],
             "vault_rows_added": self.vault_rows_added,
             "quarantine_rows_loaded": self.quarantine_rows_loaded,
@@ -406,6 +409,14 @@ def register_run(
                 now,
             )
             report.registered.append(entity)
+            report.registered_batches.append(
+                {
+                    "batch_id": batch["batch_id"],
+                    "entity": entity,
+                    "rows_landed": entry["rows_landed"],
+                    "empty_reason": None,
+                }
+            )
 
             identifiers = tuple(contract.identifier_columns())
             for column in identifiers:
