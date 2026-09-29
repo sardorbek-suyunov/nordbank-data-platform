@@ -332,10 +332,30 @@ Windows drive if bind-mount I/O feels slow; DAG parsing is the first thing to su
 ## Image pinning and registry risk
 
 Every image is pinned to an explicit version, and images whose registry history has proven
-unstable are pinned by digest as well as tag. MinIO qualifies: its images were withdrawn from
-Docker Hub, so the stack pulls `quay.io/minio/minio` and `quay.io/minio/mc` by digest.
+unstable are pinned by digest as well as tag. MinIO qualifies, and the risk this section used to
+describe happened: on 2026-09-28 both quay.io and Docker Hub stopped serving MinIO's images to
+anonymous pulls, and CI's `stack` job failed at `make up` on every pull request.
 
-If quay.io becomes unavailable, the lake layer is the only thing affected, and the contingency
-is to replace it with another S3-compatible server: LocalStack S3 for a drop-in local endpoint,
-or SeaweedFS for something closer to production behaviour. Both speak the S3 API the platform
-uses, so the change is a compose change and an endpoint change, not a code change.
+Since ADR 0017:
+
+- The server is pulled from `ghcr.io/sardorbek-suyunov/minio`, an unmodified copy pinned by the
+  same digest upstream published, `sha256:14cea493…`. Only the amd64 image is in the copy, so
+  compose sets `platform: linux/amd64`. CI asserts the digest after `make up`.
+- On an Apple Silicon or other arm64 host, MinIO therefore runs as an amd64 image under
+  emulation, slower than native and dependent on the host providing it; Docker Desktop on Apple
+  Silicon does. No arm64 host has been measured. The arm64 image cannot be recovered: the only
+  machine that still had MinIO cached held the amd64 image alone, because a pull fetches only
+  the host's platform, and both upstream registries now refuse the arm64 manifest by digest.
+  Without its exact bytes the list's arm64 entry cannot be satisfied, and a rebuilt image would
+  have a different digest.
+- `minio-init` runs `infra/docker/minio/init.py` in the project image with boto3; there is no
+  `mc` image. `mc` is still inside the server container, for its healthcheck and for hand
+  administration: `docker compose exec minio mc alias set local http://localhost:9000 ...`.
+- The saved images are also in a tarball on the owner's machine, outside the repository. If the
+  mirror is lost, `docker load -i` that tarball and push it again as ADR 0017 describes; the
+  pushed list must hash to the pinned digest before compose is pointed at it.
+
+The mirror is frozen, with no security fixes. Replacing the server with a maintained
+S3-compatible one, SeaweedFS or Garage, is an M10 item. Both speak the S3 API the platform
+uses, so the change is a compose change and an endpoint change, not a code change, but it
+moves the lake that every acceptance run so far was measured on.
