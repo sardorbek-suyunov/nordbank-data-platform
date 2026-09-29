@@ -136,7 +136,7 @@ its area.
 | [003](specs/003-historical-load.md) | Approved, implemented, amended | The deterministic generator, the `COPY` loader, the fourteen coherence invariants, the run manifest and the realism model |
 | [004](specs/004-mutation-engine.md) | Approved, implemented, amended | The mutation engine: the simulation clock, the tick state machine, seven change classes, the tick log as a reconciliation control, and scripted schema drift |
 | [005](specs/005-extraction-and-bronze-landing.md) | Approved, implemented, amended | Extraction and bronze landing: watermark extraction, the batch registry, contracts bootstrapped from the dictionary, quarantine, tokenisation at extraction, schema drift and the interleaved backfill |
-| [006](specs/006-external-feeds.md) | Approved, implemented, amended, under review; version 2 to be issued by its author | The four external feeds: snapshot, file-arrival and interval modes, file identity by checksum, contract selection, payload fidelity, the simulated processor and publisher, and recorded fixtures |
+| [006](specs/006-external-feeds.md) | Approved version 2, implemented, amended | The four external feeds: snapshot, file-arrival and interval modes, file identity by checksum, contract selection, payload fidelity, the simulated processor and publisher, and recorded fixtures |
 
 | Record | Status | Decision |
 |---|---|---|
