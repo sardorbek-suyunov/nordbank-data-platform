@@ -418,3 +418,17 @@ and a required check that does not run cannot be satisfied: a documentation-only
 would wait forever. The filters are removed, and the workflow runs on every push and pull
 request, which costs about three minutes per run and buys a merge gate that always means
 something.
+
+### 2026-09-29 — the MinIO server from a mirror, and `minio-init` without `mc`
+
+Section 1's image table names `quay.io/minio/minio` and `quay.io/minio/mc`. On 2026-09-28 both
+stopped answering anonymous pulls, on quay.io and on Docker Hub, and `make up` failed in CI on
+every pull request. ADR 0017 records the decision and the measurements. The server is pulled from
+`ghcr.io/sardorbek-suyunov/minio` by the same digest, `sha256:14cea493…`, an unmodified copy
+holding only the amd64 image, with `platform: linux/amd64` in compose. `minio-init` runs
+`infra/docker/minio/init.py` in the project image with boto3, and the `mc` image is gone.
+
+Two consequences for this specification's text. Section 4's anonymous-access check no longer
+reads `mc`'s wording, so the amendment of 2026-09-18 about `none` and `private` is historical:
+the script deletes the bucket policy and fails if any policy survives. Section 9's `make
+health` bucket probe lists the bucket through the same script, not with `mc ls`.
