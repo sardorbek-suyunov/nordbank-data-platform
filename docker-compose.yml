@@ -7,8 +7,9 @@
 # is re-measured at every milestone that adds runtime work; see docs/runbook.md.
 # `mem_limit` is used rather than `deploy.resources`, which is swarm-scoped.
 #
-# The MinIO server is pinned by tag and digest because that repository has already moved
-# registry once; everything else is pinned by tag.
+# The MinIO server is pinned by tag and digest, to an unmodified copy of the upstream release in
+# the owner's registry namespace, because the upstream images stopped being publicly pullable
+# (ADR 0017); everything else is pinned by tag.
 
 x-airflow-image: &airflow-image
   build:
@@ -126,7 +127,9 @@ services:
       start_period: 10s
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    image: ghcr.io/sardorbek-suyunov/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    # The mirror holds upstream's manifest list unchanged, and only its amd64 image (ADR 0017).
+    platform: linux/amd64
     restart: unless-stopped
     mem_limit: 512m
     command: server /data --console-address ":9001"
