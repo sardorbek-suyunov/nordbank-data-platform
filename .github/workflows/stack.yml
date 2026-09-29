@@ -40,6 +40,31 @@ jobs:
         # The image was built in the previous step, with a cache; compose must not rebuild it.
         run: SKIP_BUILD=1 DAG_PROCESSOR_REFRESH_INTERVAL=5 make up
 
+      # ADR 0017. The MinIO server comes from a mirror in the owner's namespace. The upstream
+      # digest is stated here, not read back from compose, so that editing the pin cannot also
+      # edit the check. The mirror's tag is resolved anonymously and its bytes hashed, and the
+      # running server's image must be the one pulled by that digest.
+      - name: Assert the MinIO server is the upstream release
+        run: |
+          repo=sardorbek-suyunov/minio
+          tag=RELEASE.2025-09-07T16-13-09Z
+          upstream=sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          token=$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" | jq -r .token)
+          served=sha256:$(curl -fsS -H "Authorization: Bearer ${token}" \
+            -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/${repo}/manifests/${tag}" | sha256sum | cut -d' ' -f1)
+          if [ "${served}" != "${upstream}" ]; then
+            echo "ghcr.io/${repo}:${tag} serves ${served}; upstream is ${upstream}" >&2
+            exit 1
+          fi
+          image=$(docker inspect --format '{{.Image}}' "$(docker compose ps -q minio)")
+          if ! docker image inspect --format '{{join .RepoDigests "\n"}}' "${image}" \
+              | grep -Fx "ghcr.io/${repo}@${upstream}"; then
+            echo "the running minio image ${image} was not pulled by ${upstream}" >&2
+            exit 1
+          fi
+          echo "ghcr.io/${repo}:${tag} serves ${upstream}, and the running server was pulled by it"
+
       - name: Health probes
         run: make health STRICT=1
 
