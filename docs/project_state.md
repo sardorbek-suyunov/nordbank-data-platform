@@ -303,11 +303,6 @@ Other known gaps:
   `ops.stack_health_probe`: discovery sights every file in the inbound prefix each day, and a
   parked file adds a sighting a day for as long as it waits. The third acceptance run recorded
   2,368 clearing-file sightings of 73 objects. Retention belongs to M7.
-- **A refusal can name the second fault rather than the first.** The declaration check runs in
-  the open step, before a file is read, so the scripted cut-off transmission, attempted again on
-  2026-09-03 when the contracts in force for it changed, was refused as a declaration conflict
-  (its complete re-send had landed meanwhile) rather than as structurally malformed. The file
-  stays parked either way; the recorded reason is the less useful one.
 - **The FX feed's `_source_file` is an endpoint template**, with `<date>` in place of the
   record's date, rather than the URL each record was fetched from.
 - **The sanctions contract's shape is compared with the published FollowTheMoney schema by no

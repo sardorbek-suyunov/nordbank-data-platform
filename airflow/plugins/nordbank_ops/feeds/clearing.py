@@ -105,6 +105,23 @@ def classify_column_line(
     return observations, None
 
 
+def structure(body: bytes) -> tuple[list[list[str]], str | None]:
+    """A clearing file's records and its structural verdict, from its bytes.
+
+    The one implementation of "is this a whole clearing file": decodable, a header record, a
+    column line, only detail and trailer records between, and an end record whose count matches
+    the detail records. Discovery calls it in the same pass as the checksum, so a cut-off
+    transmission is known before the open step weighs its declaration; `read` calls it before
+    parsing anything else.
+    """
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return [], "the file is not UTF-8"
+    rows = [row for row in csv.reader(io.StringIO(text)) if row]
+    return rows, _structure(rows)
+
+
 def _structure(rows: list[list[str]]) -> str | None:
     if not rows or not rows[0] or rows[0][0] != "H":
         return "the first line is not a header record"
@@ -124,14 +141,7 @@ def _structure(rows: list[list[str]]) -> str | None:
 
 def read(body: bytes, detail_contract, totals_contract, tokeniser) -> ClearingFile:
     out = ClearingFile()
-    try:
-        text = body.decode("utf-8")
-    except UnicodeDecodeError:
-        out.structural_fault = "the file is not UTF-8"
-        return out
-    rows = list(csv.reader(io.StringIO(text)))
-    rows = [row for row in rows if row]
-    out.structural_fault = _structure(rows)
+    rows, out.structural_fault = structure(body)
     if out.structural_fault:
         return out
 

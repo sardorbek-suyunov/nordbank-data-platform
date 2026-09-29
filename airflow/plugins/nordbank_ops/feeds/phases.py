@@ -349,16 +349,11 @@ def expected_prefix(day: dt.date) -> str:
     return f"{settlement_prefix()}NBK_CLR_{day:%Y%m%d}_"
 
 
-def _header(first_line: bytes, fields: list[str]) -> dict:
+def _header(rows: list[list[str]], fields: list[str]) -> dict:
     """The header record's declared fields, by the contract's names, or empty if it is not one."""
-    import csv
-    import io
-
-    text = first_line.decode("utf-8", errors="replace")
-    row = next(csv.reader(io.StringIO(text)), [])
-    if not row or row[0] != "H":
+    if not rows or rows[0][0] != "H":
         return {}
-    return dict(zip(fields, row, strict=False))
+    return dict(zip(fields, rows[0], strict=False))
 
 
 def _as_int(value: str | None) -> int | None:
@@ -366,24 +361,36 @@ def _as_int(value: str | None) -> int | None:
 
 
 def settlement_discover(context: dict) -> list[dict]:
-    from nordbank_ops.feeds import identity
+    """Every file in the inbound prefix: its checksum, its declaration and its structure.
+
+    One read per file, in this task, which holds no pool. The structural verdict comes from
+    `clearing.structure`, the function the extract step's parser calls, so there is one
+    definition of a whole file, and the open step can refuse a cut-off transmission for what is
+    wrong with it before it weighs the declaration the file carries.
+    """
+    from nordbank_ops.feeds import clearing, identity
 
     client, bucket = _inbound()
     fields = _chains(CARDNET)["settlements"][-1].format["header_record"]["fields"]
-    found = identity.discover(client, bucket, settlement_prefix(), ".csv")
     out = []
-    for candidate in found:
-        head = identity.read_object(client, bucket, candidate.key).split(b"\n", 1)[0]
-        header = _header(head, fields)
+    for key in identity.list_objects(client, bucket, settlement_prefix(), ".csv"):
+        body = identity.read_object(client, bucket, key)
+        rows, fault = clearing.structure(body)
+        header = _header(rows, fields)
         out.append(
             {
-                **candidate.as_dict(),
+                **identity.Candidate(key, identity.checksum(body), len(body)).as_dict(),
                 "settlement_date": header.get("settlement_date") or None,
                 "file_sequence": _as_int(header.get("file_sequence")),
                 "revision": _as_int(header.get("revision")),
+                "structural_fault": fault,
             }
         )
-    print(f"discover: {len(out)} file(s) under {bucket}/{settlement_prefix()}")
+    malformed = sum(1 for candidate in out if candidate["structural_fault"])
+    print(
+        f"discover: {len(out)} file(s) under {bucket}/{settlement_prefix()}, "
+        f"{malformed} structurally malformed"
+    )
     return out
 
 
@@ -476,7 +483,16 @@ def settlement_open(context: dict, candidates: list[dict], sensed: dict | None) 
                     declaration, (batches[0]["batch_id"], candidate["checksum"])
                 )
             unit = {"file": candidate, "batches": batches}
-            if conflict:
+            # One primary reason, by precedence: the file's structure, then its declaration,
+            # then its contract, which the extract step judges. A cut-off transmission whose
+            # complete re-send has landed is both malformed and a declaration conflict, and is
+            # refused for what is wrong with its bytes rather than for the name they carry.
+            if candidate.get("structural_fault"):
+                unit["refuse"] = (
+                    f"structurally malformed file {candidate['key']}: "
+                    f"{candidate['structural_fault']}"
+                )
+            elif conflict:
                 unit["refuse"] = (
                     f"declaration conflict: {candidate['key']} declares settlement date "
                     f"{business}, sequence {candidate['file_sequence']}, revision "

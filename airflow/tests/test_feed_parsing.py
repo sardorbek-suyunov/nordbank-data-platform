@@ -435,3 +435,37 @@ def test_register_keeps_only_the_reports_of_this_runs_allocation() -> None:
     allocation = [{"batches": [{"batch_id": "fx_rates-20260918T000000-02"}]}]
     assert current_reports(flatten_reports(fresh), allocation) == fresh[0]
     assert current_reports(flatten_reports(stale + fresh[0]), allocation) == fresh[0]
+
+
+def test_discovery_and_the_parser_give_one_structural_verdict(monkeypatch):
+    """C2: discovery computes the verdict with the function the parser uses, on the same bytes."""
+    from nordbank_ops.feeds import clearing, phases
+    from test_feed_identity import FakeStore
+
+    whole = (
+        b"H,NBK-PROC-01,2026-08-20,1,1,2026-08-20T07:00:00Z,2\n"
+        b"record_type,transaction_reference\n"
+        b"D,T1\n"
+        b"Z,1\n"
+    )
+    cut = whole.rsplit(b"\nZ,1\n", 1)[0] + b"\n"
+    store = FakeStore(
+        {
+            "cardnet/NBK_CLR_20260820_01.csv": whole,
+            "cardnet/NBK_CLR_20260820_01_CUT.csv": cut,
+        }
+    )
+    monkeypatch.setattr(phases, "_inbound", lambda: (store, "inbound"))
+    found = {c["key"]: c for c in phases.settlement_discover({})}
+
+    for key, body in (
+        ("cardnet/NBK_CLR_20260820_01.csv", whole),
+        ("cardnet/NBK_CLR_20260820_01_CUT.csv", cut),
+    ):
+        assert found[key]["structural_fault"] == clearing.structure(body)[1]
+    assert found["cardnet/NBK_CLR_20260820_01.csv"]["structural_fault"] is None
+    assert found["cardnet/NBK_CLR_20260820_01_CUT.csv"]["structural_fault"] == (
+        "the last line is not an end record"
+    )
+    # The cut-off file still declares itself, which is what made it a declaration conflict.
+    assert found["cardnet/NBK_CLR_20260820_01_CUT.csv"]["file_sequence"] == 1

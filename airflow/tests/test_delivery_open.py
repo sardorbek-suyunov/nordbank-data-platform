@@ -246,3 +246,46 @@ def test_a_day_with_no_delivery_says_why_its_batches_are_empty(warehouse, contra
     # A retry of the same run reuses the empty batch rather than allocating another.
     (retry,) = _open(dt.date(2026, 9, 5), [], found=False)
     assert retry["batches"][0]["batch_id"] == unit["batches"][0]["batch_id"]
+
+
+def _land_declaration(path: Path, checksum: str, settlement: str) -> None:
+    connection = duckdb.connect(str(path))
+    try:
+        identity.record_ingested(
+            connection,
+            checksum_=checksum,
+            source_system="cardnet",
+            entity="settlements",
+            key=_file(checksum, settlement)["key"],
+            size=100,
+            business_date=dt.date.fromisoformat(settlement),
+            publisher_version=None,
+            batch_id=f"settlements-{settlement.replace('-', '')}T000000-01",
+            now=NOW,
+            file_sequence=1,
+            revision=1,
+        )
+    finally:
+        connection.close()
+
+
+def test_a_cut_off_file_is_refused_as_structural_before_its_declaration(warehouse, contracts):
+    # The scripted case: a transmission cut off part way, whose complete re-send has landed under
+    # the same settlement date, sequence and revision. Both faults are real; the structure is
+    # the primary one, and the only one recorded.
+    _land_declaration(warehouse, "sha256:complete", "2026-08-20")
+    cut = {
+        **_file("sha256:cut", "2026-08-20"),
+        "structural_fault": "the last line is not an end record",
+    }
+    (unit,) = _open(dt.date(2026, 9, 3), [cut])
+    assert unit["refuse"].startswith("structurally malformed file")
+    assert "declaration" not in unit["refuse"]
+    assert identity.is_verdict(unit["refuse"])
+
+
+def test_a_whole_file_with_a_conflicting_declaration_is_still_refused_for_it(warehouse, contracts):
+    _land_declaration(warehouse, "sha256:complete", "2026-08-20")
+    whole = {**_file("sha256:other", "2026-08-20"), "structural_fault": None}
+    (unit,) = _open(dt.date(2026, 9, 3), [whole])
+    assert unit["refuse"].startswith("declaration conflict")
