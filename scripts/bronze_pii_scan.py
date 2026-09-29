@@ -56,6 +56,7 @@ Runs inside a container: the warehouse is on a named volume.
 
 from __future__ import annotations
 
+import collections
 import io
 import json
 import os
@@ -396,6 +397,18 @@ def main(argv: list[str]) -> int:
         f"{len(set(prefixes))} prefix(es), against {len(pairs)} vault value(s) in "
         f"{sum(len(forms) for _t, forms in needles)} encoded form(s)"
     )
+    # Which sources the result speaks for: specification 005's entities are `corebank`, and a
+    # claim about them needs their objects in the count, not only the total.
+    covered = collections.Counter((k.split("/")[0], k.split("/")[1]) for k in keys)
+    entities = collections.defaultdict(set)
+    for key in keys:
+        layer, system, entity = key.split("/")[:3]
+        entities[(layer, system)].add(entity)
+    for (layer, system), count in sorted(covered.items()):
+        print(
+            f"bronze-pii-scan:   {layer}/{system}: {count} object(s) over "
+            f"{len(entities[(layer, system)])} entit(y/ies)"
+        )
     # A scan of nothing, or for nothing, finds nothing, and would report that as a pass.
     if not keys or not needles:
         print(
