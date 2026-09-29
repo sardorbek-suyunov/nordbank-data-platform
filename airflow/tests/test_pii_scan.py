@@ -51,3 +51,69 @@ def test_a_value_is_found_as_csv_quotes_it_in_a_payload():
 def test_an_absent_value_is_not_found():
     body = _parquet({"card_reference": VALUES})
     assert find(body, [("tok", encodings("C99999999999"))]) == []
+
+
+# --- the sanctions excuse is scoped (specification 006 review, C6) ---------------------------
+
+FIXTURE_NAME = "Zed Placeholder-Fixture"
+SNAPSHOT_KEY = (
+    "bronze/opensanctions/entities/ingest_date=2026-09-14/"
+    "batch_id=entities-20260914T070000-01/part-0000.parquet"
+)
+PAYMENTS_KEY = (
+    "bronze/corebank/payments/ingest_date=2026-09-14/"
+    "batch_id=payments-20260913T000000-01/part-0000.parquet"
+)
+
+
+class _Store:
+    def __init__(self, objects: dict[str, bytes]) -> None:
+        self.objects = objects
+
+    def get_object(self, Bucket, Key):  # noqa: N803 - boto3's own spelling
+        return {"Body": io.BytesIO(self.objects[f"{Bucket}/{Key}"])}
+
+
+def _judge(key: str, delivered: bytes | None):
+    from bronze_pii_scan import Matcher, judge
+
+    store = _Store({"inbound/opensanctions/sanctions/20260914/entities.ftm.json": delivered or b""})
+    deliveries = (
+        {"entities-20260914T070000-01": "opensanctions/sanctions/20260914/entities.ftm.json"}
+        if delivered is not None
+        else {}
+    )
+    body = _parquet({"caption": [FIXTURE_NAME]})
+    carried: set[str] = set()
+    found = judge(
+        store, "inbound", key, body, Matcher([("tok_fixture", encodings(FIXTURE_NAME))]),
+        deliveries, carried,
+    )  # fmt: skip
+    return {token for token, _reading, _length in found}, carried
+
+
+def test_a_list_name_in_its_own_snapshot_is_excused_when_the_delivery_carries_it():
+    delivered = json.dumps({"caption": FIXTURE_NAME}).encode()
+    assert _judge(SNAPSHOT_KEY, delivered) == (set(), {"tok_fixture"})
+
+
+def test_a_list_name_planted_in_a_core_banking_object_is_caught():
+    delivered = json.dumps({"caption": FIXTURE_NAME}).encode()
+    assert _judge(PAYMENTS_KEY, delivered) == ({"tok_fixture"}, set())
+
+
+def test_the_excuse_is_by_prefix_not_by_a_substring_anywhere_in_the_key():
+    from bronze_pii_scan import in_sanctions_scope
+
+    assert in_sanctions_scope(SNAPSHOT_KEY)
+    assert in_sanctions_scope(SNAPSHOT_KEY.replace("bronze/", "quarantine/", 1))
+    assert not in_sanctions_scope(PAYMENTS_KEY)
+    assert not in_sanctions_scope("bronze/corebank/payments/x/opensanctions/part-0000.parquet")
+
+
+def test_a_value_the_snapshots_delivery_does_not_carry_is_caught_in_the_snapshot():
+    assert _judge(SNAPSHOT_KEY, b'{"caption": "somebody else"}') == ({"tok_fixture"}, set())
+
+
+def test_a_snapshot_with_no_recorded_delivery_excuses_nothing():
+    assert _judge(SNAPSHOT_KEY, None) == ({"tok_fixture"}, set())
