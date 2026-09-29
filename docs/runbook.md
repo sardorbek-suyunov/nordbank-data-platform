@@ -355,8 +355,14 @@ halts.
   on the failed day, re-runs only the feed that failed, and lands the file under version 2.
 
 **Resuming after a code fix.** `make backfill` resumes by **clearing** the runs of the day it
-stopped on, with `airflow tasks clear`, because Airflow allows one run per logical date. Two
-things then decide what code the cleared run executes, and both were measured.
+stopped on, because Airflow allows one run per logical date. It clears through the REST API,
+`POST /api/v2/dags/{dag_id}/clearTaskInstances` with `"run_on_latest_version": true`
+(`scripts/airflow_api.py`), not with `airflow tasks clear`, and once a cleared run finishes it
+checks that every task instance that ran did so on the DAG's latest version and stops if one did
+not. **`run_on_latest_version` is marked experimental in Airflow 3.3.2**; its description there
+falls back to the DAG's `rerun_with_latest_version`, then to `[core] rerun_with_latest_version`,
+then to false. A later Airflow may change or remove it, and the version check is what would
+notice. Two things decide what code a cleared run executes, and both were measured.
 
 - Airflow's processes keep plugin modules they have already imported, so a change under
   `airflow/plugins/` reaches neither the DAG structure nor the tasks until they restart:
@@ -368,14 +374,15 @@ things then decide what code the cleared run executes, and both were measured.
   old, a run spanning two versions. The CLI has no option to choose. The REST endpoint
   `POST /api/v2/dags/{dag_id}/clearTaskInstances` with `"run_on_latest_version": true` re-ran all
   four on the new version. A DAG's `rerun_with_latest_version` parameter sets that default for
-  the REST endpoints, and the CLI's clear does not read it.
+  the REST endpoints, and the CLI's clear does not read it. Measured again on 2026-09-29 through
+  `make backfill`'s own resume path on a throwaway stack: after the DAG file changed, the resumed
+  run ran all four tasks on the new version; a CLI clear after a second change left one task on
+  the old version, and the loop's version check refused it.
 
 So the procedure after a code fix, before resuming: restart the four processes, wait until the
-DAG's new version appears (`GET /api/v2/dags/{dag_id}/dagVersions`), clear the stopped day's
-runs through the REST endpoint with `run_on_latest_version` set, and only then run
-`make backfill` again, which finds those runs and waits for them. A contract change needs none
-of this: contracts are read from disk at run time, which is what the resume after a contract
-bump relies on.
+DAG's new version appears (`GET /api/v2/dags/{dag_id}/dagVersions`), and run `make backfill`
+again. A contract change needs none of this: contracts are read from disk at run time, which is
+what the resume after a contract bump relies on.
 
 **Evidence targets**, each run after the backfill because the warehouse excludes readers while a
 writer holds it:

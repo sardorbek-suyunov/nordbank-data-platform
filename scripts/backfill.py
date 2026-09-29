@@ -79,6 +79,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import source_db_exec as db  # noqa: E402
+from airflow_api import Client  # noqa: E402
 
 REFERENCE_DAG = "ingest_reference_data"
 CORE_DAG = "ingest_core_banking"
@@ -143,6 +144,34 @@ def airflow(*arguments: str) -> str:
     return completed.stdout
 
 
+_API: Client | None = None
+
+
+def api() -> Client:
+    global _API  # noqa: PLW0603 - one authenticated client per invocation
+    if _API is None:
+        _API = Client()
+    return _API
+
+
+def clear(dag_id: str, day: dt.date, run_id: str) -> None:
+    """Re-run an existing run on the DAG's latest version, through the REST API.
+
+    Not `airflow tasks clear`: a run it clears keeps the DAG version it was created with, so a
+    resume after a code fix re-ran the old code, and after a DAG change it put three of four
+    tasks on the new version and one on the old (measured 2026-09-28). The REST clear with
+    `run_on_latest_version`, experimental in Airflow 3.3.2, re-runs every task on the latest
+    version, and `wait_for` confirms it did.
+    """
+    print(f"backfill: clearing the existing run of {dag_id} for {day} onto its latest version")
+    api().clear_onto_latest_version(dag_id, run_id)
+    CLEARED[run_id] = dag_id
+
+
+# Runs this invocation cleared, whose task instances must all end on the latest DAG version.
+CLEARED: dict[str, str] = {}
+
+
 def simulation_state() -> tuple[dt.date, dt.date, int]:
     """The anchor, where the simulation has reached, and how many ticks have run."""
     rows = db.executor()(
@@ -189,11 +218,7 @@ def start_run(dag_id: str, day: dt.date, conf: dict | None = None) -> str:
     """Start one run for one logical date without waiting, clearing it if it already exists."""
     held = existing_run(dag_id, day)
     if held is not None:
-        print(f"backfill: clearing the existing run of {dag_id} for {day}", flush=True)
-        airflow(
-            "tasks", "clear", dag_id, "--yes",
-            "--start-date", day.isoformat(), "--end-date", day.isoformat(),
-        )  # fmt: skip
+        clear(dag_id, day, held["run_id"])
         return held["run_id"]
     listed = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
     before = {row["run_id"] for row in listed}
@@ -310,17 +335,7 @@ def trigger_and_wait(dag_id: str, day: dt.date) -> str:
     """
     held = existing_run(dag_id, day)
     if held is not None:
-        print(f"backfill: clearing the existing run of {dag_id} for {day}", flush=True)
-        airflow(
-            "tasks",
-            "clear",
-            dag_id,
-            "--yes",
-            "--start-date",
-            day.isoformat(),
-            "--end-date",
-            day.isoformat(),
-        )
+        clear(dag_id, day, held["run_id"])
         return wait_for(dag_id, held["run_id"])
 
     listed = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
@@ -342,11 +357,26 @@ def wait_for(dag_id: str, run_id: str) -> str:
     while time.monotonic() < deadline:
         for row in json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]"):
             if row["run_id"] == run_id and row["state"] in TERMINAL:
+                if run_id in CLEARED:
+                    on_latest_version(dag_id, run_id)
                 return row["state"]
         time.sleep(POLL_SECONDS)
     raise SystemExit(
         f"backfill: {dag_id} run {run_id} did not finish within {RUN_TIMEOUT_SECONDS}s"
     )
+
+
+def on_latest_version(dag_id: str, run_id: str) -> None:
+    """Refuse to go on if a cleared run ran any task on a DAG version but the latest."""
+    latest = api().latest_version(dag_id)
+    versions = api().task_versions(dag_id, run_id)
+    stale = {task: version for task, version in versions.items() if version != latest}
+    if stale:
+        raise SystemExit(
+            f"backfill: the cleared run {run_id} of {dag_id} ran {len(stale)} task(s) on a "
+            f"version other than the latest, {latest}: {stale}"
+        )
+    print(f"backfill: {dag_id} {run_id}: all {len(versions)} task(s) ran on version {latest}")
 
 
 def tick_one_day(day: dt.date, simulated: dt.date) -> None:
