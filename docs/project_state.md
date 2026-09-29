@@ -144,7 +144,7 @@ its area.
 | [0002](adr/0002-duckdb-as-warehouse.md) | Accepted, corrected 2026-09-18 | DuckDB as the primary warehouse; one process holds the file, so all access serialises through one pool |
 | [0003](adr/0003-synthetic-source-system.md) | Accepted | A generated core banking system rather than a static public dataset |
 | [0004](adr/0004-bi-tooling.md) | Accepted | Power BI for the semantic model, Streamlit for the public deployment, Metabase rejected |
-| [0005](adr/0005-pii-crypto-shredding.md) | Accepted, revised 2026-09-18 | Tokenise at ingest, vault the mapping, erase by deleting the vault entry |
+| [0005](adr/0005-pii-crypto-shredding.md) | Accepted, revised 2026-09-18, corrected 2026-09-29 | Tokenise at ingest, vault the mapping, erase by deleting the vault entry |
 | [0006](adr/0006-local-executor.md) | Accepted | LocalExecutor over Celery for a single-machine deployment |
 | [0007](adr/0007-declarative-airflow-configuration.md) | Accepted | Connections and pools from configuration, never from the UI |
 | [0008](adr/0008-bronze-immutability-by-key-construction.md) | Accepted | The batch id in the object key rather than bucket versioning |
@@ -404,10 +404,11 @@ real wall-clock time the register step first saw a version, not the source time 
 version applies, and the table stores no contract body, only a version number and a
 fingerprint.
 
-*Resolved by specification 006* (ADR 0014). Each contract carries an authored source-time
-`in_force_from`, superseded versions stay unedited under `history/`, and the open step selects
-the version in force for a batch's interval from `meta.contract_version`, which now keeps the
-source-time date beside the real-time `first_seen_at`. Proven by a replay: a fresh stack seeded
+*Resolved by specification 006* (ADR 0014, and ADR 0016 for selection). Each contract carries an
+authored source-time `in_force_from`, superseded versions stay unedited under `history/`, and the
+open step selects the version in force on the day the sender produced the delivery from
+`meta.contract_version`, which now keeps the source-time date beside the real-time
+`first_seen_at`. Proven by a replay: a fresh stack seeded
 at the acceptance anchor and backfilled over the whole sixty-one-day window with both version
 bumps already committed ran without a halt and with no file edited, validating `payments`
 against version 1 through 2026-08-25 and version 2 from 2026-08-26, and the clearing file against

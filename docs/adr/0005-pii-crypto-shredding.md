@@ -4,6 +4,10 @@ Status: Accepted
 Date: 2026-09-17
 Revised: 2026-09-18, during the M0 review, to add the payload fidelity and quarantine
 consequences. The decision itself is unchanged.
+Corrected: 2026-09-29. The decision said bronze "stays byte-identical" through an erasure, which
+contradicts this record's own consequence that bronze is structurally faithful rather than
+byte-identical. What is true is that bronze is untouched and immutable: erasure changes nothing
+in it. The decision is unchanged.
 Consequence added: 2026-09-18, discovered by ADR 0010, which decided that sanctions screening
 resolves tokens through the vault. The vault is therefore also the only path to a sanctions
 screen, and erasure also destroys the ability to re-screen a subject. The decision, its
@@ -40,7 +44,7 @@ The reversible mapping from token to raw value lives in one vault table in the `
 That vault is the only place a raw identifier exists after ingestion, and access to it is
 separate from access to the warehouse.
 
-Erasure deletes the subject's vault entries. Bronze stays byte-identical and fully
+Erasure deletes the subject's vault entries. Bronze is untouched, immutable and fully
 auditable, while the tokens belonging to that subject become permanently unresolvable to a
 person by anyone, including the operator. A governance DAG performs the erasure and records
 what it did in `meta`: the request, the timestamp and the tokens affected, which is evidence
