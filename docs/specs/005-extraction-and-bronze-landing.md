@@ -945,3 +945,24 @@ single test from `generator/tests`, whose fixture seeds — and watching the loo
 against a source that no longer had the history the registry was recording. At the moment of
 ingesting day D the simulation must be at D or at D-1, and anything else is refused with the
 usual cause named. `docs/runbook.md` carries the operational half.
+
+### 2026-09-29 — criterion 8's evidence was vacuous, and it is re-proven
+
+Criterion 8 was evidenced by `make bronze-pii-scan` searching the bytes of every Parquet object
+for every vault value, as the criterion prescribed, and reporting no hit. That evidence proved
+almost nothing about column values. Bronze is snappy-compressed Parquet, and snappy replaces a
+run of bytes it has already seen with a back-reference, so a value sharing a prefix with its
+neighbour is not stored contiguously. Measured at specification 006's review over 400
+card-reference-shaped values written with the platform's own writer: a byte-wise search found
+0 of the 400 in the compressed object and all 400 in an uncompressed one. The scan could see
+column statistics and literal runs, and not the values the criterion is about.
+
+The scan specification 006 rebuilt also decodes every value of every object and searches each
+vault value in every encoding the objects use. `make bronze-pii-scan PLANT=1` plants a cleartext
+card reference in a copy of a real object: the byte-wise reading misses it and the decoded
+reading catches it. In specification 006's fourth acceptance run it read 3,023 objects both ways
+against 20,015 vault values, 2,774 of them the `corebank` bronze objects of the forty-five
+entities this specification lands, and found no cleartext identifier
+(`data/acceptance/run4_pii_scan.txt`). Criterion 8 is met by that run, not
+by the evidence first reported for it. `core.transactions.counterparty_reference` is still the
+one classified column the scan can prove nothing about, as the criterion says.
