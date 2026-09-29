@@ -212,7 +212,7 @@ Expected timings and results:
 | `make tick-acceptance` | Sixty ticks and the evidence for specification 004; `REPLAY=1` proves replay determinism |
 | `make test-integration` | 84 tests, `schema-check` reports 463 columns agreeing, then `seed-verify`; refuses a loaded warehouse unless `FORCE=1`, because it reseeds the source; runs in CI's `stack` job |
 | `make test-offline` | 558 passed with `--network none`, about 40 seconds |
-| `make backfill FROM=2026-07-20 TO=2026-09-18` | About two hours at `ci` after a fresh seed at the acceptance anchor; the fourth acceptance run ended with 3,000 batches, 4 of them explicitly failed (the scripted cut-off transmission and its reattempt, both as structurally malformed), none open. 29 of the 3,000 are the finding below |
+| `make backfill FROM=2026-07-20 TO=2026-09-18` | About two hours at `ci` after a fresh seed at the acceptance anchor; the fourth acceptance run ended with 3,000 batches, 4 of them explicitly failed (the scripted cut-off transmission and its reattempt, both as structurally malformed), none open. 29 of the 3,000 are reference batches duplicated by a resume, before the fix below |
 | `make ingest-integrity` | `clean`, five checks, across every batch |
 | `make feeds-acceptance RUN=name` | One section per criterion and for the review's rulings; the dump searched for vault values finds none |
 | `make bronze-pii-scan` | About 40 seconds; 3,023 objects, no cleartext identifier in either reading; ten fixture names reported as list content. `PLANT=1` catches a card reference in a clearing file, a list name in a core banking object and a card reference in a snapshot |
@@ -239,6 +239,18 @@ Deferred work, with the milestone that owns it:
 | Power BI, Streamlit, the `exports/` snapshot task | M9 |
 | BigQuery target, Terraform | M10 |
 | Replace the frozen MinIO mirror with a maintained S3-compatible server (ADR 0017) | M10 |
+
+Resolved at specification 006's final review:
+
+- **A re-run of a registered relational interval landed it again.** The registry gave a cleared
+  or re-triggered run of a day that had registered a second batch over the same window. The
+  fourth acceptance run showed it on a resume, stopped between 2026-08-03's reference and core
+  banking runs: 29 duplicate reference batches, 441 rows. The open step now skips an entity whose
+  interval already has a registered batch; measured on a throwaway stack, clearing a successful
+  reference run added 29 batches before the change and none after, and so did a resumed day. A
+  deliberate re-extraction would need a force flag, which does not exist. The first acceptance
+  run's unattributed 29 extra `corebank` batches against the second are probably the same cause,
+  and cannot be confirmed, because that run's warehouse is gone.
 
 ## Follow-ups outstanding from M2 and M3
 
@@ -305,11 +317,6 @@ Other known gaps:
   `ops.stack_health_probe`: discovery sights every file in the inbound prefix each day, and a
   parked file adds a sighting a day for as long as it waits. The fourth acceptance run recorded
   2,368 clearing-file sightings of 73 objects. Retention belongs to M7.
-- **A resumed day re-runs reference data that had already registered** (specification 006,
-  amended 2026-09-29). The backfill re-runs both relational DAGs for a day whose forty-five
-  entities are not all registered, so a stop between them re-lands the reference entities as
-  a second batch over the same window: 29 batches and 441 duplicate rows in the fourth run.
-  Left for a ruling.
 - **FRED has never been called with a key.** `FRED_API_KEY` is not set, so the macro series
   DAG skips with its reason, no keyed response is recorded, and its fixture's shape is verified
   against the publisher's documented example only. The first live run is the check; its asset

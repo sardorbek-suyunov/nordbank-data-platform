@@ -492,8 +492,18 @@ both, since it is append-only by key (ADR 0008), and nothing downstream reads br
 figure but the three is affected. The third run was stopped after its day's core banking had
 registered and shows none of it. The first run's unexplained 29 extra `corebank` batches against
 the second, recorded at the review, have the same count and probably the same cause; that
-warehouse is gone, so it cannot be checked. Not fixed here: the resume should re-run only the
-DAG whose entities are unregistered, and that is left for a ruling.
+warehouse is gone, so it cannot be checked.
+
+**Resolved at the registry, not in the loop**, because the same duplication follows any manual
+clear of a successful run. The open step for the relational feeds skips an entity whose interval
+already has a registered batch, so a cleared or re-run success lands nothing, as a file already
+ingested does; a failed batch is not registered, so a halted day is still attempted again. No
+flag forces a deliberate re-extraction, and one would be needed. Measured on a throwaway stack
+seeded at the acceptance anchor: before the change, clearing a successful
+`ingest_reference_data` run added 29 batches at sequence 2 with 441 rows, and resuming a day
+interrupted after its reference run added 29 more; after it, the same two cases added none. The
+fourth run stays the evidence of record, and its 29 batches stay as the finding that led to the
+change.
 
 **Criterion 16, as ruled:** the feed assets now appear in Airflow when their first batch
 registers. `ingest_macro_series/series` has registered nothing, because no FRED key is set, so it
