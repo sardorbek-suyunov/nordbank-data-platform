@@ -27,7 +27,9 @@ searched with separators around it, because a separator can only make a match st
 **A name on the sanctions list is the list's, not the bank's.** A vault value found in a
 sanctions snapshot is excused only when the publisher's delivered file carries it too, which is
 what a screening match looks like and what the M3 fixture plants on purpose; it is counted and
-reported, never silently dropped.
+reported, never silently dropped. The excuse is scoped twice: only for an object under the
+sanctions source's own bronze or quarantine prefix, and only for a value present in the file
+delivered for that object's snapshot. The same name anywhere else is a hit.
 
 **No value is ever printed.** A hit reports the token, the object, which reading found it and
 the length of the value that matched; the value itself stays in the vault. A report that named
@@ -39,11 +41,15 @@ length is printed for judgement. And a column that is classified `identifier` bu
 every row the source produces contributes nothing to the vault, so the scan proves nothing
 about it; those columns are listed at the end so the coverage claim is honest.
 
-`--plant` proves the scan can fail. It copies one registered clearing-file object, replaces one
-card token in it with the card's cleartext reference, writes the copy with the platform's own
-writer to the scratch bucket, and scans the copy both ways. The byte-wise reading alone is
-reported beside the full one, so the evidence shows what the first version of this scan would
-have concluded.
+`--plant` proves the scan can fail, three ways. It copies one registered clearing-file object,
+replaces one card token in it with the card's cleartext reference, writes the copy with the
+platform's own writer to the scratch bucket, and scans the copy both ways; the byte-wise reading
+alone is reported beside the full one, so the evidence shows what the first version of this scan
+would have concluded. Then it proves the sanctions excuse is scoped: a fixture name the list
+carries, planted in a copy of a core banking payments object, is caught; a card reference the
+list does not carry, planted in a copy of a sanctions object, is caught; and the unplanted
+sanctions object is excused, which is the case the excuse exists for. Each copy is judged by the
+function the scan itself uses, under the key of the object it copies.
 
 Runs inside a container: the warehouse is on a named volume.
 """
@@ -52,6 +58,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 
 sys.path.insert(0, "/opt/airflow/plugins")
@@ -62,6 +69,9 @@ SHORT_VALUE = 6
 
 SCRATCH_BUCKET = "nordbank-fault-demo"
 PLANT_PREFIX = "pii-scan-plant/"
+
+# Where a value the sanctions list carries may be excused: the sanctions source's own objects.
+SANCTIONS_PREFIXES = ("bronze/opensanctions/", "quarantine/opensanctions/")
 
 
 def encodings(value: str) -> set[bytes]:
@@ -218,7 +228,109 @@ def plant(client, bucket: str, connection) -> int:
     return 0
 
 
-def _not_carried_by_the_list(client, key, deliveries, matcher, found, carried) -> list:
+def in_sanctions_scope(key: str) -> bool:
+    return key.startswith(SANCTIONS_PREFIXES)
+
+
+def judge(client, inbound: str, key: str, body: bytes, matcher, deliveries, carried) -> list:
+    """The hits in one object: every vault value found, less those the sanctions list excuses.
+
+    The one decision the scan makes about an object, used for the lake's own objects and for
+    the planted copies alike. `key` decides the scope, so a copy is judged as the object it
+    copies.
+    """
+    found = find(body, matcher)
+    if found and in_sanctions_scope(key):
+        found = _not_carried_by_the_list(client, inbound, key, deliveries, matcher, found, carried)
+    return found
+
+
+def _registered_object(client, bucket: str, connection, system: str, entity: str) -> str:
+    (prefix,) = connection.execute(
+        "select object_prefix from ops.batch_registry where source_system = ? and entity = ? "
+        "and status = 'registered' and rows_landed > 0 order by batch_id desc limit 1",
+        [system, entity],
+    ).fetchone()
+    (key,) = _keys(client, bucket, [prefix])
+    return key
+
+
+def _replace_one(body: bytes, column: str, value: str) -> bytes:
+    """The object with its first non-null `column` value replaced, written the platform's way."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(io.BytesIO(body))
+    values = table.column(column).to_pylist()
+    at = next(i for i, v in enumerate(values) if v is not None)
+    values[at] = value
+    field = table.schema.field(column)
+    table = table.set_column(
+        table.schema.get_field_index(column), field, pa.array(values, field.type)
+    )
+    buffer = io.BytesIO()
+    pq.write_table(table, buffer, compression="snappy")
+    return buffer.getvalue()
+
+
+def plant_outside_the_list(client, bucket: str, connection) -> int:
+    """Prove the sanctions excuse holds only where it should (specification 006 review, C6)."""
+    inbound = os.environ["INBOUND_BUCKET"]
+    deliveries = dict(
+        connection.execute(
+            "select batch_id, object_key from ops.ingested_file "
+            "where source_system = 'opensanctions'"
+        ).fetchall()
+    )
+    pairs = vault_values(connection)
+    matcher = Matcher([(t, encodings(v)) for t, v in pairs if len(v.strip()) >= SHORT_VALUE])
+    raw_of = dict(pairs)
+
+    snapshot = _registered_object(client, bucket, connection, "opensanctions", "entities")
+    snapshot_body = client.get_object(Bucket=bucket, Key=snapshot)["Body"].read()
+    carried: set[str] = set()
+    left = judge(client, inbound, snapshot, snapshot_body, matcher, deliveries, carried)
+    print(
+        f"bronze-pii-scan --plant: {snapshot} as landed: {len(carried)} list value(s) excused, "
+        f"{len(left)} hit(s)"
+    )
+    if not carried or left:
+        print("bronze-pii-scan --plant: the landed snapshot is not the case the excuse is for")
+        return 1
+    fixture = sorted(carried)[0]
+
+    payments = _registered_object(client, bucket, connection, "corebank", "payments")
+    planted = _replace_one(
+        client.get_object(Bucket=bucket, Key=payments)["Body"].read(),
+        "counterparty_name",
+        raw_of[fixture],
+    )
+    found = judge(client, inbound, payments, planted, matcher, deliveries, set())
+    in_core = fixture in {token for token, _reading, _length in found}
+    print(
+        f"bronze-pii-scan --plant: fixture name {fixture} ({len(raw_of[fixture])} bytes), which "
+        f"the list carries, planted in a copy of {payments}: caught {in_core}"
+    )
+
+    (card,) = connection.execute(
+        "select token from meta.pii_vault where first_seen_column = 'card_reference' "
+        "order by token limit 1"
+    ).fetchone()
+    planted = _replace_one(snapshot_body, "caption", raw_of[card])
+    found = judge(client, inbound, snapshot, planted, matcher, deliveries, set())
+    in_list = card in {token for token, _reading, _length in found}
+    print(
+        f"bronze-pii-scan --plant: card reference {card}, which the snapshot's delivered file "
+        f"does not carry, planted in a copy of {snapshot}: caught {in_list}"
+    )
+    if not (in_core and in_list):
+        print("bronze-pii-scan --plant: the sanctions excuse reached a value it must not")
+        return 1
+    print("bronze-pii-scan --plant: the sanctions excuse holds only for the list's own content")
+    return 0
+
+
+def _not_carried_by_the_list(client, inbound, key, deliveries, matcher, found, carried) -> list:
     """The hits in a sanctions object that the simulated publisher's file does not carry.
 
     A sanctions list is a list of names, and a name on it can equal a name the bank vaulted:
@@ -227,13 +339,11 @@ def _not_carried_by_the_list(client, key, deliveries, matcher, found, carried) -
     of the bank's data. It is excused only on proof: the same value must be in the file the
     publisher delivered, read from the inbound bucket. Anything else is a hit.
     """
-    import os
-
     batch_id = key.split("batch_id=", 1)[1].split("/", 1)[0]
     source = deliveries.get(batch_id)
     if source is None:
         return found
-    delivered = client.get_object(Bucket=os.environ["INBOUND_BUCKET"], Key=source)["Body"].read()
+    delivered = client.get_object(Bucket=inbound, Key=source)["Body"].read()
     in_delivery = matcher.tokens_in(delivered)
     remaining = []
     for token, reading, length in found:
@@ -252,7 +362,9 @@ def main(argv: list[str]) -> int:
 
     with warehouse.connect(read_only=True) as connection:
         if "--plant" in argv:
-            return plant(client, bucket, connection)
+            caught = plant(client, bucket, connection)
+            scoped = plant_outside_the_list(client, bucket, connection)
+            return caught or scoped
         pairs = vault_values(connection)
         prefixes = registered_objects(connection)
         # Where each vault value was first seen. A classified identifier column that appears
@@ -297,13 +409,12 @@ def main(argv: list[str]) -> int:
     hits: list[tuple[str, str, str, int]] = []
     carried: set[str] = set()
     scanned = decoded = 0
+    inbound = os.environ["INBOUND_BUCKET"]
     for key in sorted(keys):
         body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
         scanned += len(body)
         decoded += len(decoded_text(body))
-        found = find(body, matcher)
-        if found and "/opensanctions/" in key:
-            found = _not_carried_by_the_list(client, key, deliveries, matcher, found, carried)
+        found = judge(client, inbound, key, body, matcher, deliveries, carried)
         for token, reading, length in found:
             hits.append((token, key, reading, length))
 
