@@ -111,9 +111,19 @@ def test_the_source_tick_is_paused_and_touches_no_warehouse_pool() -> None:
     dag = _dagbag().dags.get("ops_source_tick")
     assert dag is not None, "ops_source_tick did not parse"
     assert dag.is_paused_upon_creation is True
+    # Unscheduled: a run's logical date is the day it ticks to, and a wall-clock schedule has
+    # no meaning against the simulated date (specification 006, amended).
+    assert dag.schedule is None
     assert len(dag.tasks) >= MINIMUM_TASKS["ops_source_tick"]
     for task in dag.tasks:
         assert task.pool == "default_pool", f"{task.task_id} holds pool {task.pool}"
+
+
+def test_the_source_tick_asks_for_its_own_logical_date() -> None:
+    """A tick for "the next day" is never refused; one for the run's date is, when out of order."""
+    source = (DAG_FOLDER / "ops_source_tick.py").read_text(encoding="utf-8")
+    assert "requested_date=requested" in source
+    assert "requested_date=None" not in source
 
 
 def test_the_simulation_writes_through_a_connection_of_its_own() -> None:

@@ -12,9 +12,14 @@ through a connection of its own, `nordbank_source_simulator`, as the application
 is chosen so that a reader scanning the connection list can see which side of the line it sits
 on. Every ingestion DAG from M4 onward keeps using `nordbank_source_db`, which is read-only.
 
-**Paused by default.** M3 proves the wiring; M4 uses it to interleave ticks with extraction, and
-unpausing it is that milestone's decision rather than this one's. It acquires no warehouse pool,
-because it touches only the source database.
+**Unscheduled, and paused by default.** A run's logical date is the simulated business day it
+advances the source to, and the tick is asked for exactly that day, so the state machine refuses
+a run for any day but the next one. `schedule=None`, as every ingestion DAG has, because a
+wall-clock schedule has no meaning against the simulated date: measured on 2026-09-28, an
+`@daily` schedule unpaused on a stack whose source stood at 2026-09-18 created a run for
+2026-09-28, and before this change the task asked for "the next day" rather than its own date,
+so only an unrelated refusal stopped it advancing the source to 2026-09-19. It acquires no
+warehouse pool, because it touches only the source database.
 
 A tick is one transaction. The task either advances the simulated date by exactly one day or
 leaves the source untouched, so a retry cannot half-apply a day — and `retries` is zero because
@@ -35,7 +40,7 @@ SIMULATOR_CONN_ID = "nordbank_source_simulator"
 
 @dag(
     dag_id="ops_source_tick",
-    schedule="@daily",
+    schedule=None,
     catchup=False,
     is_paused_upon_creation=True,
     start_date=datetime(2026, 1, 1, tzinfo=UTC),
@@ -45,8 +50,8 @@ SIMULATOR_CONN_ID = "nordbank_source_simulator"
 )
 def ops_source_tick() -> None:
     @task
-    def advance_one_day() -> dict:
-        """Run one tick and return what it changed, for the task log and for XCom."""
+    def advance_one_day(**context) -> dict:
+        """Tick the source to this run's logical date, and return what it changed."""
         import os
         import sys
         from pathlib import Path
@@ -64,13 +69,22 @@ def ops_source_tick() -> None:
         from generator.mutation import reconcile as reconcile_module
         from generator.mutation import report as report_module
         from generator.mutation import snapshot as snapshot_module
+        from generator.mutation import state as state_module
         from generator.mutation import tick as tick_module
+
+        logical = context.get("logical_date")
+        if logical is None:
+            raise state_module.TickRefusedError(
+                "this run has no logical date. Trigger it with the business day to tick to, "
+                "for example `airflow dags trigger ops_source_tick --logical-date 2026-09-19`."
+            )
+        requested = logical.date()
 
         settings = _settings_from_connection()
         profile = load_profile(os.environ.get("NORDBANK_ENV", "dev"))
 
         with connect(settings) as connection:
-            report = tick_module.run(connection, requested_date=None, profile=profile)
+            report = tick_module.run(connection, requested_date=requested, profile=profile)
             with connection.cursor() as cursor:
                 reconciliation = reconcile_module.reconcile_latest(cursor)
             connection.rollback()
