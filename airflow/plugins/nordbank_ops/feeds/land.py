@@ -14,6 +14,7 @@ that every feed got that right.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -65,8 +66,13 @@ def land(
     batch: dict,
     parsed: Parsed,
     tokeniser,
-    source_file: str,
+    source_file: str | Callable[[dict], str],
 ) -> ExtractReport:
+    """Land a feed's parsed records, and quarantine what it refused or validation rejects.
+
+    `source_file` is the object a delivery arrived as, or, for a feed whose records come from
+    separate requests, a function from a record to the request it came from.
+    """
     report = ExtractReport(entity=contract.entity, batch_id=batch["batch_id"], status="written")
     report.drift = list(parsed.drift)
     identifiers = contract.identifier_columns()
@@ -112,10 +118,13 @@ def land(
     decorate(
         landed,
         ingested_at=batch["opened_at"],
-        source_file=source_file,
+        source_file=None if callable(source_file) else source_file,
         batch_id=batch["batch_id"],
         system=contract.source_system,
     )
+    if callable(source_file):
+        for row, record in zip(landed, result.landed, strict=True):
+            row["_source_file"] = source_file(record)
     columns = contract.bronze_columns
     key = (
         bronze_prefix(

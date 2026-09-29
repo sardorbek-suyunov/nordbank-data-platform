@@ -303,8 +303,6 @@ Other known gaps:
   `ops.stack_health_probe`: discovery sights every file in the inbound prefix each day, and a
   parked file adds a sighting a day for as long as it waits. The third acceptance run recorded
   2,368 clearing-file sightings of 73 objects. Retention belongs to M7.
-- **The FX feed's `_source_file` is an endpoint template**, with `<date>` in place of the
-  record's date, rather than the URL each record was fetched from.
 - **The sanctions contract's shape is compared with the published FollowTheMoney schema by no
   check.** ADR 0015 adopts a metadata-only comparison as the mitigation; it belongs with
   `make feeds-probe` and is not built.

@@ -469,3 +469,47 @@ def test_discovery_and_the_parser_give_one_structural_verdict(monkeypatch):
     )
     # The cut-off file still declares itself, which is what made it a declaration conflict.
     assert found["cardnet/NBK_CLR_20260820_01_CUT.csv"]["file_sequence"] == 1
+
+
+def test_a_landed_rate_names_the_url_requested_for_its_date() -> None:
+    """C4: `_source_file` is the request that produced the row, not an endpoint template."""
+    import pyarrow.parquet as pq
+    from nordbank_ops.feeds.land import land
+
+    thursday = FRIDAY.replace(b'"2026-07-24"', b'"2026-07-23"')
+    fetch = _scripted({"2026-07-23": (200, thursday), "2026-07-24": (200, FRIDAY)})
+    contract = _contract("ecb", "fx_rates")
+    base = "https://api.example/v1"
+    fetched = fx.fetch_dates(
+        [dt.date(2026, 7, 23), dt.date(2026, 7, 24)], contract, base_url=base, fetch=fetch
+    )
+
+    class Lake:
+        objects: dict = {}
+
+        def put_object(self, Bucket, Key, Body):  # noqa: N803 - boto3's own spelling
+            self.objects[Key] = Body
+
+    lake = Lake()
+    batch = {
+        "batch_id": "fx_rates-20260723T000000-01",
+        "ingest_date": dt.date(2026, 7, 24),
+        "opened_at": dt.datetime(2026, 7, 24, 6, tzinfo=dt.UTC),
+    }
+    report = land(
+        client=lake,
+        bucket="lake",
+        contract=contract,
+        batch=batch,
+        parsed=fetched.parsed,
+        tokeniser=Tokeniser(b"k" * 32),
+        source_file=lambda record: fx.requested_as(base, record["rate_date"]),
+    )
+    assert report.rows_landed == 58
+    (key,) = [k for k in lake.objects if k.startswith("bronze/")]
+    rows = pq.read_table(io.BytesIO(lake.objects[key])).to_pylist()
+    by_date = {(row["rate_date"], row["_source_file"]) for row in rows}
+    assert by_date == {
+        (dt.date(2026, 7, 23), f"{base}/2026-07-23?base=EUR"),
+        (dt.date(2026, 7, 24), f"{base}/2026-07-24?base=EUR"),
+    }
