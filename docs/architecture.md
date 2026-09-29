@@ -413,7 +413,8 @@ per-entity watermarks, run outcomes, and freshness measurements per source.
 The external feeds share one DAG shape with the core banking extraction and add a phase in
 front of it for the two delivery modes: `discover` lists and hashes what a publisher delivered,
 without touching the warehouse; `open`, pooled, recognises content that has already landed and
-selects the contract version in force for each batch's interval; `extract`, mapped and
+selects the contract version in force on the day the sender produced each delivery (ADR 0016):
+a file's ingest date, a snapshot's export time, an interval's own day; `extract`, mapped and
 unpooled, lands one unit — an FX interval, one clearing file, one snapshot; `register`, pooled on
 `all_done`, registers or fails each batch; the gate fails the run. The settlement DAG puts a
 deferrable sensor in front, which gives up its worker while it waits and lets the triggerer
@@ -479,7 +480,7 @@ platform where a raw identifier exists after ingestion. The vault is written by 
 extraction task and read by nothing that serves reporting.
 
 Erasure of a subject is the deletion of that subject's vault entries. Bronze is untouched and
-stays byte-identical, which is what makes it an immutable record, but the tokens belonging to
+immutable, which is what makes it a record, but the tokens belonging to
 that subject can no longer be resolved to a person by anyone, including the operator. The
 personal data is gone in the sense that matters, because what remains is a hash with no
 surviving key material.
