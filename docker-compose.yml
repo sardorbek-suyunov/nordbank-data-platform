@@ -58,7 +58,6 @@ x-airflow-common: &airflow-common
     FRANKFURTER_BASE_URL: ${FRANKFURTER_BASE_URL}
     FRED_API_KEY: ${FRED_API_KEY}
     FRED_SERIES: ${FRED_SERIES}
-    NORDBANK_ENV: ${NORDBANK_ENV}
     # Extraction, from M4. The salt is the key material for identifier tokenisation and can
     # never be rotated without re-tokenising all history (ADR 0005).
     EXTRACT_LAG_MINUTES: ${EXTRACT_LAG_MINUTES}

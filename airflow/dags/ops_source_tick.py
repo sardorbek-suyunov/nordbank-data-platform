@@ -52,7 +52,6 @@ def ops_source_tick() -> None:
     @task
     def advance_one_day(**context) -> dict:
         """Tick the source to this run's logical date, and return what it changed."""
-        import os
         import sys
         from pathlib import Path
 
@@ -81,9 +80,13 @@ def ops_source_tick() -> None:
         requested = logical.date()
 
         settings = _settings_from_connection()
-        profile = load_profile(os.environ.get("NORDBANK_ENV", "dev"))
 
         with connect(settings) as connection:
+            # The profile the source was seeded at, never the container's environment: the
+            # stack's `.env` says nothing about how the source it points at was seeded.
+            with connection.cursor() as cursor:
+                profile = load_profile(state_module.recorded_profile(cursor))
+            connection.rollback()
             report = tick_module.run(connection, requested_date=requested, profile=profile)
             with connection.cursor() as cursor:
                 reconciliation = reconcile_module.reconcile_latest(cursor)
