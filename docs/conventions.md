@@ -119,7 +119,7 @@ test holds this one to it.
 | `_source_file` | relational | the schema-qualified relation read, such as core.accounts |
 | `_source_file` | file | `<inbound bucket>/<object key>` of the delivered file the record came from |
 | `_source_file` | snapshot | `<inbound bucket>/<object key>` of the snapshot's entities file |
-| `_source_file` | api | the endpoint requested, with `<date>` standing for the date the record is for |
+| `_source_file` | api | the URL requested for the date the record is for, query included |
 | `_batch_id` | relational | the batch: entity, the run's logical date, sequence |
 | `_batch_id` | file | the batch: entity, the settlement date the file covers, sequence |
 | `_batch_id` | snapshot | the batch: entity, the publisher's export time, sequence |

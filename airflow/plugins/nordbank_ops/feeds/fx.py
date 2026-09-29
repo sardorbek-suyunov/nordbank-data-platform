@@ -175,6 +175,20 @@ def parse_response(
     return records, [payload] * len(records), drift, None
 
 
+QUERY = {"base": "EUR"}
+
+
+def request_url(base_url: str, requested: dt.date) -> str:
+    """The endpoint for one date, without its query."""
+    return f"{base_url.rstrip('/')}/{requested.isoformat()}"
+
+
+def requested_as(base_url: str, requested: dt.date) -> str:
+    """The URL one date was requested at, query included: a landed rate's `_source_file`."""
+    query = "&".join(f"{key}={value}" for key, value in QUERY.items())
+    return f"{request_url(base_url, requested)}?{query}"
+
+
 def fetch_dates(dates: list[dt.date], contract, *, base_url: str, fetch) -> Fetched:
     """Request every date, and refuse the whole interval if any request fails.
 
@@ -186,9 +200,9 @@ def fetch_dates(dates: list[dt.date], contract, *, base_url: str, fetch) -> Fetc
 
     out = Fetched()
     for requested in dates:
-        url = f"{base_url.rstrip('/')}/{requested.isoformat()}"
+        url = request_url(base_url, requested)
         try:
-            result = fetch(url, params={"base": "EUR"})
+            result = fetch(url, params=QUERY)
         except FetchFailedError as exc:
             last = exc.result.attempts[-1] if exc.result.attempts else None
             out.outcomes.append(

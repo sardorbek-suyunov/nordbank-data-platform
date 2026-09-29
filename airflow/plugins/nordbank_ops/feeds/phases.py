@@ -323,7 +323,9 @@ def fx_extract(unit: dict, context: dict) -> list[dict]:
             batch=_resolved(batch),
             parsed=fetched.parsed,
             tokeniser=Tokeniser.from_environment(),
-            source_file=f"{base_url.rstrip('/')}/<date>?base=EUR",
+            # A rate lands only for the date it was requested for, so the URL of that request
+            # is the record's source.
+            source_file=lambda record: fx.requested_as(base_url, record["rate_date"]),
         )
         if report.status != "failed":
             report.watermark_to = _midnight(dates[-1])

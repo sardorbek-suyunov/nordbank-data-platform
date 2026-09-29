@@ -77,7 +77,7 @@ AUDIT_MEANING: dict[str, dict[str, str]] = {
         RELATIONAL: "the schema-qualified relation read, such as core.accounts",
         "file": "`<inbound bucket>/<object key>` of the delivered file the record came from",
         "snapshot": "`<inbound bucket>/<object key>` of the snapshot's entities file",
-        "api": "the endpoint requested, with `<date>` standing for the date the record is for",
+        "api": "the URL requested for the date the record is for, query included",
     },
     "_batch_id": {
         RELATIONAL: "the batch: entity, the run's logical date, sequence",
