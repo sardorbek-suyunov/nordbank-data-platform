@@ -1,8 +1,9 @@
 # Model inventory
 
 Every object the platform plans to build, with its layer, grain, upstream inputs and the
-business questions it serves. Nothing here exists yet; each row carries the milestone that
-builds it.
+business questions it serves. Each row carries the milestone that builds it. The platform tables
+marked M1 and M4 exist, defined in `infra/warehouse/schema/` and, for the health probe, by the
+warehouse initialiser; nothing in any other section exists yet.
 
 The inventory exists so that the coverage rule in
 [business_questions.md](business_questions.md) can be checked in both directions: no source
@@ -157,12 +158,17 @@ operational marts, which is the exception to gold reading only silver.
 |---|---|---|---|---|
 | `batch_registry` | `ops` | One row per extraction batch | Ingestion DAGs | M4 |
 | `extract_watermark` | `ops` | One row per source system and entity | Ingestion DAGs | M4 |
-| `source_reconciliation` | `ops` | One row per source system, entity and source day | Ingestion DAGs | M4 |
-| `task_failure` | `ops` | One row per failed task instance | `on_failure_callback` | M4 |
+| `source_reconciliation` | `ops` | One row per source system, entity, source day and batch that landed rows of that day | Register step, relational ingestion DAGs | M4 |
+| `source_reconciliation_daily` | `ops` | View: one row per source system, entity and source day, the covering batch's landing against the source's claim | Derived from `source_reconciliation` and `batch_registry` | M4 |
+| `task_failure` | `ops` | One row per failed try of a task instance | `on_failure_callback` | M4 |
+| `ingested_file` | `ops` | One row per distinct delivered content that has landed, keyed on its SHA-256 | Register step, file and snapshot DAGs | M4 |
+| `file_sighting` | `ops` | One row per object discovery saw on a run, with what it concluded | Open step, file and snapshot DAGs | M4 |
+| `feed_request` | `ops` | One row per request an interval feed's batch made | Register step, interval feed DAGs | M4 |
+| `stack_health_probe` | `ops` | One row per component per health-check run | `ops_stack_healthcheck` | M1 |
 | `freshness_sla` | `ops` | One row per source | Configuration, from `quality/` | M7 |
 | `check_results` | `dq` | One row per check run | Quality gates | M7 |
 | `quarantine_log` | `dq` | One row per rejected source record | Ingestion DAGs | M4 |
-| `pii_vault` | `meta` | One row per distinct identifier value, keyed on its token | Extraction tasks | M4 |
+| `pii_vault` | `meta` | One row per distinct identifier value, keyed on its token | Register step, re-reading the values from the source or the delivery | M4 |
 | `contract_version` | `meta` | One row per entity and contract version | Ingestion DAGs | M4 |
 | `schema_drift_log` | `meta` | One row per drift observation | Ingestion DAGs | M4 |
 | `erasure_log` | `meta` | One row per erasure request | `gov_erasure` | M8 |

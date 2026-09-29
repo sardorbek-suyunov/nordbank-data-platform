@@ -476,8 +476,9 @@ Direct identifiers are tokenised on entry to bronze, in the extraction task, bef
 is written to the lake. The token is a keyed hash of the identifier, so the same identifier
 always produces the same token and joins still work. The reversible mapping from token to raw
 value lives in a single vault table in the `meta` schema, which is the only place in the
-platform where a raw identifier exists after ingestion. The vault is written by the
-extraction task and read by nothing that serves reporting.
+platform where a raw identifier exists after ingestion. The vault is written by the register
+step, which reads the raw values again from the source or the delivery rather than carrying them
+from the extract task, and read by nothing that serves reporting.
 
 Erasure of a subject is the deletion of that subject's vault entries. Bronze is untouched and
 immutable, which is what makes it a record, but the tokens belonging to
