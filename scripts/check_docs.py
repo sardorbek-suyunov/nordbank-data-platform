@@ -1,6 +1,6 @@
 """Documentation checks for CI.
 
-Three rules:
+Five rules:
 
 1. Every specification and ADR carries a `Status:` line. Directory READMEs inside `docs/adr` and
    `docs/specs` describe the directory rather than a decision and are exempt.
@@ -8,6 +8,8 @@ Three rules:
 3. The contract bands in `docs/generator_realism.md` agree with `generator/profiles.yml`.
 4. The settlement file and sanctions list parameters in the same document agree with the
    `settlement` and `sanctions_list` sections of `generator/profiles.yml`, for the same reason.
+5. A specification reissued at version 2 or higher follows the reissue protocol in
+   `docs/specs/README.md`: it carries a `Supersedes:` line and a `## Changelog` section.
 
 The third exists because those bands are one fact with two representations, and neither can be
 deleted. Spec 003's invariants and acceptance criteria are written against the bands *as the
@@ -25,6 +27,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 STATUS_DIRS = (ROOT / "docs" / "adr", ROOT / "docs" / "specs")
+SPECS = ROOT / "docs" / "specs"
+VERSION_LINE = re.compile(r"^Version:\s*(?P<number>\d+)\s*$")
 README = ROOT / "README.md"
 PROFILES = ROOT / "generator" / "profiles.yml"
 REALISM = ROOT / "docs" / "generator_realism.md"
@@ -51,6 +55,30 @@ def status_failures() -> list[str]:
             text = path.read_text(encoding="utf-8")
             if not any(line.startswith("Status:") for line in text.splitlines()):
                 failures.append(f"{path.relative_to(ROOT).as_posix()}: no 'Status:' line")
+    return failures
+
+
+def reissue_failures_for(name: str, text: str) -> list[str]:
+    """What a reissued specification is missing, by the reissue protocol."""
+    lines = text.splitlines()
+    versions = [int(m.group("number")) for m in map(VERSION_LINE.match, lines) if m]
+    if not versions or max(versions) < 2:
+        return []
+    failures = []
+    if not any(line.startswith("Supersedes:") for line in lines):
+        failures.append(f"{name}: version {max(versions)} has no 'Supersedes:' line")
+    if not any(line.strip() == "## Changelog" for line in lines):
+        failures.append(f"{name}: version {max(versions)} has no '## Changelog' section")
+    return failures
+
+
+def reissue_failures() -> list[str]:
+    failures = []
+    for path in sorted(SPECS.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        name = path.relative_to(ROOT).as_posix()
+        failures += reissue_failures_for(name, path.read_text(encoding="utf-8"))
     return failures
 
 
@@ -159,7 +187,13 @@ def settlement_failures() -> list[str]:
 
 
 def main() -> int:
-    failures = status_failures() + readme_failures() + band_failures() + settlement_failures()
+    failures = (
+        status_failures()
+        + reissue_failures()
+        + readme_failures()
+        + band_failures()
+        + settlement_failures()
+    )
     for failure in failures:
         print(failure)
 
