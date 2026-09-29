@@ -270,9 +270,14 @@ def test_a_feed_dag_is_unscheduled_and_registers_on_all_done(dag_id) -> None:
 
 @pytest.mark.parametrize("dag_id", FEED_DAGS)
 def test_a_feed_dag_emits_one_asset_per_entity(dag_id) -> None:
-    outlets = _dagbag().dags[dag_id].get_task("register").outlets
-    names = {getattr(outlet, "name", None) for outlet in outlets}
-    assert len(outlets) >= 1
+    from nordbank_ops import assets
+
+    register = _dagbag().dags[dag_id].get_task("register")
+    # One alias, through which the step adds an event per registered batch and nothing else.
+    assert [type(o).__name__ for o in register.outlets] == ["AssetAlias"]
+    assert register.outlets[0].name == assets.alias_name(dag_id)
+    names = assets.emittable(register.doc_md)
+    assert len(names) >= 1
     assert names == FEED_ASSETS[dag_id]
 
 
