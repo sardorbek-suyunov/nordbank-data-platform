@@ -399,3 +399,102 @@ Two things were measured that the rulings did not anticipate.
   `airflow tasks clear` re-ran three of its four tasks on the new version and one on the old;
   the REST clear with `run_on_latest_version` re-ran all four on the new one. `make backfill`
   resumes with the CLI, and `docs/runbook.md` states the procedure after a code fix.
+
+### 2026-09-29 — the rulings on the third run, and one finding
+
+The third run's review was ruled on item by item; each change is its own commit, measured before
+and after, and the fourth acceptance run is taken on the result.
+
+- **Asset events only for registered batches.** Airflow emits an event for every `Asset` declared
+  as a task outlet whenever the task succeeds, and the register step runs on `all_done` and
+  succeeds having registered nothing: in the third run the 2026-08-20 settlement run failed both
+  batches and emitted two events, runs that registered four or six batches emitted two, and
+  cleared re-runs emitted again. The register step now declares one `AssetAlias` per DAG and
+  adds one event per registered batch, carrying its batch id, rows landed and `empty_reason`.
+  Specification 005's DAGs had the same shape; measured on a throwaway stack, an
+  `ingest_core_banking` run whose sixteen batches all failed emitted sixteen events before the
+  change and none after. Criterion 16's "assets emitted per feed" is met as one event per
+  registered batch, and the assets appear in Airflow when their first batch registers rather
+  than when the DAG is parsed; the register task's documentation names them.
+- **Structure before declaration.** Discovery computes a clearing file's structural verdict in
+  the same pass as its checksum, outside the warehouse pool, with the function the extract
+  step's parser calls, so there is one definition of a whole file. A refusal records one
+  primary reason, by precedence: structure, then declaration, then contract. It also reads each
+  object once, where it read each twice.
+- **The sanctions list's `topics` is `sensitive`**, corrected in version 1 of the unmerged
+  contract with a history note rather than bumped: a topic says why a party is listed, and
+  `role.pep` is a statement about a person's political role.
+- **An FX row's `_source_file` is the URL requested for its date**, query included, where it was
+  the endpoint with `<date>` in place of the date.
+- **The backfill resumes through the REST clear with `run_on_latest_version`**, experimental in
+  Airflow 3.3.2, and checks that every task of a cleared run ran on the DAG's latest version.
+  Measured through its own resume path: after a DAG change every task ran on the new version;
+  a CLI clear after a second change left one on the old, and the check refused it. This
+  supersedes the third run's note that `make backfill` resumes with the CLI.
+- **The PII scan's sanctions excuse is scoped and tested**: only under the sanctions source's
+  own prefixes, and only for a value the file delivered for that snapshot carries.
+  `PLANT=1` now plants a list name in a core banking object and a card reference in a snapshot,
+  and requires both caught.
+- **The unpaused `ops_source_tick` failure was not an out-of-order refusal.** Its log says
+  `TickRefusedError: the source was seeded at profile 'ci' and this tick is running as 'dev'`:
+  the Airflow containers took `NORDBANK_ENV=dev` from `.env`. And the tick could not have been
+  refused for its date, because it asked for "the next day"; with the profiles matching, the
+  scheduled run for 2026-09-28 would have advanced a source standing at 2026-09-18 by a day.
+  Two fixes. The DAG is unscheduled and ticks to its logical date, so the state machine's
+  refusal applies; and the tick's profile comes from `platform.simulation_state`, the record of
+  how the source was seeded, with `NORDBANK_ENV` read only when seeding and no longer given to
+  the Airflow containers. Measured before the second fix: nothing else in the containers read
+  the variable — no plugin, feed path, rate, fixture or container-run script — and the delivery
+  generators already read the recorded profile. No ingestion in the third run ran as `dev`.
+
+### 2026-09-29 — the fourth acceptance run, and what it measured
+
+The fourth run is the evidence of record: `make nuke`, a fresh stack from the code above, seed 42
+at the acceptance anchor, every contract committed, the backfill over 2026-07-20 to 2026-09-18.
+It was stopped once at its author's request, during 2026-08-03 after that day's reference data
+had registered and before its core banking run; the stack restarted, and the backfill resumed
+through the REST clear, every task of the cleared run on the latest DAG version, and ended with
+exit 0. The only commit between its start and its resume changed the PII scan's report, which the
+backfill does not run. 3,000 batches: 2,996 registered and 4 explicitly failed, none open;
+`make ingest-integrity` clean. The identity demonstrations were repeated as in the second and
+third runs and changed no registry or file-identity count.
+
+Against the third run, 3 of 38 figures differ, and none is caused by a code change: 29 more
+registered `corebank` batches and 441 more rows read and landed, all from the stop (below).
+The rulings' changes are not among those figures, and each was measured on its own:
+
+| Change | Third run | Fourth run |
+|---|---|---|
+| Asset events, `settlements` and `settlement_totals` | 62 and 62, one per run whose register step succeeded, registered or not | 76 and 76, one per registered batch |
+| Asset events, `entities` | 11, two from no-op runs | 9, one per registered snapshot |
+| Asset events against registered batches, every run | not checked | 2,996 against 2,996; 4 runs registered nothing and emitted nothing; 12 empty batches, 12 events carrying `empty_reason` |
+| The cut-off file's reattempt on 2026-09-03 | declaration conflict | structurally malformed |
+| `opensanctions.entities` version 1 fingerprint | `4815418e…` | `c12a7ac5…`, the only fingerprint that differs |
+| FX `_source_file` | the endpoint with `<date>` | 45 distinct request URLs over 1,305 rows, each naming its row's date |
+| `ops_source_tick` asked for 2026-09-25 and 2026-09-10 | not possible | refused as skipping six days and as replaying a passed day; source unmoved |
+| `NORDBANK_ENV` in the Airflow containers | `dev` | unset |
+
+Everything else the third run reported holds unchanged: 12,120 clearing records read, 12,002
+landed and 118 quarantined individually; 24 injected breaks all detected at their severity and
+amount; 415 of 415 card tokens resolving through both sources; 45 FX dates landed and 16 absent;
+every payload faithful; 6,965 of 6,965 landed names marker names. The PII scan read 3,023
+objects both ways and found no cleartext identifier, and `PLANT=1` caught all three plants. The
+fault demonstration's six scenarios are identical to the third run's but for timings, the parking
+demonstration's five expectations hold, and `make test-offline` passed 558 with no network.
+
+**Finding: a resumed day re-runs reference data that had already registered.** The backfill
+decides a day is complete when all forty-five `corebank` entities are registered for it, and an
+incomplete day re-runs both of its relational DAGs. Stopped after 2026-08-03's reference data
+registered and before its core banking ran, the resume cleared and re-ran the reference run; its
+open step allocated a second batch for each of the 29 reference entities, and each re-read the
+same watermark window as the first, so the 441 rows are the first batch's again. Bronze keeps
+both, since it is append-only by key (ADR 0008), and nothing downstream reads bronze yet, so no
+figure but the three is affected. The third run was stopped after its day's core banking had
+registered and shows none of it. The first run's unexplained 29 extra `corebank` batches against
+the second, recorded at the review, have the same count and probably the same cause; that
+warehouse is gone, so it cannot be checked. Not fixed here: the resume should re-run only the
+DAG whose entities are unregistered, and that is left for a ruling.
+
+**Criterion 16, as ruled:** the feed assets now appear in Airflow when their first batch
+registers. `ingest_macro_series/series` has registered nothing, because no FRED key is set, so it
+has no asset yet; the register task's documentation names it.
