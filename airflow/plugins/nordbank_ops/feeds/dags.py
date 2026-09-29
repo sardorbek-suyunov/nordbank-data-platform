@@ -13,7 +13,8 @@ Every other decision is specification 005's and for the same reasons:
   `default_args`, which would hand the one warehouse slot to every mapped extract task.
 - **`all_done` and a gate.** One unit's failure does not stop the others from registering, and
   the run still fails, through the gate, naming what failed.
-- **One asset per entity**, emitted by the register step.
+- **One asset per entity, one event per registered batch**, emitted by the register step through
+  an alias, so a failed batch emits nothing (`nordbank_ops.assets`).
 """
 
 from __future__ import annotations
@@ -37,12 +38,12 @@ def build_feed_dag(
     doc: str,
     tags: tuple[str, ...],
 ):
-    from airflow.sdk import Asset, dag, task
+    from airflow.sdk import AssetAlias, dag, task
 
-    from nordbank_ops import warehouse
+    from nordbank_ops import assets, warehouse
     from nordbank_ops.feeds import phases
 
-    outlets = [Asset(name=f"{dag_id}/{entity}") for entity in entities]
+    outlets = [AssetAlias(name=assets.alias_name(dag_id))]
 
     @dag(
         dag_id=dag_id,
@@ -108,9 +109,16 @@ def build_feed_dag(
                 raise RuntimeError(message)
             return reports
 
-        @task(pool=warehouse.POOL_NAME, trigger_rule="all_done", outlets=outlets)
+        @task(
+            pool=warehouse.POOL_NAME,
+            trigger_rule="all_done",
+            outlets=outlets,
+            doc_md=assets.described(dag_id, entities),
+        )
         def register(**context) -> dict:
-            return phases.register(context, system, identifier_values)
+            summary = phases.register(context, system, identifier_values)
+            assets.emit(context["outlet_events"], dag_id, entities, summary["registered_batches"])
+            return summary
 
         # The gate takes the open step's allocation as well as the register step's summary. If
         # open failed, nothing was allocated, register has nothing to register, and a gate that

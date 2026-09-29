@@ -33,6 +33,8 @@ from nordbank_ops.register import load_quarantine, record_drift, upsert_vault
 @dataclass
 class FeedRegisterReport:
     registered: list[str] = field(default_factory=list)
+    # One entry per registered batch, which is what the register step emits asset events for.
+    registered_batches: list[dict] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
     vault_rows_added: int = 0
     quarantine_rows_loaded: int = 0
@@ -42,6 +44,7 @@ class FeedRegisterReport:
     def as_dict(self) -> dict:
         return {
             "registered": self.registered,
+            "registered_batches": self.registered_batches,
             "failed": [{"entity": e, "reason": r} for e, r in self.failed],
             "vault_rows_added": self.vault_rows_added,
             "quarantine_rows_loaded": self.quarantine_rows_loaded,
@@ -149,6 +152,14 @@ def register_feed_run(
                     connection, batch["source_system"], entity, watermark_to, batch["batch_id"], now
                 )
             out.registered.append(entity)
+            out.registered_batches.append(
+                {
+                    "batch_id": batch["batch_id"],
+                    "entity": entity,
+                    "rows_landed": entry["rows_landed"],
+                    "empty_reason": entry.get("empty_reason"),
+                }
+            )
 
             delivery = entry.get("delivery")
             if delivery and delivery.get("records_identity"):
