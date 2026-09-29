@@ -12,7 +12,7 @@ import datetime as dt
 
 import pytest
 
-from generator.mutation.state import SimulationState, TickRefusedError, require
+from generator.mutation.state import SimulationState, TickRefusedError, recorded_profile, require
 
 ANCHOR = dt.date(2026, 9, 18)
 
@@ -87,7 +87,16 @@ def test_a_profile_mismatch_is_refused_before_any_date_arithmetic():
         require(cursor_at(ANCHOR), None, profile="ci")
     message = str(error.value)
     assert "seeded at profile 'dev'" in message
-    assert "NORDBANK_ENV=dev" in message
+    assert "recorded" in message
+
+
+def test_the_recorded_profile_is_the_seeded_one():
+    assert recorded_profile(cursor_at(ANCHOR, profile="ci")) == "ci"
+
+
+def test_an_unseeded_source_has_no_recorded_profile():
+    with pytest.raises(TickRefusedError):
+        recorded_profile(FakeCursor(None))
 
 
 def test_the_next_date_crosses_a_month_boundary():

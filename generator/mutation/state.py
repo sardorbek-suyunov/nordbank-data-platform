@@ -74,8 +74,9 @@ def require(cursor: Any, requested: dt.date | None, *, profile: str) -> Simulati
 
     if state.profile != profile:
         raise TickRefusedError(
-            f"the source was seeded at profile {state.profile!r} and this tick is running as "
-            f"{profile!r}. Set NORDBANK_ENV={state.profile} or reseed at {profile!r}."
+            f"the source was seeded at profile {state.profile!r} and this tick was given "
+            f"{profile!r}. A tick's profile is the one the source recorded when it was seeded "
+            f"(`recorded_profile`); reseed at {profile!r} to change it."
         )
 
     if requested is None or requested == state.next_date:
@@ -94,6 +95,22 @@ def require(cursor: Any, requested: dt.date | None, *, profile: str) -> Simulati
         f"There is no implicit catch-up, because each day owes the tick log its own window. "
         f"Use `make tick-to DATE={requested}` to advance one day at a time."
     )
+
+
+def recorded_profile(cursor: Any) -> str:
+    """The profile the source was seeded at, which is the only source of a tick's profile.
+
+    `NORDBANK_ENV` chooses the profile to seed at and nothing else. Measured on 2026-09-28: the
+    Airflow containers carry the stack's `NORDBANK_ENV=dev` from `.env` while the acceptance
+    source is seeded at `ci`, so a tick that read the variable ran as the wrong profile.
+    """
+    state = read(cursor)
+    if state is None:
+        raise TickRefusedError(
+            "the source has no simulation state: it has not been seeded. Run `make seed` "
+            "first, which loads the history and sets the simulated date to the anchor."
+        )
+    return state.profile
 
 
 def reset(

@@ -319,11 +319,14 @@ the constraint the section above states.
 FORCE=1 make nuke && make up && make schema-apply
 NORDBANK_ENV=ci NORDBANK_SEED=42 NORDBANK_ANCHOR_DATE=2026-07-20 make seed
 make warehouse-apply
-NORDBANK_ENV=ci make backfill FROM=2026-07-20 TO=2026-09-18 DEFER_DEMO=2026-07-21
+make backfill FROM=2026-07-20 TO=2026-09-18 DEFER_DEMO=2026-07-21
 ```
 
-`NORDBANK_ENV=ci` matters: the tick refuses to run at a profile other than the one the source
-was seeded at, and the default is `dev`.
+`NORDBANK_ENV` is read only by the targets that seed, `make seed` and `make tick-acceptance`.
+Everything that ticks the source afterwards, from the host or from Airflow, takes the profile the
+source recorded when it was seeded, from `platform.simulation_state`, and the Airflow containers
+are not given the variable at all. Before specification 006's review they read it, and the
+stack's `.env` says `dev` whatever the source was seeded at.
 
 Each day ticks the source, delivers the processor's clearing files and the sanctions publisher's
 list, runs reference data and then core banking, and then the feeds due that day together. The

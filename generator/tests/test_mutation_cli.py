@@ -60,7 +60,3 @@ def test_a_date_and_a_range_together_are_refused_before_anything_connects():
 
 def test_an_unparseable_date_is_refused_before_anything_connects():
     assert main(["--date", "the nineteenth"]) == 1
-
-
-def test_an_unknown_profile_is_refused_before_anything_connects():
-    assert main(["--profile", "enormous"]) == 1

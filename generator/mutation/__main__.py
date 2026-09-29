@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import os
 import sys
 import time
 from pathlib import Path
@@ -54,7 +53,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         prog="python -m generator.mutation",
         description="Advance the simulated source system by one business day.",
     )
-    parser.add_argument("--profile", default=os.environ.get("NORDBANK_ENV", "dev"))
     parser.add_argument("--date", default="", help="the single date to advance to")
     parser.add_argument("--to", default="", help="advance one day at a time up to this date")
     parser.add_argument(
@@ -182,12 +180,6 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
     try:
-        profile = load_profile(args.profile)
-    except ConfigError as error:
-        print(f"tick: {error}", file=sys.stderr)
-        return 1
-
-    try:
         requested = dt.date.fromisoformat(args.date) if args.date else None
         upto = dt.date.fromisoformat(args.to) if args.to else None
     except ValueError as error:
@@ -212,6 +204,14 @@ def main(argv: list[str] | None = None) -> int:
                     "`make seed` first, which loads the history and sets the simulated date "
                     "to the anchor."
                 )
+
+            # The profile the source recorded when it was seeded. `NORDBANK_ENV` chose it then
+            # and is not read again.
+            try:
+                profile = load_profile(state.profile)
+            except ConfigError as error:
+                print(f"tick: {error}", file=sys.stderr)
+                return 1
 
             dates = _dates(state, requested, upto)
             if not dates:
