@@ -43,7 +43,8 @@ What exists and runs today:
   for a delivery is chosen by the day its sender produced it (ADR 0016), with superseded
   versions kept under `history/`.
 - Eight DAGs. `ops_stack_healthcheck` exercises every connection; `ops_source_tick` advances
-  the simulated source and is paused by default. `ingest_reference_data` and
+  the simulated source to its run's logical date, unscheduled and paused by default, with the
+  profile the source recorded when it was seeded. `ingest_reference_data` and
   `ingest_core_banking` extract by watermark; `ingest_card_settlements` waits on file arrival
   with a deferrable sensor; `ingest_fx_rates` and `ingest_macro_series` request intervals;
   `ingest_sanctions_list` lands snapshots. Every ingestion DAG is unscheduled and driven by the
@@ -52,11 +53,11 @@ What exists and runs today:
   kept in `_raw_payload` with its identifiers tokenised, quarantine per record with its reason,
   and a PII scan that searches every bronze and quarantine object, bytes and decoded values,
   for every vault value.
-- 504 unit tests, 38 DAG integrity tests and 84 integration tests; the unit
+- 519 unit tests, 39 DAG integrity tests and 84 integration tests; the unit
   and DAG suites also run with networking disabled (`make test-offline`); two CI workflows.
 - The documentation set: architecture, conventions, business questions, metric definitions,
   data dictionary, model inventory, PII classification, runbook, seven specifications and
-  sixteen decision records.
+  seventeen decision records.
 
 What does not exist yet: silver, gold and the dbt models, the quality framework and its gates,
 the reconciliation mart, freshness monitoring, retention and compaction, the governance work
@@ -203,18 +204,19 @@ Expected timings and results:
 | `make health` | Five components, all `pass`, exit 0 |
 | `make verify-dag` | Four tasks succeed; both warehouse tasks report pool `warehouse_access` |
 | `make schema-apply` | 14 schema files, 5 seed files, 463 classifications; running it twice changes nothing |
-| `make test` | 504 passed |
-| `make test-dags` | 38 passed, with the execution path printed |
+| `make test` | 519 passed |
+| `make test-dags` | 39 passed, with the execution path printed |
 | `make seed` | 166,381 rows at `ci` in 11 s |
 | `make seed-verify` | 14 invariants, all pass, before and after any number of ticks; invariant 9's statistical band is not asserted at `ci` and says so |
 | `make tick` | One business day in about 450 ms at `ci`; refuses an out-of-order or skipped date by naming the one it expected |
 | `make tick-acceptance` | Sixty ticks and the evidence for specification 004; `REPLAY=1` proves replay determinism |
 | `make test-integration` | 84 tests, `schema-check` reports 463 columns agreeing, then `seed-verify`; refuses a loaded warehouse unless `FORCE=1`, because it reseeds the source; runs in CI's `stack` job |
-| `make test-offline` | 542 passed with `--network none`, about 52 seconds |
-| `make backfill FROM=2026-07-20 TO=2026-09-18` | About two hours at `ci` after a fresh seed at the acceptance anchor; the third acceptance run ended with 2,971 batches, 4 of them explicitly failed (the scripted cut-off transmission and its reattempt), none open |
+| `make test-offline` | 558 passed with `--network none`, about 40 seconds |
+| `make backfill FROM=2026-07-20 TO=2026-09-18` | About two hours at `ci` after a fresh seed at the acceptance anchor; the fourth acceptance run ended with 3,000 batches, 4 of them explicitly failed (the scripted cut-off transmission and its reattempt, both as structurally malformed), none open. 29 of the 3,000 are the finding below |
 | `make ingest-integrity` | `clean`, five checks, across every batch |
 | `make feeds-acceptance RUN=name` | One section per criterion and for the review's rulings; the dump searched for vault values finds none |
-| `make bronze-pii-scan` | About 40 seconds; no cleartext identifier in either reading; ten fixture names reported as list content |
+| `make bronze-pii-scan` | About 40 seconds; 3,023 objects, no cleartext identifier in either reading; ten fixture names reported as list content. `PLANT=1` catches a card reference in a clearing file, a list name in a core banking object and a card reference in a snapshot |
+| `make asset-events-check` | Every run's asset events are exactly its registered batches: 2,996 against 2,996 in the fourth run |
 | `make fault-demo` | Six scenarios: each fault recovers and registers, or exhausts and registers nothing |
 | `make parking-demo` | Five expectations, all `holds` |
 
@@ -301,8 +303,17 @@ Other known gaps:
   figure is mostly cache, but it is the service nearest its limit at a moment of reading.
 - **`ops.file_sighting` grows by the whole inbound inventory on every run**, like
   `ops.stack_health_probe`: discovery sights every file in the inbound prefix each day, and a
-  parked file adds a sighting a day for as long as it waits. The third acceptance run recorded
+  parked file adds a sighting a day for as long as it waits. The fourth acceptance run recorded
   2,368 clearing-file sightings of 73 objects. Retention belongs to M7.
+- **A resumed day re-runs reference data that had already registered** (specification 006,
+  amended 2026-09-29). The backfill re-runs both relational DAGs for a day whose forty-five
+  entities are not all registered, so a stop between them re-lands the reference entities as
+  a second batch over the same window: 29 batches and 441 duplicate rows in the fourth run.
+  Left for a ruling.
+- **FRED has never been called with a key.** `FRED_API_KEY` is not set, so the macro series
+  DAG skips with its reason, no keyed response is recorded, and its fixture's shape is verified
+  against the publisher's documented example only. The first live run is the check; its asset
+  appears in Airflow when its first batch registers.
 - **The sanctions contract's shape is compared with the published FollowTheMoney schema by no
   check.** ADR 0015 adopts a metadata-only comparison as the mitigation; it belongs with
   `make feeds-probe` and is not built.
