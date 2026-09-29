@@ -424,9 +424,12 @@ failing. A delivered file or snapshot is identified by the checksum of its conte
 Rerun semantics are precise about what immutability means. A task retry inside a batch that
 has not yet been registered overwrites its own partial output: nothing downstream can see an
 unregistered partition, so replacing it rewrites nothing that anyone has read. Once the batch
-is registered, that partition is final. A rerun after registration extracts again under a new
-batch id and writes a new partition; the earlier partition is not modified, and silver
-deduplicates the overlap on the business key and `updated_at`.
+is registered, that partition is final. A rerun after registration lands nothing: the open step
+skips an entity whose interval already has a registered batch, as a delivered file already
+ingested lands nothing, so a cleared run or a resumed backfill does not re-read a window it has
+registered. A failed batch is not registered, so a day that failed is attempted again under a new
+batch id, and silver deduplicates any overlap on the business key and `updated_at`. Re-extracting
+a registered interval on purpose would need a force flag, which does not exist.
 
 Bronze immutability is therefore a property of registered partitions, not of every file that
 has ever appeared in the bucket.
