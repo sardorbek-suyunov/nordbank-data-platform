@@ -22,10 +22,11 @@ capitalisation_policy = lower
 [sqlfluff:rules:capitalisation.types]
 extended_capitalisation_policy = lower
 
-# dbt is not installed at M0 (see the amendment dated 2026-09-17 in
-# docs/specs/000-repository-foundation.md). These stubs let dbt models lint with the jinja
-# templater and no dbt project. Revisited at M4, when the dbt project exists and the
-# templater switches to dbt.
+# The jinja templater with stubs, not the dbt templater. Revisited at M4 and kept: the dbt
+# templater compiles against a live warehouse and lake, because the bronze read macro asks the
+# batch registry at compile time which entities have landed rows, and the lint job has neither.
+# The generated bronze models and the macros are not linted; scripts/lint_sql.py says what
+# checks them instead.
 [sqlfluff:templater:jinja:macros]
 ref = {% macro ref(model_name) %}{{ model_name }}{% endmacro %}
 source = {% macro source(source_name, table_name) %}{{ source_name }}_{{ table_name }}{% endmacro %}

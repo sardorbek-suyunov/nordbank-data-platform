@@ -8,6 +8,17 @@ between two engines as style defects.
 
 A tree with no SQL reports a skip rather than a pass, so an empty run is not mistaken for a
 clean one.
+
+Two parts of the dbt tree are not linted, and each has a check of its own instead (spec 007):
+
+- the bronze models are generated from the contracts, one call to a macro each, and
+  `make dbt-generate CHECK=1` is their check;
+- the macros are Jinja programs, and the SQL they render is built and tested by
+  `dbt build --warn-error` in the stack and by `make dbt-prove` on planted fixtures.
+
+The dbt templater, which would lint the rendered SQL, compiles against a live warehouse and lake:
+the read macro asks the batch registry at compile time which entities have landed rows, and
+this job has neither. Hand-written dbt SQL, which starts with silver, is linted.
 """
 
 import subprocess
@@ -16,18 +27,23 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TREES = (ROOT / "infra" / "warehouse", ROOT / "dbt")
+NOT_LINTED = (ROOT / "dbt" / "models" / "bronze", ROOT / "dbt" / "macros")
 
 
 def main() -> int:
     targets = []
     for tree in TREES:
-        found = sorted(tree.rglob("*.sql"))
+        found = sorted(
+            path
+            for path in tree.rglob("*.sql")
+            if not any(path.is_relative_to(excluded) for excluded in NOT_LINTED)
+        )
         relative = tree.relative_to(ROOT).as_posix()
         if found:
             print(f"sqlfluff: linting {len(found)} file(s) under {relative}/")
-            targets.append(str(tree))
+            targets.extend(str(path) for path in found)
         else:
-            print(f"sqlfluff skipped: no .sql files under {relative}/")
+            print(f"sqlfluff skipped: no hand-written .sql files under {relative}/")
 
     if not targets:
         return 0
