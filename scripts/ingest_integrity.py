@@ -34,8 +34,17 @@ graceful run should be able to answer the same four questions at any time.
    since nothing writes to the source between a day's extract and its register step; a deployed
    source that is written to all day can. Every identifier column of every contract version is
    read from every registered object and each distinct token looked up.
+7. **Does any entity carry more physical schemas than it has contract versions?** The writer
+   writes each batch in the schema of the contract version it was validated against
+   (`nordbank_ops.physical`), so an entity can have at most one physical schema per version.
+   More means a writer that infers types from values again, which is what produced between two
+   and seven schemas for 13 entities in the fourth acceptance run, and what a reader that does
+   not combine files by name reads wrongly. A schema is the ordered column names and their
+   Arrow types.
 
-Exit code 0 when 1, 2, 4, 5 and 6 are clean, whatever 3 says. Runs inside a container.
+Checks 6 and 7 read every registered object once, in one pass.
+
+Exit code 0 when 1, 2, 4, 5, 6 and 7 are clean, whatever 3 says. Runs inside a container.
 """
 
 from __future__ import annotations
@@ -148,13 +157,14 @@ def main() -> int:
     for batch_id, status, claimed, indexed in disagreeing[:20]:
         print(f"   {batch_id} ({status}): registry {claimed}, quarantine index {indexed}")
 
-    columns = identifier_columns(_contract_chains())
+    chains = _contract_chains()
+    columns = identifier_columns(chains)
     scoped = [
         (system, entity, prefix)
         for system, entity, prefix in registered
         if (system, entity) in columns
     ]
-    tokens = identifier_tokens(client, bucket, scoped, columns)
+    tokens, schemas = scan_objects(client, bucket, registered, columns)
     unresolved = unresolved_tokens(tokens, vault)
     checked = sum(len(found) for found in tokens.values())
     distinct = len(set().union(*tokens.values())) if tokens else 0
@@ -173,6 +183,16 @@ def main() -> int:
     if vacuous:
         print("   read no token from batches that should carry identifiers; not a clean result")
 
+    versions = {key: len(chain) for key, chain in chains.items()}
+    beyond = schemas_beyond_versions(schemas, versions)
+    print(
+        f"\n7. entities with more physical schemas than contract versions: {len(beyond)} of "
+        f"{len(schemas)} entities with objects, over {sum(len(s) for s in schemas.values())} "
+        f"distinct schema(s)"
+    )
+    for (system, entity), (found, allowed) in sorted(beyond.items()):
+        print(f"   {system}.{entity}: {found} physical schema(s), {allowed} contract version(s)")
+
     # An empty registry has no open batch, no missing object and no watermark ahead of
     # anything, so every question above answers "none". That is not a clean registry.
     if not batches:
@@ -186,6 +206,7 @@ def main() -> int:
         and not disagreeing
         and not unresolved
         and not vacuous
+        and not beyond
     )
     print(f"\nintegrity: {'clean' if clean else 'NOT CLEAN'} across {len(batches)} batch(es)")
     return 0 if clean else 1
@@ -225,24 +246,44 @@ def identifier_columns(chains: Mapping[Entity, Iterable]) -> dict[Entity, tuple[
     return out
 
 
-def identifier_tokens(client, bucket: str, batches, columns) -> dict[tuple[str, str, str], set]:
-    """Every distinct non-null value of every identifier column, per entity and column."""
+def scan_objects(client, bucket: str, batches, columns):
+    """One pass over every object of `batches`: identifier tokens, and physical schemas.
+
+    Returns the distinct non-null value of every identifier column per entity and column, and
+    the distinct physical schemas per entity.
+    """
     import pyarrow.parquet as pq
 
-    found: dict[tuple[str, str, str], set] = {}
+    tokens: dict[tuple[str, str, str], set] = {}
+    schemas: dict[Entity, set] = {}
     for system, entity, prefix in batches:
-        wanted = columns[(system, entity)]
+        wanted = columns.get((system, entity), ())
         for key in _keys(client, bucket, prefix):
             body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
             handle = pq.ParquetFile(io.BytesIO(body))
+            schemas.setdefault((system, entity), set()).add(physical_schema(handle.schema_arrow))
             present = [name for name in wanted if name in handle.schema_arrow.names]
             if not present:
                 continue
             table = handle.read(columns=present)
             for name in present:
                 values = {v for v in table.column(name).to_pylist() if v is not None}
-                found.setdefault((system, entity, name), set()).update(values)
-    return found
+                tokens.setdefault((system, entity, name), set()).update(values)
+    return tokens, schemas
+
+
+def physical_schema(schema) -> tuple[tuple[str, str], ...]:
+    """An object's schema as the ordered column names and their Arrow types, metadata ignored."""
+    return tuple((field.name, str(field.type)) for field in schema)
+
+
+def schemas_beyond_versions(schemas: Mapping, versions: Mapping) -> dict:
+    """Entities whose objects carry more distinct schemas than they have contract versions."""
+    return {
+        entity: (len(found), versions.get(entity, 0))
+        for entity, found in schemas.items()
+        if len(found) > versions.get(entity, 0)
+    }
 
 
 def unresolved_tokens(tokens: Mapping, vault: set) -> dict:

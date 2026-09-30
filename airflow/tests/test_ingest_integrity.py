@@ -1,12 +1,19 @@
 """The ingest-integrity checks can fail, on objects written the way the platform writes them."""
 
+import decimal
 import io
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 from data_contract import load_history
-from ingest_integrity import identifier_columns, identifier_tokens, unresolved_tokens
+from ingest_integrity import (
+    identifier_columns,
+    physical_schema,
+    scan_objects,
+    schemas_beyond_versions,
+    unresolved_tokens,
+)
 
 CONTRACTS = Path(__file__).resolve().parents[2] / "contracts"
 PREFIX = "bronze/corebank/customers/ingest_date=2026-07-20/batch_id=customers-20260720T000000-01/"
@@ -56,7 +63,7 @@ def test_a_token_with_no_vault_row_is_reported():
         }
     )
     batches = [("corebank", "customers", PREFIX)]
-    tokens = identifier_tokens(lake, "lake", batches, {("corebank", "customers"): ("email",)})
+    tokens, _ = scan_objects(lake, "lake", batches, {("corebank", "customers"): ("email",)})
     assert sum(len(v) for v in tokens.values()) >= 3
 
     unresolved = unresolved_tokens(tokens, vault={"a" * 32, "b" * 32})
@@ -65,7 +72,7 @@ def test_a_token_with_no_vault_row_is_reported():
 
 def test_every_token_resolving_is_clean_and_nulls_are_not_tokens():
     lake = Lake({PREFIX + "part-0000.parquet": _parquet({"email": ["a" * 32, None]})})
-    tokens = identifier_tokens(
+    tokens, _ = scan_objects(
         lake, "lake", [("corebank", "customers", PREFIX)], {("corebank", "customers"): ("email",)}
     )
     assert tokens == {("corebank", "customers", "email"): {"a" * 32}}
@@ -75,5 +82,36 @@ def test_every_token_resolving_is_clean_and_nulls_are_not_tokens():
 def test_a_column_an_older_object_does_not_carry_is_skipped_rather_than_failing():
     lake = Lake({PREFIX + "part-0000.parquet": _parquet({"email": ["a" * 32]})})
     wanted = {("corebank", "customers"): ("email", "national_identifier")}
-    tokens = identifier_tokens(lake, "lake", [("corebank", "customers", PREFIX)], wanted)
+    tokens, _ = scan_objects(lake, "lake", [("corebank", "customers", PREFIX)], wanted)
     assert set(tokens) == {("corebank", "customers", "email")}
+
+
+def test_two_objects_of_one_version_with_inferred_types_are_two_schemas_and_fail_the_check():
+    # What the writer did before it wrote the contract's schema: the type followed the values.
+    second = PREFIX.replace("-01/", "-02/")
+    lake = Lake(
+        {
+            PREFIX + "part-0000.parquet": _parquet({"amount": [decimal.Decimal("1.2500")]}),
+            second + "part-0000.parquet": _parquet({"amount": [decimal.Decimal("12345.2500")]}),
+        }
+    )
+    batches = [("corebank", "customers", PREFIX), ("corebank", "customers", second)]
+    _, schemas = scan_objects(lake, "lake", batches, {})
+    assert len(schemas[("corebank", "customers")]) == 2
+    assert schemas_beyond_versions(schemas, {("corebank", "customers"): 1}) == {
+        ("corebank", "customers"): (2, 1)
+    }
+
+
+def test_one_schema_per_version_is_clean():
+    lake = Lake({PREFIX + "part-0000.parquet": _parquet({"email": ["a" * 32]})})
+    _, schemas = scan_objects(lake, "lake", [("corebank", "customers", PREFIX)], {})
+    assert schemas_beyond_versions(schemas, {("corebank", "customers"): 1}) == {}
+    body = lake.objects[PREFIX + "part-0000.parquet"]
+    assert physical_schema(pq.read_schema(io.BytesIO(body))) == (("email", "string"),)
+
+
+def test_an_entity_with_objects_and_no_contract_is_beyond_its_zero_versions():
+    lake = Lake({PREFIX + "part-0000.parquet": _parquet({"email": ["a" * 32]})})
+    _, schemas = scan_objects(lake, "lake", [("corebank", "customers", PREFIX)], {})
+    assert schemas_beyond_versions(schemas, {}) == {("corebank", "customers"): (1, 0)}

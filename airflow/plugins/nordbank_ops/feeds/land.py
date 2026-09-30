@@ -25,6 +25,7 @@ from nordbank_ops.extract import (
     quarantine_rows,
     write_parquet,
 )
+from nordbank_ops.physical import bronze_schema, quarantine_schema
 from nordbank_ops.registry import bronze_prefix, quarantine_prefix
 from nordbank_ops.validation import Rejection, project, validate
 
@@ -125,7 +126,6 @@ def land(
     if callable(source_file):
         for row, record in zip(landed, result.landed, strict=True):
             row["_source_file"] = source_file(record)
-    columns = contract.bronze_columns
     key = (
         bronze_prefix(
             contract.source_system, contract.entity, batch["ingest_date"], batch["batch_id"]
@@ -133,7 +133,7 @@ def land(
         + "part-0000.parquet"
     )
     if report.status != "failed":
-        written = write_parquet(client, bucket, key, landed, columns)
+        written = write_parquet(client, bucket, key, landed, bronze_schema(contract))
         if written:
             report.bronze_keys.append(written)
 
@@ -154,7 +154,7 @@ def land(
         )
         + "part-0000.parquet"
     )
-    written = write_parquet(client, bucket, qkey, rows, contract.quarantine_columns)
+    written = write_parquet(client, bucket, qkey, rows, quarantine_schema(contract))
     if written:
         report.quarantine_keys.append(written)
     return report
