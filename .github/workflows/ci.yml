@@ -79,3 +79,8 @@ jobs:
       # DuckDB is pinned once, in the lock; the image installs from files exported from it.
       - name: Check the image's requirement files against the lock
         run: make requirements CHECK=1
+
+      # The bronze models, their properties and the inventory's bronze section are generated
+      # from the contracts and committed; a hand edit or an unregenerated contract fails here.
+      - name: Check the generated bronze models against the contracts
+        run: make dbt-generate CHECK=1
