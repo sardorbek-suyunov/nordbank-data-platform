@@ -148,6 +148,7 @@ def _lake() -> tuple[Any, str]:
 
 
 def _fetcher(conf: dict):
+    from nordbank_ops.feeds import replay
     from nordbank_ops.feeds.fetch import RetryPolicy, fetch
 
     policy = RetryPolicy(
@@ -156,6 +157,11 @@ def _fetcher(conf: dict):
         max_delay=float(conf.get("max_delay", 30.0)),
         timeout=float(conf.get("timeout", 20.0)),
     )
+    # CI serves recorded responses and makes no live call (`nordbank_ops.feeds.replay`).
+    recorded = replay.from_environment()
+    if recorded is not None:
+        print(f"fetch: serving recorded responses from {recorded.directory}, no live call")
+        return functools.partial(fetch, policy=policy, get=recorded)
     return functools.partial(fetch, policy=policy)
 
 

@@ -73,6 +73,24 @@ RECORDINGS: tuple[dict, ...] = (
         "why": "beyond all published data: HTTP 404, absent",
         "contract": ("ecb", "fx_rates"),
     },
+    # The CI window, 2026-07-20 to 2026-07-26 (spec 007): the stack job ingests it through the
+    # real DAGs with no live call, served from these recordings. 07-24 and 07-25 are above.
+    *(
+        {
+            "name": f"fx_2026-07-{day}",
+            "url": f"{FRANKFURTER}/v1/2026-07-{day}",
+            "params": {"base": "EUR"},
+            "why": why,
+            "contract": ("ecb", "fx_rates"),
+        }
+        for day, why in (
+            ("20", "the CI window: a Monday, a publication date"),
+            ("21", "the CI window: a publication date"),
+            ("22", "the CI window: a publication date"),
+            ("23", "the CI window: a publication date"),
+            ("26", "the CI window: a Sunday, answered with Friday's date, lands nothing"),
+        )
+    ),
     {
         "name": "fx_v2_rates",
         "url": f"{FRANKFURTER}/v2/rates",
@@ -108,10 +126,12 @@ def _get(recording: dict):
     return requests.get(recording["url"], params=recording["params"], timeout=30)
 
 
-def record() -> int:
+def record(only: set[str] | None = None) -> int:
     FIXTURES.mkdir(parents=True, exist_ok=True)
     now = dt.datetime.now(dt.UTC).replace(microsecond=0)
     for recording in RECORDINGS:
+        if only and recording["name"] not in only:
+            continue
         response = _get(recording)
         system, entity = recording["contract"]
         contract = load_history(ROOT / "contracts" / system)[entity][-1]
@@ -169,8 +189,9 @@ def probe() -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--record", action="store_true")
+    parser.add_argument("--only", action="append", help="record only this recording; repeatable")
     arguments = parser.parse_args(argv)
-    return record() if arguments.record else probe()
+    return record(set(arguments.only or ())) if arguments.record else probe()
 
 
 if __name__ == "__main__":
