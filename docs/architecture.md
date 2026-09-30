@@ -266,6 +266,19 @@ bronze model filters to batch ids registered as successful in `ops`. Reading the
 without that filter is a defect: the files are there, they look complete, and nothing about
 them says the run that wrote them died.
 
+*The bronze view.* Each bronze model is a dbt view over its entity's lake prefix, generated from
+the contract, and every one reads through one macro, `bronze_read` (ADR 0018). It reads every
+object by column name, because files written under different contract versions, and files
+written before the writer applied the contract's schema, carry different columns and types; it
+casts every column to the contract's type; and it keeps a row only when the `batch_id` in the
+**object key** it was read from is registered. The file's own `_batch_id` column is not the
+filter, because a copy of a registered file under a new key still carries the registered id; a
+test asserts the key and the column agree for every row kept. An entity with no registered batch
+that landed rows builds as a typed empty relation, since a glob that matches nothing cannot be
+read. A view re-lists its prefix on every query, so a new batch is readable without a rebuild;
+`transform_bronze` runs `dbt build` after every registration to test the landing and to rebuild
+a view built empty. A hook fails the build if a model reads the lake any other way.
+
 *Schema drift.* An additive change is accepted: a new source column is noticed, its appearance
 is recorded in `meta` with the batch that introduced it, and it is **not** written to bronze,
 because bronze carries what the contract describes and an unknown column is noticed rather
@@ -391,8 +404,9 @@ bronze model filters to batches registered in `ops`, or it will read the output 
 failed after writing.
 
 The warehouse is a single DuckDB file holding the `bronze`, `silver`, `gold`, `dq`, `ops` and
-`meta` schemas. Bronze tables read from the parquet files; from silver upward the data is
-materialised in DuckDB.
+`meta` schemas. Bronze is views over the parquet files, filtered to registered batches, and holds
+no data of its own; from silver upward the data is materialised in DuckDB. Every read of a
+bronze view lists its prefix and reads each object's footer, which is the cost ADR 0018 measures.
 
 ## Orchestration
 
