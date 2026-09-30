@@ -56,6 +56,9 @@ x-airflow-common: &airflow-common
     CARD_SETTLEMENT_PREFIX: ${CARD_SETTLEMENT_PREFIX}
     SANCTIONS_SNAPSHOT_PREFIX: ${SANCTIONS_SNAPSHOT_PREFIX}
     FRANKFURTER_BASE_URL: ${FRANKFURTER_BASE_URL}
+    # Set only by CI's stack job: the interval feeds answer from these recordings instead of the
+    # network (spec 007). Unset everywhere else, and then the feeds call the publisher.
+    FEED_FIXTURE_DIR: ${FEED_FIXTURE_DIR:-}
     FRED_API_KEY: ${FRED_API_KEY}
     FRED_SERIES: ${FRED_SERIES}
     # Extraction, from M4. The salt is the key material for identifier tokenisation and can
