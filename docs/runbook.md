@@ -404,6 +404,50 @@ writer holds it:
 - `make feeds-probe` — the live APIs against the recorded fixtures; needs the network, and is
   how an upstream change is noticed.
 
+## dbt and the bronze models
+
+Specification 007. dbt runs in its own environment inside the image (`/opt/dbt`), against the
+warehouse file on the named volume, so every dbt command runs inside the scheduler container.
+Nothing here needs dbt on the host except `make dbt-prove`.
+
+| Command | What it does | Where |
+|---|---|---|
+| `make dbt-generate` | Writes the 50 bronze models, their properties, the registry source and the inventory's bronze section from `contracts/`. `CHECK=1` fails on any difference and runs in CI | Host, no stack |
+| `make dbt-build` | `dbt build --select path:models/bronze --warn-error`: creates the views and runs every test | Stack |
+| `make dbt-prove` | Builds a scratch project on planted fixtures and requires every test and rule to fail where planted. Runs dbt on the host, from a temporary directory | Host, no stack; `uv run --group dbt` installs dbt |
+| `make dbt-docs` | `dbt docs generate --static`, copied to `data/dbt-docs/index.html` | Stack |
+| `make bronze-plant ACTION=plant\|verify\|remove` | Plants a copy of a registered object under a new key and an object under an unregistered batch id, and after a build shows neither in the model | Stack |
+
+**After changing a contract**, run `make dbt-generate` and commit the regenerated files with it.
+A model file is never edited by hand; CI fails on one that differs from the generator.
+
+**The views are built, not loaded.** `transform_bronze` runs `dbt build` after every ingestion
+that registers a batch, in the `warehouse_access` pool, so in normal operation nothing needs to be
+run by hand. A view reads new batches without a rebuild; the rebuild is what turns an entity's
+typed empty view into a real one once its first rows land, and what tests each landing. If
+`transform_bronze` fails, a test found the data wrong: its log names the model and the test, and
+the failing test's compiled SQL is under `/tmp/dbt/target/compiled` in the scheduler.
+
+**Querying a bronze view outside dbt** needs `httpfs` and the lake's credentials in the
+connection, not only the warehouse file: `load httpfs` from `DUCKDB_EXTENSION_DIRECTORY`, and a
+temporary S3 secret from the `nordbank_lake` connection. `scripts/bronze_plant.py` shows the
+pattern. Nothing downloads an extension: automatic install is off.
+
+**dbt on the host reads `.env`.** dbt 1.12 loads the first `.env` it finds above its working
+directory, the repository's included. `make dbt-prove` runs from a temporary directory for that
+reason; run any other host dbt command from outside the repository.
+
+**CI's feeds answer from recordings.** The `stack` job sets `FEED_FIXTURE_DIR` to the recorded
+responses and points `FRANKFURTER_BASE_URL` at an unroutable address, so the FX feed makes no
+live call and a request with no recording fails its batch. To add a date to the window, record
+it with `make feeds-probe RECORD=1` after adding it to `scripts/feeds_probe.py`'s recordings
+(`--only` records one without re-recording the rest).
+
+**The published documentation** is the `dbt docs generate --static` site, deployed to GitHub
+Pages from `main` by the `stack` workflow's deploy job, after `scripts/docs_scan.py` has searched
+it for every secret in the environment and every vault value. Every column shows its
+classification in its description. The site describes the models as of the last push to `main`.
+
 ## Escalation
 
 Populated at M7, together with the data quality gates and the ops observability model.
