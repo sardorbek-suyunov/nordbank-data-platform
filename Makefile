@@ -2,7 +2,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe fault-demo parking-demo up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance feeds-acceptance ingest-integrity asset-events-check seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list requirements dbt-build dbt-docs dq clean
+.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe fault-demo parking-demo up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance feeds-acceptance ingest-integrity asset-events-check seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list requirements dbt-generate dbt-build dbt-docs dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -172,6 +172,13 @@ ifeq ($(CHECK),1)
 	uv run python scripts/requirements_export.py --check
 else
 	uv run python scripts/requirements_export.py
+endif
+
+dbt-generate: ## Generate the bronze models and the inventory's bronze section from the contracts (CHECK=1 fails on a difference)
+ifeq ($(CHECK),1)
+	uv run python scripts/dbt_generate.py --check
+else
+	uv run python scripts/dbt_generate.py
 endif
 
 dbt-build: ## Build and test the bronze models inside the stack (dbt build --warn-error)
