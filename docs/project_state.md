@@ -158,6 +158,7 @@ its area.
 | [0015](adr/0015-synthetic-sanctions-list.md) | Accepted, consequence added | The sanctions list is the real feed's shape with synthetic content |
 | [0016](adr/0016-contract-of-the-delivery.md) | Accepted | The contract in force is chosen by when the sender produced the delivery; a delivery refused with a verdict is parked |
 | [0017](adr/0017-mirrored-minio-server.md) | Accepted | The MinIO server from an unmodified mirror pinned by the upstream digest; bucket provisioning with boto3, and no `mc` image |
+| [0018](adr/0018-bronze-as-registry-filtered-views.md) | Accepted | Bronze is a generated view per entity over the lake, read by column name and cast to the contract, keeping only rows whose object key's batch is registered |
 
 Milestone checkpoints are in [checkpoints/](checkpoints/), one per completed milestone.
 
