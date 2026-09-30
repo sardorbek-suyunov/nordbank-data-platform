@@ -21,7 +21,8 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
     arguments = parser.parse_args(argv)
-    with warehouse.connect(read_only=True) as connection:
+    # The loop reads between runs, when transform_bronze may be mid-build (warehouse.LONG_WAIT).
+    with warehouse.connect(read_only=True, **warehouse.LONG_WAIT) as connection:
         rows = connection.execute(
             """
             select source_system, entity, batch_id, status, failure_reason, rows_read,

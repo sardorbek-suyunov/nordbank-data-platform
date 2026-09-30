@@ -20,6 +20,12 @@ nordbank:
       path: "{{ env_var('DUCKDB_PATH') }}"
       schema: main
       threads: 4
+      # A process outside Airflow, such as the backfill loop reading the registry between runs,
+      # can hold the file for a moment when dbt starts; the pool does not govern it. DuckDB's
+      # lock error is an IOException, and dbt-duckdb waits 1, 2, 4, 8 and 16 seconds for it.
+      retries:
+        connect_attempts: 6
+        retryable_exceptions: [IOException]
       extensions:
         - httpfs
       settings:

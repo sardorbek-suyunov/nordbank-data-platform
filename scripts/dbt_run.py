@@ -24,7 +24,7 @@ def main(argv: list[str]) -> int:
         print("dbt-run: name a dbt command, such as `build --select path:models/bronze`")
         return 2
     # Waits for any holder of the file to finish, then releases it for dbt to open.
-    with warehouse.connect(read_only=True, attempts=20, base_delay=1.0):
+    with warehouse.connect(read_only=True, **warehouse.LONG_WAIT):
         pass
     return transform.run(argv)
 
