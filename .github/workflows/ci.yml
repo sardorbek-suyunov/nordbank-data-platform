@@ -38,6 +38,11 @@ jobs:
       - name: Unit tests
         run: make test
 
+      # Every bronze test and structural rule is shown failing on a planted fixture. Needs dbt
+      # and DuckDB only, so it runs here rather than in the stack.
+      - name: Prove the bronze tests and rules can fail
+        run: make dbt-prove
+
   dags:
     name: dags
     runs-on: ubuntu-latest
