@@ -188,11 +188,14 @@ dbt-build: ## Build and test the bronze models inside the stack (dbt build --war
 	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/dbt_run.py build --select path:models/bronze --warn-error
 
 docs-scan: ## Scan data/dbt-docs for every environment secret and vault value (PLANT=1 proves it can fail)
+	@# docker cp creates root-owned files, which the airflow user cannot delete from the sticky
+	@# /tmp; the copy of .env must not outlive the scan, so root removes it, before and after.
+	docker compose exec -T -u root airflow-scheduler rm -rf /tmp/docs-scan
 	docker compose exec -T airflow-scheduler mkdir -p /tmp/docs-scan
 	docker compose cp data/dbt-docs airflow-scheduler:/tmp/docs-scan/site
 	docker compose cp .env airflow-scheduler:/tmp/docs-scan/env
 	docker compose cp .env.example airflow-scheduler:/tmp/docs-scan/template
-	docker compose exec -T airflow-scheduler bash -c "python /opt/airflow/scripts/docs_scan.py /tmp/docs-scan/site /tmp/docs-scan/env /tmp/docs-scan/template $(if $(PLANT),--plant,); status=\$$?; rm -rf /tmp/docs-scan; exit \$$status"
+	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/docs_scan.py /tmp/docs-scan/site /tmp/docs-scan/env /tmp/docs-scan/template $(if $(PLANT),--plant,); status=$$?; docker compose exec -T -u root airflow-scheduler rm -rf /tmp/docs-scan; docker compose exec -T airflow-scheduler test ! -e /tmp/docs-scan/env || { echo "docs-scan: the copy of .env was not removed" >&2; exit 1; }; exit $$status
 
 bronze-plant: ## Plant unregistered objects, verify the bronze model keeps them out, or remove them (ACTION=plant|verify|remove)
 	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/bronze_plant.py $(ACTION)
