@@ -75,3 +75,7 @@ jobs:
 
       - name: Check the contracts against the data dictionary
         run: make contracts-diff CHECK=1
+
+      # DuckDB is pinned once, in the lock; the image installs from files exported from it.
+      - name: Check the image's requirement files against the lock
+        run: make requirements CHECK=1

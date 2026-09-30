@@ -19,7 +19,7 @@ dev = [
     "sqlfluff>=4.3.0",
     "pytest>=9.1.1",
     "pre-commit>=4.6.2",
-    "duckdb==1.5.5",
+    {include-group = "warehouse"},
     # duckdb's Python API needs pytz to bind a timezone-aware datetime to a timestamptz
     # column, and every timestamp in this platform is timezone-aware (conventions.md). The
     # Airflow image already carries it, so this is the host half of a dependency the container
@@ -35,6 +35,23 @@ dev = [
     # here for the same reason as the two above: `make test` exercises the retry policy against
     # recorded responses on the host, with no network and no stack.
     "requests>=2.32",
+]
+# DuckDB is pinned here and nowhere else (spec 007). The Airflow image installs it from a file
+# exported from the lock, and so does dbt's environment in the image; `make requirements CHECK=1`
+# fails in CI if an export disagrees with the lock. One pin matters beyond tidiness: a DuckDB
+# extension is built for one DuckDB version and installed under a directory named for it, so an
+# extension installed at image build by one version is invisible to another, which would then
+# try to download it.
+warehouse = [
+    "duckdb==1.5.5",
+]
+# dbt runs in its own virtual environment in the image, installed from this group's export:
+# measured, dbt-core 1.12.5 needs pathspec<1.1 and Airflow 3.3.2's constraints pin pathspec 1.1.1,
+# so the two do not resolve into one environment.
+dbt = [
+    "dbt-core==1.12.5",
+    "dbt-duckdb==1.11.0",
+    {include-group = "warehouse"},
 ]
 # Airflow is a separate group: it does not import on every host this project is developed on,
 # so `uv sync` must not put a broken installation in the default environment. CI installs it
