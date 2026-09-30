@@ -265,3 +265,115 @@ cursor. Compaction and retention. The BigQuery target.
   review.
 
 ## Amendments
+
+Appended during implementation. The scope text above is left as issued; the protocol is in
+`docs/specs/README.md`.
+
+### 2026-09-30 — T11, measured live before anything else
+
+Airflow's XCom table, a data-only dump of its whole metadata database and every task log on the
+fourth acceptance run's stack were searched for every vault value with the PII scan's matcher:
+43,950 XCom rows, 17.7 MB and 3,916 files, no hit in any, and a value planted in an XCom-shaped
+value and in a log line was caught. The code says why: register re-reads identifier values from
+the source or the checksum-verified delivery, and XCom carries batch ids, keys, checksums, counts
+and dates. The vault completeness check that followed (section 1) reports 0 unresolved of 20,015
+distinct tokens on that run.
+
+### 2026-09-30 — what the build needed that section 1 to 9 did not say
+
+- **The writer's `json` columns are JSON text in the Arrow JSON type**, the Parquet JSON logical
+  type DuckDB reads as `JSON`: a column's physical type has to be one type whatever the value's
+  shape. `feeds_acceptance.py` decodes it. Quarantine objects are written in an explicit schema
+  too, because the writer has one path.
+- **Every model carries two more platform columns**, `_object_batch_id` and
+  `_object_ingest_date`: the key the filter reads, and what the Hive-key test compares.
+- **`_raw_payload` takes the most protective class among the columns it carries**, and the token
+  test is not attached to it.
+- **A feed column's description is generated from its contract** — the source of truth, where in
+  the delivery it comes from, and its class. The feed contracts carry no column descriptions, and
+  adding them would change files warehouses have recorded. A `core` or `ref` column takes the
+  data dictionary's.
+- **A column no object carries yet is selected as a typed null**, decided at build, like the
+  empty entity; ADR 0018 records it as the second case of a view built stale.
+- **`not_null` is the project's own macro** over a list of columns, so every generic test is in
+  `dbt/macros/` as section 5 asks.
+- **The inventory's consumer for `br_cardnet__settlement_totals`** is a planned silver model,
+  `sl_card_settlement_totals`, serving Q15, added to the silver table: silver is one model per
+  source entity, and the mart reads silver.
+- **The runner is `nordbank_ops/transform.py`**, not `dbt.py`: Airflow's plugin loader registers
+  every plugin file under its bare name, so `dbt.py` would have become `sys.modules['dbt']`. A test
+  now refuses a plugin module named like a package the platform imports.
+- **`make ingest-integrity`'s sixth check also fails when it reads no token** from batches that
+  should carry identifiers: a check that read nothing proves nothing.
+- **`make dbt-prove` runs in the lint job**, natively: it needs dbt and DuckDB, not the stack.
+- **`FEED_FIXTURE_DIR` serves any interval feed**, and `make feeds-probe` takes `--only`.
+
+### 2026-09-30 — dbt 1.12 reads `.env`
+
+dbt 1.12 loads the first `.env` above its working directory on import (`find_dotenv` with
+`usecwd`). On the host it read the repository's, whose M0 placeholder `DBT_TARGET=duckdb` named a
+target the profile does not have. The three stale `DBT_` entries are gone from the template;
+`make dbt-prove` runs from a temporary directory; the runbook says to run any other host dbt
+command from outside the repository. Inside the stack no `.env` lies above the project.
+
+### 2026-09-30 — the SQL lint does not lint generated models or macros
+
+`.sqlfluff` said the templater would switch to dbt at M4. It does not: the dbt templater compiles
+against a live warehouse and lake, because the read macro asks the registry at compile time which
+entities have landed rows, and the lint job has neither. The generated models are checked by
+`make dbt-generate CHECK=1`, and the macros' rendered SQL by `dbt build --warn-error` and
+`make dbt-prove`. Hand-written dbt SQL, from silver on, is linted.
+
+### 2026-09-30 — the stack job's first ingestion, and what it changed
+
+- **The generator's integration tests still seeded at 2026-09-18** and failed against the
+  manifest regenerated at the acceptance anchor, and the invariant run read the job's anchor
+  against the wrong book. Both modules take the anchor from the drift timeline now.
+- **`transform_bronze` and the loop's registry reads collided.** A build triggered by the day's
+  reference data held the warehouse file while the loop, reading the registry from inside the
+  scheduler, gave up after the default 7.5 seconds of backoff: the pool governs only Airflow.
+  The loop's reads now poll every two seconds for up to ten minutes, and dbt retries its own
+  connection on DuckDB's lock error.
+- **The scan's copy of `.env` outlived the scan.** `docker cp` creates root-owned files the
+  airflow user cannot delete from `/tmp`; root removes the copy now, and the recipe fails if it
+  survives.
+- **The job took 28 minutes 38 seconds of its 30**, the week 1,370 seconds, 195 a day, so the
+  loop moved from `docker compose exec` to the REST helper, as ruled. Through the REST helper the week took 878 seconds, 125 a day, and the job 20 minutes 25 seconds.
+
+### 2026-09-30 — the evidence stack was stopped while this was built
+
+The fourth acceptance run's stack mounts the working tree, so its DAG processor would have parsed
+the branch's DAGs. It was stopped with its volumes kept after the T11 scan and read-only
+measurements; nothing in it was written.
+
+### 2026-09-30 — section 7's rule, applied: bronze is built once at the end of a backfill
+
+Measured on a throwaway stack seeded at the acceptance anchor, both runs on the same commit with
+the REST loop, over 2026-07-20 to 2026-09-18:
+
+| | `transform_bronze` active | paused |
+|---|---|---|
+| Wall time | 4,649 s, 76 s a day | 3,600 s, 59 s a day |
+| Ingestion runs that registered batches | 253 | 253 |
+| Builds | 243, all successful, 10 coalesced | none |
+| A build | median 9.2 s, at most 12.1 s, 38 minutes in all | |
+| Pooled ingestion tasks' wait for the slot | median 1.9 s, 23.9 minutes in all | |
+
+The slowdown is 29.1 per cent, over the 15 per cent the rule allows, so the backfill pauses
+`transform_bronze` while it runs, unpauses it whatever happens, triggers one build with no logical
+date, and reports the window complete when that build has succeeded; one build of the whole
+history took 31 seconds. Daily operation keeps the schedule. The active run is also the evidence
+that the schedule fires: before it, a build on the empty warehouse made fifty typed empty views;
+after the first day's registrations, `transform_bronze` rebuilt the forty-nine whose entities had
+landed rows to read the lake, and FRED stayed empty. The stack job now builds once at the end of
+its week, so the firing of the schedule is shown by the local run and the DAG tests, not by CI.
+
+### 2026-09-30 — a finding this did not fix
+
+Re-invoking `make backfill` over a range that contains a day with a parked delivery fails. On
+2026-08-20 the settlement run ended `failed`, correctly, because its delivery was parked; the loop
+therefore treats the day as incomplete, tries to re-run it, and the tick guard refuses, the
+simulation being past it. Specification 005 criterion 20's "re-invoking it over an
+already-completed range changes nothing" holds for ranges without a parked day. It predates this
+specification; the resolution, a day complete when every failed feed batch is a parked one,
+belongs with the loop's owner.
