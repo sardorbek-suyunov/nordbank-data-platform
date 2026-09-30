@@ -262,10 +262,16 @@ Deferred work, with the milestone that owns it:
 
 Found at specification 007 and not fixed there:
 
-- **Re-invoking `make backfill` over a range with a parked delivery fails.** The day's settlement
-  run is `failed`, correctly, so the loop re-runs the day and the tick guard refuses. A day should
-  count as complete when every failed feed batch is a parked one. Specification 007's amendments
-  record it.
+- **Re-invoking `make backfill` over a range with a parked delivery fails. Open, and the next
+  work: `fix/M4-backfill-resume`.** The day's settlement run is `failed`, correctly, so the loop
+  re-runs the day and the tick guard refuses. Specification 007's amendments record it. Ruled,
+  for the fix:
+  - a day's completeness comes from the registry, and a day whose only failure is a parked
+    delivery counts as complete;
+  - the loop never re-ticks a past day;
+  - the pause step restores the pause state `transform_bronze` had before the loop, rather than
+    unpausing it. Today's code already leaves a DAG that was paused before the loop paused, and
+    unpauses only what it paused; the fix records the prior state and restores it explicitly.
 - **A bronze view built empty is stale until the next build.** FRED's is, until a keyed run
   registers (ADR 0018).
 - **Every bronze read lists its prefix and reads every footer.** 2.46 seconds over 2,968 objects at
