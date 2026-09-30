@@ -17,6 +17,13 @@ clean-targets: [target, logs]
 flags:
   send_anonymous_usage_stats: false
 
+# Two structural rules checked before anything runs, so a violation fails the build rather
+# than a review (macros/bronze_guard.sql): a bronze model reads the lake only through the
+# registered-batch macro, and no test stores its failures. The hook renders no SQL and holds
+# no credential.
+on-run-start:
+  - "{{ bronze_guard() }}"
+
 models:
   nordbank:
     bronze:
