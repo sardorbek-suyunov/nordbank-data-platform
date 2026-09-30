@@ -11,10 +11,10 @@ gold layer.
 
 ## Current state
 
-**M0, M1, M2 and M3 are complete. M4, ingestion into bronze, is in progress:** specification 005
-(extraction and bronze landing) is merged, and specification 006 (the external feeds) is
-implemented on `feat/M4-external-feeds` and under review. Specification 007 closes M4, and the
-M4 checkpoint is written then.
+**M0 to M4 are complete.** M4, ingestion into bronze, was three specifications: 005 (extraction
+and bronze landing) and 006 (the external feeds), merged, and 007 (the dbt project and bronze
+models), delivered on `feat/M4-dbt-bronze`. The M4 checkpoint is
+[checkpoints/M4-summary.md](checkpoints/M4-summary.md).
 
 What exists and runs today:
 
@@ -42,7 +42,14 @@ What exists and runs today:
   and authored ones for the four feeds, each naming its source of truth. The contract in force
   for a delivery is chosen by the day its sender produced it (ADR 0016), with superseded
   versions kept under `history/`.
-- Eight DAGs. `ops_stack_healthcheck` exercises every connection; `ops_source_tick` advances
+- A dbt project with one target, run as a subprocess from its own environment in the image, and
+  fifty bronze models generated from the contracts: each a view over its lake prefix that reads
+  by column name, casts to the contract and keeps only rows whose object key's batch is
+  registered (ADR 0018), with grain, reconciliation, token, object-key and audit tests that
+  `make dbt-prove` shows failing on planted fixtures. `transform_bronze` builds and tests bronze
+  after every registration; a backfill builds it once at the end. The documentation site is
+  published to GitHub Pages from `main` after a scan for every secret and vault value.
+- Nine DAGs. `ops_stack_healthcheck` exercises every connection; `ops_source_tick` advances
   the simulated source to its run's logical date, unscheduled and paused by default, with the
   profile the source recorded when it was seeded. `ingest_reference_data` and
   `ingest_core_banking` extract by watermark; `ingest_card_settlements` waits on file arrival
@@ -53,13 +60,15 @@ What exists and runs today:
   kept in `_raw_payload` with its identifiers tokenised, quarantine per record with its reason,
   and a PII scan that searches every bronze and quarantine object, bytes and decoded values,
   for every vault value.
-- 519 unit tests, 39 DAG integrity tests and 84 integration tests; the unit
-  and DAG suites also run with networking disabled (`make test-offline`); two CI workflows.
+- 569 unit tests, 41 DAG integrity tests and 84 integration tests; the unit
+  and DAG suites also run with networking disabled (`make test-offline`); two CI workflows, the
+  `stack` job seeding at the acceptance anchor, ingesting a week through the real DAGs with no
+  live external call and building bronze.
 - The documentation set: architecture, conventions, business questions, metric definitions,
-  data dictionary, model inventory, PII classification, runbook, seven specifications and
-  seventeen decision records.
+  data dictionary, model inventory, PII classification, runbook, eight specifications and
+  eighteen decision records.
 
-What does not exist yet: silver, gold and the dbt models, the quality framework and its gates,
+What does not exist yet: silver, gold, the quality framework and its gates,
 the reconciliation mart, freshness monitoring, retention and compaction, the governance work
 (lineage, the erasure DAG, access roles), Power BI, Streamlit, Terraform and the BigQuery
 target.
@@ -96,10 +105,10 @@ These are properties of the machine this was built and validated on, not of the 
 |---|---|---|
 | `docs/` | Every document in the project: specifications, decision records, conventions, checkpoints | Authoritative for intent, design and decisions |
 | `airflow/` | DAGs, plugins, orchestration and unit tests | Authoritative for orchestration and for the shared operational code in `plugins/nordbank_ops/` |
-| `dbt/` | Model tree, snapshots, macros, tests, seeds | Will be authoritative for transformation from M4; currently structure only |
+| `dbt/` | The dbt project: the generated bronze models, the read macro and the generic tests | Authoritative for transformation; the bronze models are generated from `contracts/` and never edited by hand |
 | `generator/` | Synthetic core banking source system and its mutation engine | Authoritative for source data and for how it changes |
 | `infra/` | `docker/` build contexts and init scripts, `terraform/` for the cloud sandbox | Authoritative for how services are built and provisioned |
-| `contracts/` | Per-source data contracts and drift behaviour | Will be authoritative for what bronze accepts, from M4 |
+| `contracts/` | Per-source data contracts and drift behaviour | Authoritative for what bronze accepts and carries: its columns, types, keys and classifications |
 | `quality/` | Check definitions, severities, freshness SLAs | Will be authoritative for data quality from M7 |
 | `analytics/` | Streamlit application | Will be authoritative for the public deployment from M9 |
 | `scripts/` | Scripts invoked by the Makefile, by CI and by hand | Authoritative for operational tooling; any make recipe over three lines lives here |
@@ -137,7 +146,7 @@ its area.
 | [004](specs/004-mutation-engine.md) | Approved, implemented, amended | The mutation engine: the simulation clock, the tick state machine, seven change classes, the tick log as a reconciliation control, and scripted schema drift |
 | [005](specs/005-extraction-and-bronze-landing.md) | Approved, implemented, amended | Extraction and bronze landing: watermark extraction, the batch registry, contracts bootstrapped from the dictionary, quarantine, tokenisation at extraction, schema drift and the interleaved backfill |
 | [006](specs/006-external-feeds.md) | Approved version 2, implemented, amended | The four external feeds: snapshot, file-arrival and interval modes, file identity by checksum, contract selection, payload fidelity, the simulated processor and publisher, and recorded fixtures |
-| [007](specs/007-dbt-bronze-models.md) | Approved version 2 | The dbt project and bronze models: registry-filtered views over the lake, generated from the contracts, a `ci` ingestion and dbt build in CI, and the documentation on GitHub Pages |
+| [007](specs/007-dbt-bronze-models.md) | Approved version 2, implemented, amended | The dbt project and bronze models: registry-filtered views over the lake, generated from the contracts, a `ci` ingestion and dbt build in CI, and the documentation on GitHub Pages |
 
 | Record | Status | Decision |
 |---|---|---|
@@ -194,6 +203,13 @@ make bronze-pii-scan     # every bronze and quarantine object, bytes and decoded
 make fault-demo          # retry and no partial registration against injected faults
 make parking-demo        # a refused delivery parked, then released by a contract bump
 make feeds-probe         # the live APIs against the recorded fixtures (network)
+make dbt-generate        # the bronze models and the inventory's section; CHECK=1 compares
+make dbt-prove           # every bronze test and rule failing on planted fixtures, no stack
+make dbt-build           # dbt build --warn-error over bronze, inside the stack
+make dbt-docs            # the static documentation site, to data/dbt-docs/
+make docs-scan           # the site against every secret and vault value; PLANT=1 proves it
+make bronze-plant ACTION=plant|verify|remove  # objects the registry never registered
+make requirements        # the image's requirement files from the lock; CHECK=1 compares
 ```
 
 Expected timings and results:
@@ -206,16 +222,19 @@ Expected timings and results:
 | `make health` | Five components, all `pass`, exit 0 |
 | `make verify-dag` | Four tasks succeed; both warehouse tasks report pool `warehouse_access` |
 | `make schema-apply` | 14 schema files, 5 seed files, 463 classifications; running it twice changes nothing |
-| `make test` | 519 passed |
-| `make test-dags` | 39 passed, with the execution path printed |
+| `make test` | 569 passed, 2 skipped (they run in the image) |
+| `make test-dags` | 41 passed, with the execution path printed |
 | `make seed` | 166,381 rows at `ci` in 11 s |
 | `make seed-verify` | 14 invariants, all pass, before and after any number of ticks; invariant 9's statistical band is not asserted at `ci` and says so |
 | `make tick` | One business day in about 450 ms at `ci`; refuses an out-of-order or skipped date by naming the one it expected |
 | `make tick-acceptance` | Sixty ticks and the evidence for specification 004; `REPLAY=1` proves replay determinism |
 | `make test-integration` | 84 tests, `schema-check` reports 463 columns agreeing, then `seed-verify`; refuses a loaded warehouse unless `FORCE=1`, because it reseeds the source; runs in CI's `stack` job |
-| `make test-offline` | 558 passed with `--network none`, about 40 seconds |
-| `make backfill FROM=2026-07-20 TO=2026-09-18` | About two hours at `ci` after a fresh seed at the acceptance anchor; the fourth acceptance run ended with 3,000 batches, 4 of them explicitly failed (the scripted cut-off transmission and its reattempt, both as structurally malformed), none open. 29 of the 3,000 are reference batches duplicated by a resume, before the fix below |
-| `make ingest-integrity` | `clean`, five checks, across every batch |
+| `make test-offline` | 612 passed with `--network none`, about 70 seconds; httpfs loads from the build-time install |
+| `make backfill FROM=2026-07-20 TO=2026-09-18` | About an hour at `ci` after a fresh seed at the acceptance anchor, 59 seconds a day, then one bronze build of the whole history in about 30 seconds. Specification 007's runs ended with 2,971 batches, 4 explicitly failed (the scripted cut-off transmission and its reattempt), none open. The fourth acceptance run, before the registry fix below, had 3,000 |
+| `make ingest-integrity` | `clean`, seven checks, across every batch: every identifier token resolves in the vault, and no entity has more physical schemas than contract versions |
+| `make dbt-build` | 50 views and 267 tests, 318 passing with `--warn-error` and no warning, in 10 to 20 seconds at `ci` |
+| `make dbt-prove` | About 18 seconds; every test and rule fails on its planted fixture and passes elsewhere |
+| `make docs-scan` | No secret and no vault value; the site shows 811 of 811 classifications. `PLANT=1` catches a planted secret and vault value |
 | `make feeds-acceptance RUN=name` | One section per criterion and for the review's rulings; the dump searched for vault values finds none |
 | `make bronze-pii-scan` | About 40 seconds; 3,023 objects, no cleartext identifier in either reading; ten fixture names reported as list content. `PLANT=1` catches a card reference in a clearing file, a list name in a core banking object and a card reference in a snapshot |
 | `make asset-events-check` | Every run's asset events are exactly its registered batches: 2,996 against 2,996 in the fourth run |
@@ -233,7 +252,6 @@ Deferred work, with the milestone that owns it:
 
 | Deferred | Owner |
 |---|---|
-| dbt project and bronze models (specification 007) | M4 |
 | Silver conformance, SCD2, quasi-identifier generalisation | M5 |
 | Gold dimensional model and the marts | M6 |
 | Quality gates, reconciliation, orphan-object reaper, retention, ops observability | M7 |
@@ -241,6 +259,20 @@ Deferred work, with the milestone that owns it:
 | Power BI, Streamlit, the `exports/` snapshot task | M9 |
 | BigQuery target, Terraform | M10 |
 | Replace the frozen MinIO mirror with a maintained S3-compatible server (ADR 0017) | M10 |
+
+Found at specification 007 and not fixed there:
+
+- **Re-invoking `make backfill` over a range with a parked delivery fails.** The day's settlement
+  run is `failed`, correctly, so the loop re-runs the day and the tick guard refuses. A day should
+  count as complete when every failed feed batch is a parked one. Specification 007's amendments
+  record it.
+- **A bronze view built empty is stale until the next build.** FRED's is, until a keyed run
+  registers (ADR 0018).
+- **Every bronze read lists its prefix and reads every footer.** 2.46 seconds over 2,968 objects at
+  `ci`; compaction, M7's, is what bounds it at `full`.
+- **The `stack` job takes about fifteen minutes of its thirty**, 14 minutes 32 seconds measured.
+  The loop drives Airflow through its REST API and builds bronze once, which took it from 28
+  minutes 38 seconds; the window is fixed by coverage and is not shortened.
 
 Resolved at specification 006's final review:
 
@@ -341,9 +373,13 @@ Other known gaps:
 
 ## Next milestone
 
-**M4 continues with specification 007**, which builds the bronze dbt models over the
-registered batches, moves the CI anchor to `ACCEPTANCE_ANCHOR` (ADR 0016) and closes M4 with its
-checkpoint. The notes below were written when M4 began; the ones resolved since say so.
+**M5, silver conformance**: SCD2, deduplication on the business key and `updated_at`, the FX
+gap fill, and quasi-identifier generalisation, built on the bronze views. What it inherits from
+M4 is in the checkpoint's last section: bronze is a view and a read costs a listing, bronze is not
+deduplicated, a retired column is null by delivery date, and FRED has never landed.
+
+The notes below were written when M4 began, and are kept as the record of what it had to
+resolve; each says how it was.
 
 **M4's backfill must interleave tick and extract. It cannot run sixty ticks and then extract.**
 This is a sequencing requirement on the milestone, not a note about a control.
