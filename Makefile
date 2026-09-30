@@ -2,7 +2,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe fault-demo parking-demo up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance feeds-acceptance ingest-integrity asset-events-check seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list requirements dbt-generate dbt-prove dbt-build dbt-docs dq clean
+.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe fault-demo parking-demo up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance feeds-acceptance ingest-integrity asset-events-check seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list requirements dbt-generate dbt-prove dbt-build dbt-docs bronze-plant dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -186,6 +186,9 @@ dbt-prove: ## Show every bronze test and rule failing on planted fixtures (no st
 
 dbt-build: ## Build and test the bronze models inside the stack (dbt build --warn-error)
 	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/dbt_run.py build --select path:models/bronze --warn-error
+
+bronze-plant: ## Plant unregistered objects, verify the bronze model keeps them out, or remove them (ACTION=plant|verify|remove)
+	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/bronze_plant.py $(ACTION)
 
 dbt-docs: ## Generate the static documentation site inside the stack and copy it to data/dbt-docs/
 	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/dbt_run.py docs generate --static
