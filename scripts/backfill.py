@@ -59,6 +59,13 @@ contract commit. A delivery refused as structurally malformed or for a declarati
 does not halt it: the sender resolves those by sending again, the delivery is parked (ADR 0016)
 and the run stays failed in Airflow, so the loop reports it and goes on to the next day.
 
+**Bronze is built once, at the end.** `transform_bronze` is scheduled on every registration,
+and during a backfill that is about four builds a day, each holding the warehouse file.
+Measured over sixty-one days, it slowed the backfill by more than the 15 per cent specification
+007 allows, so the loop pauses the DAG while it runs, unpauses it whatever happens, triggers one
+build at the end, and reports the window complete only when that build has succeeded. Daily
+operation keeps the schedule.
+
 **One day demonstrates the sensor waiting.** `--defer-demo DATE` triggers the settlement DAG on
 that day *before* the clearing file is delivered, watches its sensor task until Airflow reports
 it `deferred`, and only then delivers the file. A sensor that finds its file on the first look
@@ -405,6 +412,37 @@ def _after(run_: dict, since: dt.datetime) -> bool:
     return bool(stamp) and dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")) >= since
 
 
+def hold_transforms() -> bool:
+    """Pause `transform_bronze` for the loop, if it is running; True when this paused it.
+
+    Specification 007's rule, applied by measurement: building bronze after every registration
+    slowed the sixty-one-day backfill by more than 15 per cent of its wall time, so the backfill
+    builds it once, at the end. Daily operation is unchanged: the DAG stays scheduled on every
+    registration, and is paused only while a backfill runs. An event that arrives while a DAG is
+    paused queues nothing, so no backlog of builds follows the unpause.
+    """
+    if api().is_paused(TRANSFORM_DAG):
+        print(f"backfill: {TRANSFORM_DAG} is already paused; leaving it paused", flush=True)
+        return False
+    api().set_paused(TRANSFORM_DAG, True)
+    print(f"backfill: {TRANSFORM_DAG} paused while the loop runs; it builds once at the end")
+    return True
+
+
+def release_transforms(held: bool) -> None:
+    """Unpause what `hold_transforms` paused, whatever happened in between."""
+    if held:
+        api().set_paused(TRANSFORM_DAG, False)
+        print(f"backfill: {TRANSFORM_DAG} unpaused", flush=True)
+
+
+def build_once() -> None:
+    """Trigger the one build of what the backfill landed, and wait for it."""
+    run_id = api().trigger(TRANSFORM_DAG, None)
+    print(f"backfill: {TRANSFORM_DAG}: building bronze once, {run_id}", flush=True)
+    wait_for(TRANSFORM_DAG, run_id)
+
+
 def settle_transforms(since: dt.datetime) -> int:
     """Wait for the bronze builds this backfill's registrations triggered, and report them.
 
@@ -481,6 +519,20 @@ def main(argv: list[str]) -> int:
     anchor, _simulated, _sequence = simulation_state()
     started_at = dt.datetime.now(dt.UTC)
 
+    held = hold_transforms()
+    try:
+        code = ingest_days(start, end, anchor, demo)
+    finally:
+        release_transforms(held)
+    if code != 0:
+        return code
+    if held:
+        build_once()
+    return settle_transforms(started_at)
+
+
+def ingest_days(start: dt.date, end: dt.date, anchor: dt.date, demo: dt.date | None) -> int:
+    """Tick, deliver and ingest each day of the window; 0, or the halt's code."""
     total = (end - start).days + 1
     skipped = 0
     processed = 0
@@ -555,11 +607,11 @@ def main(argv: list[str]) -> int:
         day += dt.timedelta(days=1)
 
     print(
-        f"\nbackfill: {arguments.start} to {arguments.end} complete: {processed} day(s) "
+        f"\nbackfill: {start} to {end} complete: {processed} day(s) "
         f"processed, {skipped} already complete, {total} in range",
         flush=True,
     )
-    return settle_transforms(started_at)
+    return 0
 
 
 if __name__ == "__main__":
