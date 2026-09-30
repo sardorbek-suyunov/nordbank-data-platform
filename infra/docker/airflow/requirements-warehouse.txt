@@ -1,0 +1,11 @@
+# Generated from uv.lock, the `warehouse` dependency group, by scripts/requirements_export.py.
+# Do not edit: run `make requirements` after changing pyproject.toml; CI fails on any difference.
+duckdb==1.5.5 \
+    --hash=sha256:0c42757cb34722144bd4dfb94b6f336339e7b2468f6813fa7fa9a319ba07bab4 \
+    --hash=sha256:179633a3fc6296c75d57c69c1e239fa9e5cdcb670fd1dbff88a02663f932905c \
+    --hash=sha256:1a925d06c2a4c3b64553d6cc1aced5028d376d4479bed689a7d47e9b1dccd80a \
+    --hash=sha256:1b543841b0ae18a9c982345cfa3987e9c065d3a4b0f067daa473d92d1e65f528 \
+    --hash=sha256:2e72f9e1a4f90a5c8483ad4d540e495bf0834ba61c360b52499a573d7ed62a3f \
+    --hash=sha256:72f33ee57ca7595b23957671a2cc7f7fe2be0ecc2d68f63abedcfcaa3a5c1238 \
+    --hash=sha256:9f4287f97ccf0c1f3d471e7115be2b067cbf99627e2d34bffd462dd64703cddc \
+    --hash=sha256:b9b6f86ed85d4ef5e0211eaebf75d057bd8bb520bba438a95dd0f4e42234bbfe
