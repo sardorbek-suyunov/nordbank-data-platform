@@ -7,11 +7,22 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The deploy job's token needs more; everything else reads the repository and nothing more.
+permissions:
+  contents: read
+
 jobs:
   stack:
     name: stack
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Specification 007: CI seeds at the anchor the committed contracts are authored against
+      # (ADR 0014, consequence recorded in ADR 0016), because this job ingests, and a history
+      # seeded at another anchor fires its scripted drift on days the contracts do not expect.
+      NORDBANK_ENV: ci
+      NORDBANK_SEED: "42"
+      NORDBANK_ANCHOR_DATE: "2026-07-20"
     steps:
       - uses: actions/checkout@v7
 
@@ -35,10 +46,17 @@ jobs:
 
       - name: Start the stack
         # No .env is created here on purpose: `make up` generates one, which is the clean-clone
-        # path acceptance criterion 1 describes. DAG_PROCESSOR_REFRESH_INTERVAL comes from the
-        # environment, which compose prefers over the file, so a trigger does not wait a scan.
+        # path acceptance criterion 1 describes. The variables below come from the environment,
+        # which compose prefers over the file. DAG_PROCESSOR_REFRESH_INTERVAL: a trigger does
+        # not wait a scan. FEED_FIXTURE_DIR and FRANKFURTER_BASE_URL: the FX feed answers from
+        # the recorded responses, and the live URL is an unroutable address (TEST-NET-1), so a
+        # request that bypassed the recordings would fail loudly rather than reach the internet.
         # The image was built in the previous step, with a cache; compose must not rebuild it.
-        run: SKIP_BUILD=1 DAG_PROCESSOR_REFRESH_INTERVAL=5 make up
+        env:
+          DAG_PROCESSOR_REFRESH_INTERVAL: "5"
+          FEED_FIXTURE_DIR: /opt/airflow/tests/fixtures/feeds
+          FRANKFURTER_BASE_URL: http://192.0.2.1/v1
+        run: SKIP_BUILD=1 make up
 
       # ADR 0017. The MinIO server comes from a mirror in the owner's namespace. The upstream
       # digest is stated here, not read back from compose, so that editing the pin cannot also
@@ -71,8 +89,6 @@ jobs:
       - name: Trigger and verify the health-check DAG
         run: make verify-dag
 
-      # Before the integration tests, because make test-integration now ends in
-      # schema-check, which would otherwise run against an empty database.
       - name: Apply the source schema
         run: make schema-apply
 
@@ -83,67 +99,86 @@ jobs:
           make schema-dump OUT=/tmp/schema-after.txt
           diff /tmp/schema-before.txt /tmp/schema-after.txt
 
-      # Spec 003 section 11. The anchor is pinned rather than defaulted to the run date,
-      # because the committed manifest is compared against this regeneration and an anchor that
-      # moved every midnight would fail the comparison daily for a reason that is not a change.
+      # 1. Seed at the anchor and run the integration tests. Spec 003 section 11: the anchor is
+      # pinned rather than defaulted to the run date, because the committed manifest is
+      # compared against this regeneration.
       - name: Seed the ci profile
-        env:
-          NORDBANK_ENV: ci
-          NORDBANK_SEED: "42"
-          NORDBANK_ANCHOR_DATE: "2026-09-18"
         run: make seed
 
       - name: Verify the coherence invariants
-        env:
-          NORDBANK_ENV: ci
-          NORDBANK_ANCHOR_DATE: "2026-09-18"
         run: make seed-verify
 
       - name: Prove the load is deterministic against the committed manifest
-        env:
-          NORDBANK_ENV: ci
-          NORDBANK_SEED: "42"
-          NORDBANK_ANCHOR_DATE: "2026-09-18"
         run: make seed-manifest CHECK=1
 
-      # Spec 004, amended: a short sequence rather than the sixty-tick run. Sixty ticks twice —
-      # once for coherence and once for replay determinism — would add the whole sequence twice
-      # to a required check that already builds an image, starts nine services, applies a schema
-      # and seeds a profile. What this proves is the wiring, the per-tick reconciliation, and one
-      # drift event firing with schema-check still green. The sixty-tick sequences, the replay
-      # comparison and the thirty-tick dev run are local acceptance tests, reported against the
-      # specification.
-      #
-      # 2026-09-30 is the anchor plus twelve days, which is when the additive drift event fires.
+      # They end in schema-check and seed-verify, and they reseed the source, which is why they
+      # run before the ingestion rather than after it.
+      - name: Integration tests
+        run: make test-integration
+
+      # 2. Reseed, so the ingestion reads the history the manifest describes.
+      - name: Reseed the ci profile
+        run: make seed
+
+      - name: Apply the warehouse schema
+        run: make warehouse-apply
+
+      # 3. The window is fixed by coverage (spec 007 section 8): the initial load, an FX weekend,
+      # two days with no clearing file, a late file on the last day, a correction, quarantined
+      # records and a sanctions snapshot. Not covered here: drift, a second contract version,
+      # parking, a failed batch, FRED and a second snapshot, which the local acceptance run
+      # exercises.
+      - name: Ingest 2026-07-20 to 2026-07-26 through the real DAGs
+        run: |
+          start=$(date +%s)
+          make backfill FROM=2026-07-20 TO=2026-07-26
+          elapsed=$(( $(date +%s) - start ))
+          echo "backfill: 7 day(s) in ${elapsed} s, $(( elapsed / 7 )) s per ingested day"
+
+      - name: Check the registry against the lake, the vault and the contracts
+        run: make ingest-integrity
+
+      # 4. Criterion 4: a copy of a registered file under a new key, and an object under an
+      # unregistered batch id. The build below must leave both out of the model.
+      - name: Plant objects the registry never registered
+        run: make bronze-plant ACTION=plant
+
+      # 5. Every bronze model and test, with nothing silenced.
+      - name: Build and test the bronze models
+        run: |
+          start=$(date +%s)
+          make dbt-build
+          echo "dbt build: $(( $(date +%s) - start )) s"
+
+      - name: Show the planted objects are in the lake and not in the model
+        run: make bronze-plant ACTION=verify
+
+      # 6. The additive drift event fires at the anchor plus twelve days; the expected schema is
+      # then the dictionary plus its delta.
       - name: Advance the simulated source through a drift event
-        env:
-          NORDBANK_ENV: ci
-          NORDBANK_SEED: "42"
-          NORDBANK_ANCHOR_DATE: "2026-09-18"
-        run: make tick-to DATE=2026-09-30
+        run: make tick-to DATE=2026-08-01
 
-      - name: Show the simulation state and the ticks it ran
-        env:
-          NORDBANK_ENV: ci
-        run: make tick-status
-
-      # The drift event has fired, so the expected schema is now the dictionary plus its delta.
-      # A green check here is the whole point of spec 004 section 3's amendment.
       - name: Check the schema against the dictionary plus the fired drift
         run: make schema-check
 
       - name: Verify the invariants after the ticks
-        env:
-          NORDBANK_ENV: ci
-          NORDBANK_ANCHOR_DATE: "2026-09-18"
         run: make seed-verify
 
-      - name: Integration tests
-        env:
-          NORDBANK_ENV: ci
-          NORDBANK_SEED: "42"
-          NORDBANK_ANCHOR_DATE: "2026-09-18"
-        run: make test-integration
+      # The documentation site, built from this warehouse, scanned before it can be published.
+      # It is uploaded on every run so that a pull request shows what main would publish; only
+      # the deploy job, on a push to main, publishes it.
+      - name: Generate the documentation site
+        run: make dbt-docs
+
+      - name: Scan the site for secrets and vault values, and prove the scan can fail
+        run: |
+          make docs-scan
+          make docs-scan PLANT=1
+
+      - name: Upload the scanned site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: data/dbt-docs
 
       - name: Collect compose logs
         if: failure()
@@ -159,3 +194,26 @@ jobs:
       - name: Tear down
         if: always()
         run: FORCE=1 make nuke
+
+  # Not a required check: it runs only on a push to main, after `stack` has built and scanned
+  # the site. The only job whose token can write to Pages, and only through the OIDC token the
+  # deploy action exchanges.
+  pages:
+    name: pages
+    needs: stack
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - name: Deploy the documentation site
+        id: deployment
+        uses: actions/deploy-pages@v4
