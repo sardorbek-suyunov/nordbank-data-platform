@@ -95,6 +95,30 @@ def test_connect_retries_while_the_file_is_locked() -> None:
     assert delays == [0.1, 0.2], "backoff should double between attempts"
 
 
+def test_a_long_wait_polls_at_its_cap_rather_than_sleeping_exponentially() -> None:
+    delays: list[float] = []
+    attempts: list[int] = []
+
+    def opener(path: str, read_only: bool):
+        attempts.append(1)
+        if len(attempts) < 12:
+            raise OSError(LOCK_MESSAGE)
+        return FakeConnection()
+
+    with warehouse.connect(
+        path="/tmp/whatever.duckdb", opener=opener, sleep=delays.append, **warehouse.LONG_WAIT
+    ):
+        pass
+    assert len(delays) == 11
+    assert max(delays) == warehouse.LONG_WAIT["max_delay"]
+    # Ten minutes of budget at most, polled every two seconds once the backoff reaches the cap.
+    budget = sum(
+        min(0.5 * 2**n, warehouse.LONG_WAIT["max_delay"])
+        for n in range(warehouse.LONG_WAIT["attempts"] - 1)
+    )
+    assert 540 <= budget <= 600
+
+
 def test_connect_gives_up_and_names_the_holder() -> None:
     def opener(path: str, read_only: bool):
         raise OSError(LOCK_MESSAGE)

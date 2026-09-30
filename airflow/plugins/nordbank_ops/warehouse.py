@@ -17,6 +17,13 @@ from pathlib import Path
 from typing import Any
 
 POOL_NAME = "warehouse_access"
+
+# How long an access from outside Airflow waits for the file when it must not give up quickly:
+# the backfill loop reads the registry between runs, and `transform_bronze` can hold the file for
+# a whole dbt build then, because the pool governs only what Airflow schedules. Polling every two
+# seconds for ten minutes; measured, the loop gave up after the default 7.5 seconds in CI while a
+# build ran.
+LONG_WAIT = {"attempts": 300, "base_delay": 0.5, "max_delay": 2.0}
 SCHEMAS = ("bronze", "silver", "gold", "dq", "ops", "meta")
 PROBE_TABLE = "ops.stack_health_probe"
 
@@ -75,11 +82,17 @@ def connect(
     read_only: bool = False,
     attempts: int = 5,
     base_delay: float = 0.5,
+    max_delay: float | None = None,
     path: Path | str | None = None,
     opener: Callable[[str, bool], Any] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Iterator[Any]:
-    """Open the warehouse, retrying with exponential backoff while it is locked."""
+    """Open the warehouse, retrying with exponential backoff while it is locked.
+
+    `max_delay` caps each wait, which turns a long budget into polling: a caller that must wait
+    out a dbt build, the backfill loop's state reads, polls every few seconds for minutes rather
+    than sleeping through an exponential step long after the file was released.
+    """
     open_db = opener or _duckdb_opener
     target = str(path if path is not None else warehouse_path())
     last_error: BaseException | None = None
@@ -92,7 +105,8 @@ def connect(
                 raise
             last_error = exc
             if attempt < attempts:
-                sleep(base_delay * 2 ** (attempt - 1))
+                delay = base_delay * 2 ** (attempt - 1)
+                sleep(delay if max_delay is None else min(delay, max_delay))
             continue
 
         try:

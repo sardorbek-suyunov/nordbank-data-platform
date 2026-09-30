@@ -31,7 +31,8 @@ def main(argv: list[str]) -> int:
 
     interval = dt.datetime.fromisoformat(arguments.interval).replace(tzinfo=dt.UTC)
 
-    with warehouse.connect(read_only=True) as connection:
+    # The loop reads between runs, when transform_bronze may be mid-build (warehouse.LONG_WAIT).
+    with warehouse.connect(read_only=True, **warehouse.LONG_WAIT) as connection:
         rows = connection.execute(
             """
             select entity, source_schema, batch_sequence, status, failure_reason,
