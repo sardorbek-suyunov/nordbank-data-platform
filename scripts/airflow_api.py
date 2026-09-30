@@ -88,10 +88,16 @@ class Client:
             if not batch or offset >= reply.get("total_entries", 0):
                 return out
 
-    def trigger(self, dag_id: str, logical_date: str, conf: dict | None = None) -> str:
-        """Create one run for a logical date; returns its run id."""
+    def trigger(self, dag_id: str, logical_date: str | None, conf: dict | None = None) -> str:
+        """Create one run for a logical date, or with none; returns its run id."""
         body = {"logical_date": logical_date, "conf": conf or {}}
         return self.call("POST", f"/api/v2/dags/{dag_id}/dagRuns", body)["dag_run_id"]
+
+    def is_paused(self, dag_id: str) -> bool:
+        return bool(self.call("GET", f"/api/v2/dags/{dag_id}")["is_paused"])
+
+    def set_paused(self, dag_id: str, paused: bool) -> None:
+        self.call("PATCH", f"/api/v2/dags/{dag_id}", {"is_paused": paused})
 
     def run_state(self, dag_id: str, run_id: str) -> str | None:
         return self.call("GET", f"/api/v2/dags/{dag_id}/dagRuns/{run_id}").get("state")
