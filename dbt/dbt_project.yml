@@ -1,0 +1,24 @@
+# The platform's dbt project (spec 007). One profile, one target; see profiles.yml.
+name: nordbank
+version: "1.0"
+config-version: 2
+profile: nordbank
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+target-path: target
+clean-targets: [target, logs]
+
+# No usage statistics: dbt would otherwise send an event to its publisher on every invocation,
+# and nothing in this platform calls an external service it does not need.
+flags:
+  send_anonymous_usage_stats: false
+
+models:
+  nordbank:
+    bronze:
+      +materialized: view
+      +schema: bronze

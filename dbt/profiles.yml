@@ -1,0 +1,37 @@
+# The one dbt target, `warehouse` (spec 007). Everything comes from the environment; nothing here
+# is a secret or a machine-specific path. The three scale profiles differ in generator
+# parameters, not in anything dbt reads, so they share this target; variables arrive at M5.
+#
+# The lake credentials reach DuckDB only through the `secrets` block below, which dbt-duckdb
+# turns into a temporary `CREATE SECRET` on each connection and dbt never renders into
+# `manifest.json`. Measured at planning: the same value through a hook landed in the manifest,
+# `run_results.json` and `dbt.log`. They are `DBT_ENV_SECRET_` variables, which dbt refuses to
+# read anywhere but a profile and scrubs from its logs, so a model or macro that tried to read
+# one would fail to parse. `nordbank_ops.dbt` sets them from the Airflow lake connection.
+#
+# Extensions: httpfs is installed into DUCKDB_EXTENSION_DIRECTORY when the image is built, by the
+# same DuckDB version dbt runs, and automatic install is off, so nothing is downloaded at run
+# time. Threads and memory match every other warehouse connection (nordbank_ops.warehouse).
+nordbank:
+  target: warehouse
+  outputs:
+    warehouse:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH') }}"
+      schema: main
+      threads: 4
+      extensions:
+        - httpfs
+      settings:
+        threads: 4
+        memory_limit: "1GB"
+        extension_directory: "{{ env_var('DUCKDB_EXTENSION_DIRECTORY') }}"
+        autoinstall_known_extensions: false
+      secrets:
+        - type: s3
+          key_id: "{{ env_var('DBT_ENV_SECRET_LAKE_KEY_ID') }}"
+          secret: "{{ env_var('DBT_ENV_SECRET_LAKE_SECRET') }}"
+          endpoint: "{{ env_var('LAKE_S3_ENDPOINT') }}"
+          region: "{{ env_var('LAKE_S3_REGION', 'us-east-1') }}"
+          use_ssl: false
+          url_style: path
