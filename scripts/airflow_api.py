@@ -1,10 +1,18 @@
-"""The local Airflow REST API, from the host, for what the CLI cannot do.
+"""The local Airflow REST API, from the host.
 
-One thing so far: clearing a run onto the DAG's latest version. `airflow tasks clear` re-runs a
-cleared run on the version it was created with; measured on 2026-09-28 on the stack after the
-third acceptance run, after a DAG file changed it re-ran three of `ops_stack_healthcheck`'s four
-tasks on the new version and one on the old. The REST clear with `run_on_latest_version` re-ran
-all four on the new one. The parameter is marked experimental in Airflow 3.3.2.
+The backfill loop drives every DAG run through it: triggering a run for a logical date, listing a
+DAG's runs, and reading a run's and a task's state. Specification 007 moved the loop here from
+`docker compose exec airflow ...`, which cost 2.5 seconds a call to start the CLI in the
+container, polled every three seconds, and took about 42 of the 100 seconds of an ingested day
+on the fourth acceptance run's stack; the stack job's week came within ninety seconds of its
+timeout. A call here costs milliseconds.
+
+And one thing the CLI cannot do: clearing a run onto the DAG's latest version.
+`airflow tasks clear` re-runs a cleared run on the version it was created with; measured on
+2026-09-28 on the stack after the third acceptance run, after a DAG file changed it re-ran three
+of `ops_stack_healthcheck`'s four tasks on the new version and one on the old. The REST clear
+with `run_on_latest_version` re-ran all four on the new one. The parameter is marked
+experimental in Airflow 3.3.2.
 
 Credentials come from `.env`, the admin account `make up` provisions, and are never printed.
 """
@@ -35,7 +43,7 @@ class Client:
         }
         self._token: str | None = None
 
-    def call(self, method: str, path: str, body: dict | None = None):
+    def call(self, method: str, path: str, body: dict | None = None, *, _retried: bool = False):
         if self._token is None and path != "/auth/token":
             self._token = self.call("POST", "/auth/token", self._credentials)["access_token"]
         request = urllib.request.Request(  # noqa: S310 - the local stack's own API
@@ -50,8 +58,47 @@ class Client:
             with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
                 text = response.read().decode()
         except urllib.error.HTTPError as error:
+            # A token outlives most backfills; one that expired is taken again, once.
+            if error.code == 401 and path != "/auth/token" and not _retried:
+                self._token = None
+                return self.call(method, path, body, _retried=True)
             raise AirflowApiError(f"{method} {path}: HTTP {error.code}") from None
         return json.loads(text) if text else None
+
+    @staticmethod
+    def _run(row: dict) -> dict:
+        """A run as the loop uses it, in the CLI's field names."""
+        return {
+            "run_id": row["dag_run_id"],
+            "logical_date": row.get("logical_date"),
+            "run_after": row.get("run_after"),
+            "state": row.get("state"),
+        }
+
+    def runs(self, dag_id: str) -> list[dict]:
+        """Every run of a DAG, oldest first."""
+        out, offset = [], 0
+        while True:
+            reply = self.call(
+                "GET", f"/api/v2/dags/{dag_id}/dagRuns?limit=100&offset={offset}&order_by=run_after"
+            )
+            batch = reply["dag_runs"]
+            out.extend(self._run(row) for row in batch)
+            offset += len(batch)
+            if not batch or offset >= reply.get("total_entries", 0):
+                return out
+
+    def trigger(self, dag_id: str, logical_date: str, conf: dict | None = None) -> str:
+        """Create one run for a logical date; returns its run id."""
+        body = {"logical_date": logical_date, "conf": conf or {}}
+        return self.call("POST", f"/api/v2/dags/{dag_id}/dagRuns", body)["dag_run_id"]
+
+    def run_state(self, dag_id: str, run_id: str) -> str | None:
+        return self.call("GET", f"/api/v2/dags/{dag_id}/dagRuns/{run_id}").get("state")
+
+    def task_state(self, dag_id: str, run_id: str, task_id: str) -> str:
+        reply = self.call("GET", f"/api/v2/dags/{dag_id}/dagRuns/{run_id}/taskInstances/{task_id}")
+        return reply.get("state") or "none"
 
     def clear_onto_latest_version(self, dag_id: str, run_id: str) -> None:
         """Clear every task instance of one run, and re-run it on the DAG's latest version."""

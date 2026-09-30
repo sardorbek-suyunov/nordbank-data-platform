@@ -34,8 +34,9 @@ depends on the choice, after the FX feed, and it is the stricter of the two: cho
 so that the last day of the backfill is on or before today. The check below fails fast and
 says so, because the failure it prevents is a hang rather than an error.
 
-It runs on the host, because the tick is a host package and the Airflow CLI and the registry
-are both in the container, and nothing can reach all three from one place.
+It runs on the host, because the tick is a host package. It drives Airflow through its REST API
+(`scripts/airflow_api.py`), and reads the registry by running a script inside the scheduler,
+where the warehouse volume is.
 
 **The day, in order, since specification 006.**
 
@@ -98,7 +99,9 @@ EVIDENCE = ROOT / "data" / "acceptance"
 EXPECTED = {CORE_DAG: 16, REFERENCE_DAG: 29}
 
 TERMINAL = {"success", "failed"}
-POLL_SECONDS = 3
+# Through the REST API a poll costs milliseconds, so the loop notices a finished run within a
+# second; through `docker compose exec airflow dags list-runs` it cost 2.5 seconds a call.
+POLL_SECONDS = 1
 RUN_TIMEOUT_SECONDS = 900
 
 RESOLUTION = (
@@ -132,15 +135,6 @@ def in_container(script: str, *arguments: str) -> str:
         sys.stderr.write(completed.stdout)
         sys.stderr.write(completed.stderr)
         raise SystemExit(f"backfill: {script} failed inside the container")
-    return completed.stdout
-
-
-def airflow(*arguments: str) -> str:
-    completed = run(["docker", "compose", "exec", "-T", "airflow-scheduler", "airflow", *arguments])
-    if completed.returncode != 0:
-        sys.stderr.write(completed.stdout)
-        sys.stderr.write(completed.stderr)
-        raise SystemExit(f"backfill: airflow {' '.join(arguments)} failed")
     return completed.stdout
 
 
@@ -190,11 +184,15 @@ def interval_state(day: dt.date, expected: int) -> dict:
     return json.loads(payload.strip().splitlines()[-1])
 
 
+def _logical(day: dt.date) -> str:
+    return f"{day.isoformat()}T00:00:00+00:00"
+
+
 def existing_run(dag_id: str, day: dt.date) -> dict | None:
-    stamp = f"{day.isoformat()}T00:00:00+00:00"
-    listed = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
-    for row in listed:
-        if row["logical_date"] == stamp:
+    wanted = dt.datetime.fromisoformat(_logical(day))
+    for row in api().runs(dag_id):
+        stamp = row["logical_date"]
+        if stamp and dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")) == wanted:
             return row
     return None
 
@@ -220,29 +218,11 @@ def start_run(dag_id: str, day: dt.date, conf: dict | None = None) -> str:
     if held is not None:
         clear(dag_id, day, held["run_id"])
         return held["run_id"]
-    listed = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
-    before = {row["run_id"] for row in listed}
-    arguments = ["dags", "trigger", dag_id, "--logical-date", f"{day.isoformat()}T00:00:00+00:00"]
-    if conf:
-        arguments += ["--conf", json.dumps(conf)]
-    airflow(*arguments)
-    deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        runs = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
-        fresh = [row for row in runs if row["run_id"] not in before]
-        if fresh:
-            return sorted(fresh, key=lambda row: row["run_after"])[-1]["run_id"]
-        time.sleep(POLL_SECONDS)
-    raise SystemExit(f"backfill: {dag_id} for {day} never appeared")
+    return api().trigger(dag_id, _logical(day), conf)
 
 
 def task_state(dag_id: str, task_id: str, run_id: str) -> str:
-    completed = run(
-        ["docker", "compose", "exec", "-T", "airflow-scheduler", "airflow", "tasks", "state",
-         dag_id, task_id, run_id]
-    )  # fmt: skip
-    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    return lines[-1] if lines else "unknown"
+    return api().task_state(dag_id, run_id, task_id)
 
 
 def deliver(day: dt.date, *, settlement_files: bool = True) -> None:
@@ -319,7 +299,8 @@ def trigger_and_wait(dag_id: str, day: dt.date) -> str:
 
     Two Airflow constraints shape this and both were measured rather than assumed.
 
-    `airflow dags trigger --logical-date` rather than `airflow backfill create`:
+    A run created for a logical date, through the REST API, rather than `airflow backfill
+    create`:
     `backfill create` refuses a DAG whose schedule is not periodic —
     `DagNonPeriodicScheduleException` — and these DAGs are deliberately unscheduled, because
     the source's clock is simulated and a wall-clock schedule has no meaning against it. The
@@ -338,28 +319,17 @@ def trigger_and_wait(dag_id: str, day: dt.date) -> str:
         clear(dag_id, day, held["run_id"])
         return wait_for(dag_id, held["run_id"])
 
-    listed = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
-    before = {row["run_id"] for row in listed}
-    airflow("dags", "trigger", dag_id, "--logical-date", f"{day.isoformat()}T00:00:00+00:00")
-
-    deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        runs = json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]")
-        fresh = [row for row in runs if row["run_id"] not in before]
-        if fresh:
-            return wait_for(dag_id, sorted(fresh, key=lambda row: row["run_after"])[-1]["run_id"])
-        time.sleep(POLL_SECONDS)
-    raise SystemExit(f"backfill: {dag_id} for {day} never appeared")
+    return wait_for(dag_id, api().trigger(dag_id, _logical(day)))
 
 
 def wait_for(dag_id: str, run_id: str) -> str:
     deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
-        for row in json.loads(airflow("dags", "list-runs", dag_id, "-o", "json") or "[]"):
-            if row["run_id"] == run_id and row["state"] in TERMINAL:
-                if run_id in CLEARED:
-                    on_latest_version(dag_id, run_id)
-                return row["state"]
+        state = api().run_state(dag_id, run_id)
+        if state in TERMINAL:
+            if run_id in CLEARED:
+                on_latest_version(dag_id, run_id)
+            return state
         time.sleep(POLL_SECONDS)
     raise SystemExit(
         f"backfill: {dag_id} run {run_id} did not finish within {RUN_TIMEOUT_SECONDS}s"
