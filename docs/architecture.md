@@ -571,7 +571,7 @@ Three profiles, selected by `NORDBANK_ENV`:
 
 | Profile | Scale | Lake and warehouse footprint | Purpose |
 |---|---|---|---|
-| `ci` | About 500 customers and tens of thousands of transactions | Under 100 MB of parquet and warehouse combined; measured, 30 MB of lake and 14 MB of warehouse after sixty-one days | Small enough that CI seeds, ingests a week through the real DAGs and builds bronze on every pull request, in about twenty minutes; measured below |
+| `ci` | About 500 customers and tens of thousands of transactions | Under 100 MB of parquet and warehouse combined; measured, 30 MB of lake and 14 MB of warehouse after sixty-one days | Small enough that CI seeds, ingests a week through the real DAGs and builds bronze on every pull request, in about fifteen minutes; measured below |
 | `dev` | About 5,000 customers and a few million transactions | About 2 GB | The default for local work: large enough for incremental logic to be meaningful, small enough to rebuild over a coffee |
 | `full` | About 30,000 customers and tens of millions of transactions | About 25 GB | Exercises partition pruning, incremental models and the single-writer constraint under load |
 
@@ -583,9 +583,9 @@ goes to ingestion, not to the data. At `ci`:
 |---|---|
 | Seed the source | 11 to 13 seconds |
 | Ingest one day through the real DAGs, locally | about 76 seconds, with `transform_bronze` building after every registration; 107 seconds when the backfill loop still drove Airflow through `docker compose exec` |
-| Ingest one day through the real DAGs, on a GitHub runner | 126 seconds; 195 through `docker compose exec` |
+| Ingest one day through the real DAGs, on a GitHub runner | 77 seconds, bronze built once at the end included; 126 building after every registration, and 195 through `docker compose exec` |
 | `dbt build` over bronze: 50 views and 267 tests | 14 to 17 seconds after a week; 9 to 12 seconds a build over sixty-one days, locally |
-| The `stack` job, seed to published-site scan, with a seven-day window | 20 minutes 25 seconds |
+| The `stack` job, seed to published-site scan, with a seven-day window | 14 minutes 32 seconds |
 
 Where a day goes, measured on the fourth acceptance run's stack before the loop moved to the REST
 API: the reference data run 23 seconds, core banking 14, the feeds about 8 in parallel, and about
