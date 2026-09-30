@@ -7,7 +7,6 @@ these check that the parts together put the right thing in the database.
 
 from __future__ import annotations
 
-import datetime as dt
 import shutil
 import sys
 from pathlib import Path
@@ -16,6 +15,7 @@ import pytest
 
 from generator import invariants, manifest, pipeline, refdata, writer
 from generator.config import RunConfig, load_profile
+from generator.drift.timeline import ACCEPTANCE_ANCHOR
 from generator.spool import Spool
 from generator.tables import LOAD_ORDER
 
@@ -26,8 +26,10 @@ if str(ROOT / "scripts") not in sys.path:
 pytestmark = pytest.mark.integration
 
 # Pinned, not defaulted to today. The committed manifest is compared against a regeneration, and
-# an anchor that moved every midnight would fail that comparison daily for no reason.
-ANCHOR = dt.date(2026, 9, 18)
+# an anchor that moved every midnight would fail that comparison daily for no reason. It is the
+# anchor CI seeds at since specification 007, the one the committed contracts are authored
+# against, named once in the drift timeline; the committed manifest is regenerated at it.
+ANCHOR = ACCEPTANCE_ANCHOR
 SEED = 42
 
 

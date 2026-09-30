@@ -18,6 +18,7 @@ import pytest
 
 from generator import pipeline, refdata, writer
 from generator.config import RunConfig, load_profile
+from generator.drift.timeline import ACCEPTANCE_ANCHOR
 from generator.mutation import reconcile as reconcile_module
 from generator.mutation import reset as reset_module
 from generator.mutation import state as state_module
@@ -33,7 +34,9 @@ from source_db_driver import connect  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
-ANCHOR = dt.date(2026, 9, 18)
+# The anchor CI seeds at since specification 007, so the suite leaves the source as the stack
+# job's own environment describes it, and `make test-integration`'s closing seed-verify agrees.
+ANCHOR = ACCEPTANCE_ANCHOR
 SEED = 42
 
 
