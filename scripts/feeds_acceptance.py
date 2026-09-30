@@ -47,12 +47,24 @@ def heading(number: int | str, title: str) -> None:
 
 
 def _parquet(client, bucket: str, prefix: str) -> list[dict]:
+    """Every row under a prefix, with a `json` column decoded to the value it holds.
+
+    Since specification 007 the writer stores a `json` column as JSON text in the Arrow JSON
+    type; an object written before it holds the value as a list. Both read back as the value.
+    """
+    import pyarrow as pa
     import pyarrow.parquet as pq
 
     rows: list[dict] = []
     for item in client.list_objects_v2(Bucket=bucket, Prefix=prefix).get("Contents", []):
         body = client.get_object(Bucket=bucket, Key=item["Key"])["Body"].read()
-        rows.extend(pq.read_table(io.BytesIO(body)).to_pylist())
+        table = pq.read_table(io.BytesIO(body))
+        encoded = [f.name for f in table.schema if isinstance(f.type, pa.JsonType)]
+        for row in table.to_pylist():
+            for name in encoded:
+                if row[name] is not None:
+                    row[name] = json.loads(row[name])
+            rows.append(row)
     return rows
 
 

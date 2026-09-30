@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -106,6 +107,66 @@ QUARANTINE_COLUMNS: tuple[str, ...] = (
     "value_is_tokenised",
     "quarantined_at",
 )
+# The declared type of every audit, payload and quarantine column, in the contract's own type
+# vocabulary, so that the writer and the dbt models type the platform's columns the way they
+# type the source's.
+PLATFORM_COLUMN_TYPES: dict[str, str] = {
+    "_ingested_at": "timestamp with time zone",
+    "_source_file": "text",
+    "_batch_id": "text",
+    "_source_system": "text",
+    PAYLOAD_COLUMN: "text",
+    "batch_id": "text",
+    "source_system": "text",
+    "entity": "text",
+    "record_key": "text",
+    "column_name": "text",
+    "reason": "text",
+    "offending_value": "text",
+    "value_is_tokenised": "boolean",
+    "quarantined_at": "timestamp with time zone",
+}
+
+
+@dataclass(frozen=True)
+class TypeFamily:
+    """A declared type, reduced to what a physical representation needs to know.
+
+    One parser for the writer's Parquet schema and the bronze models' casts (spec 007), so the
+    two cannot read a contract's type differently. A width on a character type is dropped: it
+    describes the source column, and an identifier column holds a token wider than it.
+    """
+
+    kind: str
+    precision: int | None = None
+    scale: int | None = None
+
+
+_INTEGER_BITS = {"smallint": 16, "integer": 32, "bigint": 64}
+
+
+def type_family(declared: str) -> TypeFamily:
+    """The family of a contract's declared type; an unknown type is refused, never guessed."""
+    text = declared.strip().lower()
+    base = text.split("(", 1)[0].strip()
+    if base in ("character varying", "character", "text"):
+        return TypeFamily("text")
+    if base in _INTEGER_BITS:
+        return TypeFamily("integer", precision=_INTEGER_BITS[base])
+    if base in ("numeric", "decimal"):
+        match = re.fullmatch(r"(?:numeric|decimal)\(\s*(\d+)\s*,\s*(\d+)\s*\)", text)
+        if not match:
+            raise ContractError(f"a decimal type must state precision and scale: {declared!r}")
+        return TypeFamily("decimal", precision=int(match[1]), scale=int(match[2]))
+    if base == "timestamp with time zone":
+        return TypeFamily("timestamptz")
+    if base in ("boolean", "date", "json"):
+        return TypeFamily(base)
+    if base in ("double precision", "real"):
+        return TypeFamily("double")
+    raise ContractError(f"a type no physical representation is defined for: {declared!r}")
+
+
 AUTHORED_FIELDS: tuple[str, ...] = (
     "source_system",
     "source_schema",

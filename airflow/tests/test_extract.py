@@ -24,6 +24,7 @@ from nordbank_ops.extract import (
     read_window,
     write_parquet,
 )
+from nordbank_ops.physical import bronze_schema
 from nordbank_ops.tokenise import Tokeniser
 from nordbank_ops.validation import QuarantineReason, Rejection
 
@@ -188,7 +189,7 @@ def test_an_empty_window_observes_no_maximum():
 
 def test_an_empty_batch_writes_no_object():
     lake = FakeLake()
-    assert write_parquet(lake, "bucket", "k", [], CONTRACT.column_names) is None
+    assert write_parquet(lake, "bucket", "k", [], bronze_schema(CONTRACT)) is None
     assert lake.objects == {}
 
 

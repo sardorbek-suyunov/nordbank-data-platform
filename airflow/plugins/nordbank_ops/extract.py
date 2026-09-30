@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from nordbank_ops.ingest import ensure_scripts_on_path
+from nordbank_ops.physical import bronze_schema, quarantine_schema
 from nordbank_ops.schema_drift import DriftReport, classify
 from nordbank_ops.tokenise import Tokeniser
 from nordbank_ops.validation import Rejection, project, validate
@@ -173,15 +174,11 @@ def read_window(
 # --- writing the lake ---------------------------------------------------------------------
 
 
-def _table(rows: list[dict], columns: tuple[str, ...]):
-    import pyarrow as pa
+def write_parquet(client: Any, bucket: str, key: str, rows: list[dict], schema):
+    """Write one Parquet object in `schema`; the key, or None when there is nothing to write.
 
-    data = {name: [row.get(name) for row in rows] for name in columns}
-    return pa.table(data)
-
-
-def write_parquet(client: Any, bucket: str, key: str, rows: list[dict], columns: tuple[str, ...]):
-    """Write one Parquet object. Returns the key, or None when there is nothing to write.
+    The schema is the contract's (`nordbank_ops.physical`), never inferred from the values, so
+    every object of one contract version has the same physical schema.
 
     An empty batch writes no object rather than a zero-row file: the registry records that the
     entity was asked and had nothing to say, which is the fact worth keeping, and an empty
@@ -193,7 +190,9 @@ def write_parquet(client: Any, bucket: str, key: str, rows: list[dict], columns:
     import pyarrow.parquet as pq
 
     buffer = io.BytesIO()
-    pq.write_table(_table(rows, columns), buffer, compression="snappy")
+    from nordbank_ops.physical import table
+
+    pq.write_table(table(rows, schema), buffer, compression="snappy")
     client.put_object(Bucket=bucket, Key=key, Body=buffer.getvalue())
     return key
 
@@ -307,7 +306,6 @@ def extract_entity(
         system=contract.source_system,
     )
 
-    bronze_columns = contract.bronze_columns
     from nordbank_ops.registry import bronze_prefix, quarantine_prefix
 
     bronze_key = (
@@ -316,7 +314,7 @@ def extract_entity(
         )
         + "part-0000.parquet"
     )
-    written = write_parquet(client, bucket, bronze_key, landed, bronze_columns)
+    written = write_parquet(client, bucket, bronze_key, landed, bronze_schema(contract))
     if written:
         report.bronze_keys.append(written)
 
@@ -335,7 +333,7 @@ def extract_entity(
         )
         + "part-0000.parquet"
     )
-    written = write_parquet(client, bucket, quarantine_key, rejected, contract.quarantine_columns)
+    written = write_parquet(client, bucket, quarantine_key, rejected, quarantine_schema(contract))
     if written:
         report.quarantine_keys.append(written)
 
