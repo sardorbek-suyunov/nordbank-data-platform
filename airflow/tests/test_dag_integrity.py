@@ -34,6 +34,8 @@ MINIMUM_TASKS: dict[str, int] = {
     "ingest_card_settlements": 6,
     "ingest_sanctions_list": 5,
     "ingest_macro_series": 6,
+    # dbt build over bronze, one pooled task (spec 007).
+    "transform_bronze": 1,
 }
 
 
@@ -312,3 +314,28 @@ def test_the_macro_series_dag_checks_for_its_key_before_anything_else() -> None:
     )
     assert check.upstream_task_ids == set()
     assert "discover_deliveries" in check.downstream_task_ids
+
+
+def test_transform_bronze_fires_on_any_ingestion_registration() -> None:
+    """Spec 007 section 7: the six ingestion aliases joined with `|`, never a list.
+
+    A list of aliases is an AND, and measured on Airflow 3.3.2 it never fired while one alias
+    had no events; `ingest_macro_series` registers nothing without a FRED key.
+    """
+    dag = _dagbag().dags["transform_bronze"]
+    condition = dag.timetable.asset_condition
+    assert type(condition).__name__ == "AssetAny", f"schedule is {type(condition).__name__}"
+    aliases = {member.name for member in condition.objects}
+    ingestion = {path.stem for path in DAG_FOLDER.glob("ingest_*.py")}
+    assert len(ingestion) >= 6
+    assert aliases == {f"{dag_id}/registered" for dag_id in ingestion}
+    assert all(type(member).__name__ == "AssetAlias" for member in condition.objects)
+
+
+def test_transform_bronze_runs_one_build_at_a_time_in_the_warehouse_pool() -> None:
+    dag = _dagbag().dags["transform_bronze"]
+    assert dag.max_active_runs == 1
+    assert len(dag.tasks) >= MINIMUM_TASKS["transform_bronze"]
+    for task in dag.tasks:
+        assert task.pool == "warehouse_access", f"{task.task_id} holds pool {task.pool}"
+        assert task.retries == 0
