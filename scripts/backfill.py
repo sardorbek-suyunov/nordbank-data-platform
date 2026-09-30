@@ -393,6 +393,56 @@ def tick_one_day(day: dt.date, simulated: dt.date) -> None:
         raise SystemExit(f"backfill: the tick to {day} failed")
 
 
+TRANSFORM_DAG = "transform_bronze"
+ACTIVE = {"queued", "running"}
+# How long transform_bronze must stay idle before the backfill calls bronze built. An
+# asset-triggered run is created a few seconds after the registration that triggers it.
+SETTLED_SECONDS = 15
+
+
+def _after(run_: dict, since: dt.datetime) -> bool:
+    stamp = run_["run_after"]
+    return bool(stamp) and dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")) >= since
+
+
+def settle_transforms(since: dt.datetime) -> int:
+    """Wait for the bronze builds this backfill's registrations triggered, and report them.
+
+    Every registration triggers `transform_bronze`, which holds the warehouse file for a whole
+    `dbt build`. Measured in the stack job: the last day's build still held it when the next
+    step opened the warehouse, and that step gave up. So the backfill is complete when bronze
+    is built from what it landed: when the DAG has had no queued or running run for a while.
+    A failed last build is a bronze test failing on the data, and fails the backfill.
+    """
+    idle_since = None
+    deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        runs = [r for r in api().runs(TRANSFORM_DAG) if _after(r, since)]
+        if any(r["state"] in ACTIVE for r in runs):
+            idle_since = None
+        elif idle_since is None:
+            idle_since = time.monotonic()
+        elif time.monotonic() - idle_since >= SETTLED_SECONDS:
+            states = [r["state"] for r in runs]
+            last = f"is {states[-1]}" if states else "never ran"
+            print(
+                f"backfill: {TRANSFORM_DAG}: {len(runs)} build(s) during the backfill, "
+                f"{states.count('success')} succeeded, {states.count('failed')} failed; "
+                f"the last {last}",
+                flush=True,
+            )
+            if states and states[-1] == "failed":
+                print(
+                    f"backfill: the last {TRANSFORM_DAG} build failed: a bronze test found the "
+                    "data wrong, and its log names the model and the test",
+                    flush=True,
+                )
+                return 1
+            return 0
+        time.sleep(POLL_SECONDS)
+    raise SystemExit(f"backfill: {TRANSFORM_DAG} did not settle within {RUN_TIMEOUT_SECONDS}s")
+
+
 def halt(day: dt.date, failed: list[dict]) -> int:
     print(
         f"\nbackfill: halted at {day}. {len(failed)} batch(es) failed and were not registered.",
@@ -429,6 +479,7 @@ def main(argv: list[str]) -> int:
 
     db.require_stack()
     anchor, _simulated, _sequence = simulation_state()
+    started_at = dt.datetime.now(dt.UTC)
 
     total = (end - start).days + 1
     skipped = 0
@@ -508,7 +559,7 @@ def main(argv: list[str]) -> int:
         f"processed, {skipped} already complete, {total} in range",
         flush=True,
     )
-    return 0
+    return settle_transforms(started_at)
 
 
 if __name__ == "__main__":
