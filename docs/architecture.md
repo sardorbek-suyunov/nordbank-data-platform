@@ -13,7 +13,7 @@ machine; the cloud footprint exists only to prove the transformation layer is po
 | ECB FX rates (ECB the publisher of record, Frankfurter the transport) | REST API | Interval, one request per date; unpublished dates absent in bronze, gap-filled in silver | Daily |
 | Card network settlement files | CSV in object storage | File arrival, identity by content checksum; a late file lands in the partition of its arrival | Daily |
 | Sanctions / PEP list (OpenSanctions schema, synthetic content) | Bulk snapshot | Full refresh, versioned by the simulated publisher's version string | Weekly by platform choice; the real publisher exports four times a day |
-| Macro indicators (FRED) | REST API | Incremental append | Monthly |
+| Macro indicators (FRED) | REST API | Full re-request with append: every observation of each series on every run, a revision landing as a new row | Monthly |
 
 ### Ingestion pattern per source
 
