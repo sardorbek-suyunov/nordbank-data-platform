@@ -174,11 +174,13 @@ else
 	uv run python scripts/requirements_export.py
 endif
 
-dbt-build: ## Run dbt build against the active target
-	@echo "not implemented until M4"
+dbt-build: ## Build and test the bronze models inside the stack (dbt build --warn-error)
+	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/dbt_run.py build --select path:models/bronze --warn-error
 
-dbt-docs: ## Generate and serve the dbt documentation site
-	@echo "not implemented until M4"
+dbt-docs: ## Generate the static documentation site inside the stack and copy it to data/dbt-docs/
+	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/dbt_run.py docs generate --static
+	mkdir -p data/dbt-docs
+	docker compose cp airflow-scheduler:/tmp/dbt/target/static_index.html data/dbt-docs/index.html
 
 dq: ## Run the data quality gates and write results to the dq schema
 	@echo "not implemented until M7"

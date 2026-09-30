@@ -78,6 +78,8 @@ x-airflow-common: &airflow-common
     # warehouse DDL from inside here, because the warehouse file is on a named volume and is
     # not reachable from the host.
     - ./contracts:/opt/airflow/contracts:ro
+    # The dbt project (spec 007). Read-only: dbt writes its target and logs under /tmp/dbt.
+    - ./dbt:/opt/airflow/dbt:ro
     - ./infra/warehouse:/opt/airflow/infra/warehouse:ro
     - ./pyproject.toml:/opt/airflow/pyproject.toml:ro
     - airflow-logs:/opt/airflow/logs

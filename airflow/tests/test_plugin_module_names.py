@@ -26,3 +26,15 @@ def test_no_plugin_module_shadows_the_standard_library() -> None:
         str(path.relative_to(PLUGINS)) for path in modules if path.stem in sys.stdlib_module_names
     )
     assert clashes == [], f"plugin modules named like standard-library modules: {clashes}"
+
+
+# The third-party packages the platform imports, in Airflow's environment or in dbt's. The same
+# registration would shadow any of them; a module named `dbt.py` would have become `dbt`.
+PACKAGES = {"dbt", "duckdb", "pyarrow", "boto3", "botocore", "requests", "yaml", "psycopg2"}
+
+
+def test_no_plugin_module_shadows_a_package_the_platform_imports() -> None:
+    modules = [path for path in PLUGINS.rglob("*.py") if path.stem != "__init__"]
+    assert len(modules) >= 15
+    clashes = sorted(str(path.relative_to(PLUGINS)) for path in modules if path.stem in PACKAGES)
+    assert clashes == [], f"plugin modules named like packages the platform imports: {clashes}"
