@@ -137,7 +137,7 @@ its area.
 | [004](specs/004-mutation-engine.md) | Approved, implemented, amended | The mutation engine: the simulation clock, the tick state machine, seven change classes, the tick log as a reconciliation control, and scripted schema drift |
 | [005](specs/005-extraction-and-bronze-landing.md) | Approved, implemented, amended | Extraction and bronze landing: watermark extraction, the batch registry, contracts bootstrapped from the dictionary, quarantine, tokenisation at extraction, schema drift and the interleaved backfill |
 | [006](specs/006-external-feeds.md) | Approved version 2, implemented, amended | The four external feeds: snapshot, file-arrival and interval modes, file identity by checksum, contract selection, payload fidelity, the simulated processor and publisher, and recorded fixtures |
-| [007](specs/007-dbt-bronze-models.md) | Draft | The dbt project and bronze models: registry-filtered views over the lake, generated from the contracts, a `ci` ingestion and dbt build in CI, and the documentation on GitHub Pages |
+| [007](specs/007-dbt-bronze-models.md) | Approved version 2 | The dbt project and bronze models: registry-filtered views over the lake, generated from the contracts, a `ci` ingestion and dbt build in CI, and the documentation on GitHub Pages |
 
 | Record | Status | Decision |
 |---|---|---|

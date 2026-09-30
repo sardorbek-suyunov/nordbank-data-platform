@@ -60,6 +60,7 @@ def test_a_first_version_needs_neither():
         "002-source-system-schema.md",
         "005-extraction-and-bronze-landing.md",
         "006-external-feeds.md",
+        "007-dbt-bronze-models.md",
     ],
 )
 def test_the_reissued_specifications_pass_as_they_stand(name):
