@@ -26,17 +26,31 @@ graceful run should be able to answer the same four questions at any time.
    the extract step's report, and `dq.quarantine_log`, indexed by the same step from the
    quarantine objects. Two representations of one fact need a check, and this is it, for
    failed batches as much as registered ones.
+6. **Does every identifier token in registered bronze resolve in the vault?** The extract task
+   tokenises and discards the cleartext; the register step re-reads the raw values from the
+   source or the delivery and vaults them. A value that changed between the two reads would
+   leave a token in bronze that nothing resolves: a subject who could then be neither erased
+   nor screened, because both go through the vault (ADR 0005). The backfill cannot produce it,
+   since nothing writes to the source between a day's extract and its register step; a deployed
+   source that is written to all day can. Every identifier column of every contract version is
+   read from every registered object and each distinct token looked up.
 
-Exit code 0 when 1, 2, 4 and 5 are clean, whatever 3 says. Runs inside a container.
+Exit code 0 when 1, 2, 4, 5 and 6 are clean, whatever 3 says. Runs inside a container.
 """
 
 from __future__ import annotations
 
+import io
 import sys
+from collections.abc import Iterable, Mapping
 
-sys.path.insert(0, "/opt/airflow/plugins")
+for _path in ("/opt/airflow/plugins", "/opt/airflow/scripts"):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from nordbank_ops import clients, warehouse  # noqa: E402
+
+Entity = tuple[str, str]
 
 
 def main() -> int:
@@ -71,6 +85,15 @@ def main() -> int:
              where b.status in ('registered', 'failed')
                and b.rows_quarantined <> coalesce(q.rows, 0)
              order by b.batch_id
+            """
+        ).fetchall()
+        vault = {
+            token for (token,) in connection.execute("select token from meta.pii_vault").fetchall()
+        }
+        registered = connection.execute(
+            """
+            select source_system, entity, object_prefix from ops.batch_registry
+             where status = 'registered' and rows_landed > 0 order by entity, batch_id
             """
         ).fetchall()
         (quarantined_total,) = connection.execute(
@@ -125,15 +148,111 @@ def main() -> int:
     for batch_id, status, claimed, indexed in disagreeing[:20]:
         print(f"   {batch_id} ({status}): registry {claimed}, quarantine index {indexed}")
 
+    columns = identifier_columns(_contract_chains())
+    scoped = [
+        (system, entity, prefix)
+        for system, entity, prefix in registered
+        if (system, entity) in columns
+    ]
+    tokens = identifier_tokens(client, bucket, scoped, columns)
+    unresolved = unresolved_tokens(tokens, vault)
+    checked = sum(len(found) for found in tokens.values())
+    distinct = len(set().union(*tokens.values())) if tokens else 0
+    print(
+        f"\n6. identifier tokens in registered bronze with no vault row: "
+        f"{sum(len(found) for found in unresolved.values())} of {checked} (column, token) pair(s), "
+        f"{distinct} distinct token(s), "
+        f"over {len(scoped)} registered batch(es) of {len(columns)} entities with identifier "
+        f"columns, against {len(vault)} vault row(s)"
+    )
+    for (system, entity, column), found in sorted(unresolved.items()):
+        print(f"   {system}.{entity}.{column}: {len(found)} unresolved, e.g. {sorted(found)[0]}")
+    # A check that read nothing proves nothing: registered batches of entities that carry
+    # identifiers exist, so some token must have been read.
+    vacuous = bool(scoped) and checked == 0
+    if vacuous:
+        print("   read no token from batches that should carry identifiers; not a clean result")
+
     # An empty registry has no open batch, no missing object and no watermark ahead of
     # anything, so every question above answers "none". That is not a clean registry.
     if not batches:
         print("\nintegrity: nothing to check, the registry holds no batch")
         return 2
 
-    clean = not still_open and not missing and not ahead and not disagreeing
+    clean = (
+        not still_open
+        and not missing
+        and not ahead
+        and not disagreeing
+        and not unresolved
+        and not vacuous
+    )
     print(f"\nintegrity: {'clean' if clean else 'NOT CLEAN'} across {len(batches)} batch(es)")
     return 0 if clean else 1
+
+
+def _contract_chains():
+    """Every version of every contract of every source, keyed on (source system, entity)."""
+    from data_contract import load_history
+    from nordbank_ops.ingest import contract_root
+
+    root = contract_root()
+    chains = {}
+    for directory in sorted(p for p in root.iterdir() if p.is_dir()):
+        for entity, versions in load_history(directory).items():
+            chains[(versions[-1].source_system, entity)] = versions
+    return chains
+
+
+def identifier_columns(chains: Mapping[Entity, Iterable]) -> dict[Entity, tuple[str, ...]]:
+    """The identifier columns of each entity, across every contract version it has had.
+
+    A column an older version classified as an identifier is still in the objects that version
+    wrote, so a retired column is checked as long as those objects exist.
+    """
+    out = {}
+    for key, versions in chains.items():
+        names = sorted(
+            {
+                c.name
+                for version in versions
+                for c in version.columns
+                if c.classification == "identifier"
+            }
+        )
+        if names:
+            out[key] = tuple(names)
+    return out
+
+
+def identifier_tokens(client, bucket: str, batches, columns) -> dict[tuple[str, str, str], set]:
+    """Every distinct non-null value of every identifier column, per entity and column."""
+    import pyarrow.parquet as pq
+
+    found: dict[tuple[str, str, str], set] = {}
+    for system, entity, prefix in batches:
+        wanted = columns[(system, entity)]
+        for key in _keys(client, bucket, prefix):
+            body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+            handle = pq.ParquetFile(io.BytesIO(body))
+            present = [name for name in wanted if name in handle.schema_arrow.names]
+            if not present:
+                continue
+            table = handle.read(columns=present)
+            for name in present:
+                values = {v for v in table.column(name).to_pylist() if v is not None}
+                found.setdefault((system, entity, name), set()).update(values)
+    return found
+
+
+def unresolved_tokens(tokens: Mapping, vault: set) -> dict:
+    """The tokens, per entity and column, that have no vault row."""
+    return {where: values - vault for where, values in tokens.items() if values - vault}
+
+
+def _keys(client, bucket: str, prefix: str) -> list[str]:
+    response = client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    return [item["Key"] for item in response.get("Contents", [])]
 
 
 def _count(client, bucket: str, prefix: str) -> int:
