@@ -355,7 +355,9 @@ halts.
   on the failed day, re-runs only the feed that failed, and lands the file under version 2.
 
 **Resuming after a code fix.** `make backfill` resumes by **clearing** the runs of the day it
-stopped on, because Airflow allows one run per logical date. It clears through the REST API,
+stopped on, because Airflow allows one run per logical date. It clears only the runs of the DAGs
+the registry shows incomplete for that day, waits for a run that is still going rather than
+clearing it, and never ticks the source back to a day it has passed. It clears through the REST API,
 `POST /api/v2/dags/{dag_id}/clearTaskInstances` with `"run_on_latest_version": true`
 (`scripts/airflow_api.py`), not with `airflow tasks clear`, and once a cleared run finishes it
 checks that every task instance that ran did so on the DAG's latest version and stops if one did
