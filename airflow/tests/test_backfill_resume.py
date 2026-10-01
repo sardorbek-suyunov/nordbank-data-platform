@@ -1,7 +1,9 @@
-"""The backfill restores `transform_bronze`'s pause state as it found it.
+"""The backfill resumes from the registry, and restores the pause.
 
-The state is recorded before the pause and restored explicitly, including after a loop that was
-killed while it held the DAG.
+A day's completeness is read from the registry; `transform_bronze`'s pause state is restored as
+it was found. The loop runs against a world held in memory: Airflow's runs, the registry's
+batches and the simulation's day, and every action the loop takes is recorded so a test can say
+what it did not do.
 """
 
 from __future__ import annotations
@@ -12,7 +14,207 @@ import backfill
 import pytest
 
 ANCHOR = dt.date(2026, 7, 20)
+CUT_OFF_DAY = dt.date(2026, 8, 20)
+MALFORMED = "structurally malformed: the file ends part way through a detail record"
+DRIFT = "breaking drift: settlements lost merchant_name"
 DAY = dt.date(2026, 9, 16)
+
+
+def _relational(day: dt.date, *, core: int = 16, ref: int = 29) -> list[dict]:
+    """A registry interval with `ref` reference entities and `core` core entities registered."""
+    return [
+        {"source_schema": schema, "entity": f"{schema}_{n}", "status": "registered"}
+        for schema, count in (("ref", ref), ("core", core))
+        for n in range(count)
+    ]
+
+
+def _batch(entity: str, status: str, *, reason=None, delivery=None, interval="2026-08-20"):
+    return {
+        "entity": entity,
+        "interval_start": f"{interval}T00:00:00+00:00",
+        "status": status,
+        "failure_reason": reason,
+        "delivery": delivery,
+    }
+
+
+def _cut_off() -> list[dict]:
+    """The two sibling batches the cut-off delivery failed, both parked for the sender."""
+    return [
+        _batch("settlements", "failed", reason=MALFORMED, delivery="parked"),
+        _batch("settlement_totals", "failed", reason=MALFORMED, delivery="parked"),
+    ]
+
+
+# --- A day's completeness comes from the registry ---------------------------------------------
+
+
+def test_reference_and_core_are_judged_each_against_their_own_entity_count() -> None:
+    whole = _relational(CUT_OFF_DAY)
+    assert len(whole) >= 45
+    assert backfill.relational_complete(whole) == {
+        backfill.REFERENCE_DAG: True,
+        backfill.CORE_DAG: True,
+    }
+
+    short_of_core = _relational(CUT_OFF_DAY, core=15)
+    assert backfill.relational_complete(short_of_core) == {
+        backfill.REFERENCE_DAG: True,
+        backfill.CORE_DAG: False,
+    }
+
+    # A drift resolved by a contract bump leaves a failed batch beside the registered one.
+    resolved = [*whole, {"source_schema": "core", "entity": "core_0", "status": "failed"}]
+    assert backfill.relational_complete(resolved)[backfill.CORE_DAG] is True
+
+
+FEED_CASES = [
+    # (name, run state, batches, complete, parked, failures)
+    ("never ran", None, [], False, 0, 0),
+    ("ran and registered", "success", [_batch("settlements", "registered")], True, 0, 0),
+    ("failed on a delivery parked for its sender", "failed", _cut_off(), True, 2, 0),
+    (
+        "failed on breaking drift, parked for a person",
+        "failed",
+        [_batch("settlements", "failed", reason=DRIFT, delivery="parked")],
+        False,
+        0,
+        1,
+    ),
+    ("failed before allocating anything", "failed", [], False, 0, 1),
+    (
+        "an API feed whose retry registered the interval",
+        "success",
+        [
+            _batch("fx_rates", "failed", reason="HTTP 503 after 5 attempts"),
+            _batch("fx_rates", "registered"),
+        ],
+        True,
+        0,
+        0,
+    ),
+    (
+        "an API feed that failed and was never registered",
+        "failed",
+        [_batch("fx_rates", "failed", reason="HTTP 503 after 5 attempts")],
+        False,
+        0,
+        1,
+    ),
+    (
+        "a refused delivery that has since landed",
+        "failed",
+        [_batch("settlements", "failed", reason=MALFORMED, delivery="landed")],
+        True,
+        0,
+        0,
+    ),
+    (
+        "a refused delivery that is neither parked nor landed",
+        "failed",
+        [_batch("settlements", "failed", reason=MALFORMED, delivery=None)],
+        False,
+        0,
+        1,
+    ),
+]
+
+
+def test_the_feed_cases_cover_every_outcome() -> None:
+    assert len(FEED_CASES) >= 9
+    assert {case[3] for case in FEED_CASES} == {True, False}
+
+
+@pytest.mark.parametrize(
+    ("state", "batches", "complete", "parked", "failures"),
+    [case[1:] for case in FEED_CASES],
+    ids=[case[0] for case in FEED_CASES],
+)
+def test_a_feed_is_judged_by_its_batches(state, batches, complete, parked, failures) -> None:
+    verdict = backfill.judge_feed(backfill.SETTLEMENT_DAG, state, batches)
+    assert verdict.complete is complete
+    assert len(verdict.parked) == parked
+    assert len(verdict.failures) == failures
+
+
+class World:
+    """Airflow's runs, the registry and the simulation, as the loop sees them."""
+
+    def __init__(self, simulated: dt.date) -> None:
+        self.simulated = simulated
+        self.runs: dict[tuple[str, dt.date], dict] = {}
+        self.feed_batches: dict[str, list[dict]] = {}
+        self.intervals: dict[dt.date, list[dict]] = {}
+        self.actions: list[tuple] = []
+
+    def complete_day(self, day: dt.date, *, settlement: list[dict] | None = None) -> None:
+        self.intervals[day] = _relational(day)
+        for dag in backfill.feeds_due(day):
+            batches = settlement if dag == backfill.SETTLEMENT_DAG and settlement else []
+            state = "failed" if any(b["status"] == "failed" for b in batches) else "success"
+            self.add_run(dag, day, state, batches or [_batch(dag, "registered")])
+
+    def add_run(self, dag: str, day: dt.date, state: str, batches: list[dict]) -> None:
+        run_id = f"{dag}__{day}"
+        self.runs[(dag, day)] = {"run_id": run_id, "state": state}
+        self.feed_batches[run_id] = batches
+
+    def install(self, monkeypatch) -> None:
+        monkeypatch.setattr(backfill, "existing_run", lambda dag, day: self.runs.get((dag, day)))
+        monkeypatch.setattr(backfill, "feed_batches", lambda run_id: self.feed_batches[run_id])
+        monkeypatch.setattr(backfill, "simulation_state", lambda: (ANCHOR, self.simulated, 0))
+        monkeypatch.setattr(backfill, "interval_state", self.interval_state)
+        monkeypatch.setattr(backfill, "tick_one_day", self.tick)
+        monkeypatch.setattr(
+            backfill, "deliver", lambda day, **_: self.actions.append(("deliver", day))
+        )
+        monkeypatch.setattr(backfill, "trigger_and_wait", self.trigger_and_wait)
+        monkeypatch.setattr(backfill, "start_run", self.start_run)
+        monkeypatch.setattr(backfill, "wait_for", self.wait_for)
+
+    def interval_state(self, day: dt.date, _expected: int) -> dict:
+        return {"batches": self.intervals.get(day, []), "failed": []}
+
+    def tick(self, day: dt.date, _simulated: dt.date) -> None:
+        if day != self.simulated:
+            self.actions.append(("tick", day))
+        self.simulated = day
+
+    def trigger_and_wait(self, dag: str, day: dt.date) -> str:
+        self.actions.append(("run", dag, day))
+        schema = backfill.RELATIONAL[dag]
+        kept = [b for b in self.intervals.get(day, []) if b["source_schema"] != schema]
+        count = backfill.EXPECTED[dag]
+        fresh = [b for b in _relational(day) if b["source_schema"] == schema][:count]
+        self.intervals[day] = kept + fresh
+        return "success"
+
+    def start_run(self, dag: str, day: dt.date, _conf=None) -> str:
+        self.actions.append(("run", dag, day))
+        self.add_run(dag, day, "success", [_batch(dag, "registered")])
+        return self.runs[(dag, day)]["run_id"]
+
+    def wait_for(self, dag: str, run_id: str) -> str:
+        return next(r["state"] for r in self.runs.values() if r["run_id"] == run_id)
+
+
+def test_a_re_run_over_the_parked_day_completes_and_does_nothing(monkeypatch, capsys) -> None:
+    """Measurement (a) in miniature: the defect's own range, re-run after the window finished."""
+    world = World(simulated=dt.date(2026, 9, 18))
+    days = [CUT_OFF_DAY + dt.timedelta(days=n) for n in (-1, 0, 1)]
+    for day in days:
+        world.complete_day(day, settlement=_cut_off() if day == CUT_OFF_DAY else None)
+    world.install(monkeypatch)
+
+    assert backfill.ingest_days(days[0], days[-1], ANCHOR, None) == 0
+
+    assert world.actions == []
+    out = capsys.readouterr().out
+    parked = [line for line in out.splitlines() if "parked, for the sender" in line]
+    assert len(parked) >= 2
+    assert all(str(CUT_OFF_DAY) in line for line in parked)
+    assert "0 day(s) processed, 3 already complete" in out
 
 
 # --- The pause state is restored as it was found ----------------------------------------------
