@@ -60,7 +60,7 @@ What exists and runs today:
   kept in `_raw_payload` with its identifiers tokenised, quarantine per record with its reason,
   and a PII scan that searches every bronze and quarantine object, bytes and decoded values,
   for every vault value.
-- 569 unit tests, 41 DAG integrity tests and 84 integration tests; the unit
+- 603 unit tests, 41 DAG integrity tests and 84 integration tests; the unit
   and DAG suites also run with networking disabled (`make test-offline`); two CI workflows, the
   `stack` job seeding at the acceptance anchor, ingesting a week through the real DAGs with no
   live external call and building bronze.
@@ -222,15 +222,15 @@ Expected timings and results:
 | `make health` | Five components, all `pass`, exit 0 |
 | `make verify-dag` | Four tasks succeed; both warehouse tasks report pool `warehouse_access` |
 | `make schema-apply` | 14 schema files, 5 seed files, 463 classifications; running it twice changes nothing |
-| `make test` | 569 passed, 2 skipped (they run in the image) |
+| `make test` | 603 passed, 2 skipped (they run in the image) |
 | `make test-dags` | 41 passed, with the execution path printed |
 | `make seed` | 166,381 rows at `ci` in 11 s |
 | `make seed-verify` | 14 invariants, all pass, before and after any number of ticks; invariant 9's statistical band is not asserted at `ci` and says so |
 | `make tick` | One business day in about 450 ms at `ci`; refuses an out-of-order or skipped date by naming the one it expected |
 | `make tick-acceptance` | Sixty ticks and the evidence for specification 004; `REPLAY=1` proves replay determinism |
 | `make test-integration` | 84 tests, `schema-check` reports 463 columns agreeing, then `seed-verify`; refuses a loaded warehouse unless `FORCE=1`, because it reseeds the source; runs in CI's `stack` job |
-| `make test-offline` | 612 passed with `--network none`, about 70 seconds; httpfs loads from the build-time install |
-| `make backfill FROM=2026-07-20 TO=2026-09-18` | About an hour at `ci` after a fresh seed at the acceptance anchor, 59 seconds a day, then one bronze build of the whole history in about 30 seconds. Specification 007's runs ended with 2,971 batches, 4 explicitly failed (the scripted cut-off transmission and its reattempt), none open. The fourth acceptance run, before the registry fix below, had 3,000 |
+| `make test-offline` | 646 passed with `--network none`, about 70 seconds; httpfs loads from the build-time install |
+| `make backfill FROM=2026-07-20 TO=2026-09-18` | About an hour at `ci` after a fresh seed at the acceptance anchor, 59 seconds a day, then one bronze build of the whole history in about 30 seconds. Specification 007's runs ended with 2,971 batches, 4 explicitly failed (the scripted cut-off transmission and its reattempt), none open. The fourth acceptance run, before the registry fix below, had 3,000. Re-invoked over a finished range it ticks and triggers nothing, about 4 seconds a day |
 | `make ingest-integrity` | `clean`, seven checks, across every batch: every identifier token resolves in the vault, and no entity has more physical schemas than contract versions |
 | `make dbt-build` | 50 views and 267 tests, 318 passing with `--warn-error` and no warning, in 10 to 20 seconds at `ci` |
 | `make dbt-prove` | About 18 seconds; every test and rule fails on its planted fixture and passes elsewhere |
@@ -262,16 +262,6 @@ Deferred work, with the milestone that owns it:
 
 Found at specification 007 and not fixed there:
 
-- **Re-invoking `make backfill` over a range with a parked delivery fails. Open, and the next
-  work: `fix/M4-backfill-resume`.** The day's settlement run is `failed`, correctly, so the loop
-  re-runs the day and the tick guard refuses. Specification 007's amendments record it. Ruled,
-  for the fix:
-  - a day's completeness comes from the registry, and a day whose only failure is a parked
-    delivery counts as complete;
-  - the loop never re-ticks a past day;
-  - the pause step restores the pause state `transform_bronze` had before the loop, rather than
-    unpausing it. Today's code already leaves a DAG that was paused before the loop paused, and
-    unpauses only what it paused; the fix records the prior state and restores it explicitly.
 - **A bronze view built empty is stale until the next build.** FRED's is, until a keyed run
   registers (ADR 0018).
 - **Every bronze read lists its prefix and reads every footer.** 2.46 seconds over 2,968 objects at
@@ -279,6 +269,37 @@ Found at specification 007 and not fixed there:
 - **The `stack` job takes about fifteen minutes of its thirty**, 14 minutes 32 seconds measured.
   The loop drives Airflow through its REST API and builds bronze once, which took it from 28
   minutes 38 seconds; the window is fixed by coverage and is not shortened.
+
+Resolved after specification 007, on `fix/M4-backfill-resume`:
+
+- **Re-invoking `make backfill` over a range with a parked delivery failed.** The day's settlement
+  run is `failed`, correctly, so the loop read the day as incomplete, tried to re-run it, and the
+  tick guard refused. Specification 007's amendments record the defect. The fix follows the
+  ruling: a day's completeness comes from the registry, per DAG, and a feed whose only failures
+  are deliveries parked for their sender is complete; the source is ticked only when it sits one
+  day before the day being processed, and a day it has reached re-runs only its incomplete DAGs;
+  and the loop records `transform_bronze`'s pause state in an Airflow Variable before pausing it
+  and restores that state, so a loop killed while it held the DAG no longer leaves it paused for
+  good. Measured on a throwaway stack seeded at the acceptance anchor and backfilled fresh, the
+  same stack and range before and after:
+  - **(a) A re-run over 2026-08-19 to 2026-08-22.** Before: exit 2 at the tick guard, "25 day(s)
+    past it". After: exit 0 in 42 seconds, all four days complete, the cut-off delivery reported
+    parked on 2026-08-20, no tick, no ingestion run created or cleared. The whole sixty-one-day
+    window re-run afterwards: 61 days complete in 246 seconds, both parked days reported, nothing
+    ticked, triggered or cleared.
+  - **(b) A day killed while core banking ran, then resumed.** Before, on 2026-09-15: the resume
+    cleared the reference data run that had already succeeded and the core banking run that was
+    still going, and re-ran both; `transform_bronze`, left paused by the killed loop, was taken
+    for paused by the operator, stayed paused, and bronze was not built. After, on 2026-09-16: the
+    resume waited for the running core banking run rather than clearing it, re-ran nothing, ran
+    only the two feeds that had never run, ticked nothing, and restored `transform_bronze` to the
+    unpaused state the killed loop had recorded, then built bronze.
+  - **(c) `transform_bronze` paused before the loop.** Before: it stayed paused, as the ruling
+    said today's code already did. After: it stays paused, over the two new days 2026-09-17 and
+    2026-09-18, and the one build at the end is skipped because a paused DAG runs nothing.
+
+  The interruptions added no batch: the stack ended with 2,971 batches, 4 failed, as
+  specification 007's runs did, and `make ingest-integrity` clean.
 
 Resolved at specification 006's final review:
 
