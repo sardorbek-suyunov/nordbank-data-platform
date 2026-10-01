@@ -289,3 +289,52 @@ def test_a_whole_file_with_a_conflicting_declaration_is_still_refused_for_it(war
     whole = {**_file("sha256:other", "2026-08-20"), "structural_fault": None}
     (unit,) = _open(dt.date(2026, 9, 3), [whole])
     assert unit["refuse"].startswith("declaration conflict")
+
+
+def test_the_backfill_reads_a_refused_delivery_as_parked_then_landed(warehouse, contracts):
+    """What `scripts/feed_state.py` tells the backfill about each failed batch.
+
+    Both sibling batches of a cut-off delivery read as parked, through the sighting recorded
+    against the first of them; a delivery that failed for a reason that is not a verdict is not
+    parked; and once the same bytes land, the failed batches read as landed.
+    """
+    import feed_state
+
+    cut_off = _file("sha256:cut", "2026-08-20")
+    (unit,) = _open(dt.date(2026, 8, 20), [cut_off])
+    _fail(warehouse, unit["batches"], "structurally malformed: ends part way through a record")
+    flaky = _file("sha256:flaky", "2026-08-21")
+    (other,) = _open(dt.date(2026, 8, 21), [flaky])
+    _fail(warehouse, other["batches"], "the extract task did not report")
+
+    connection = duckdb.connect(str(warehouse))
+    try:
+        parked = [
+            feed_state.delivery_of(connection, "cardnet", b["batch_id"]) for b in unit["batches"]
+        ]
+        assert len(parked) >= 2
+        assert parked == ["parked"] * len(parked)
+        assert [
+            feed_state.delivery_of(connection, "cardnet", b["batch_id"]) for b in other["batches"]
+        ] == [None, None]
+
+        identity.record_ingested(
+            connection,
+            checksum_="sha256:cut",
+            source_system="cardnet",
+            entity="settlements",
+            key=cut_off["key"],
+            size=100,
+            business_date=dt.date(2026, 8, 20),
+            publisher_version=None,
+            batch_id="settlements-20260820T000000-02",
+            now=NOW,
+            file_sequence=1,
+            revision=1,
+        )
+        landed = [
+            feed_state.delivery_of(connection, "cardnet", b["batch_id"]) for b in unit["batches"]
+        ]
+        assert landed == ["landed"] * len(parked)
+    finally:
+        connection.close()

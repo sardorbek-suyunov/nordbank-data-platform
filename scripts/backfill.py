@@ -22,6 +22,17 @@ made.
 state rather than from an argument, so re-invoking it over a range it has already finished
 changes nothing, and invoking it after a halt continues from the day that stopped it.
 
+**A day's completeness is read from the registry, per DAG, and never from a run's state.** A
+run's state says how its last try ended, and a settlement run that refused a cut-off file ends
+`failed` for ever, correctly, while the day it belongs to is as complete as it can be: the
+delivery waits on its sender, not on a re-run. Until this was fixed, re-invoking the loop over a
+range holding such a day read the day as incomplete, tried to tick the source back to it, and
+the tick guard refused. Reference data is complete when its twenty-nine entities registered,
+core banking when its sixteen did, and a feed when every batch its run allocated registered or
+failed with a delivery that has since landed or is parked for its sender (ADR 0016). A run state
+is consulted only to wait for a run still going, and to catch a run that failed before
+allocating anything.
+
 **The whole window must lie in the past**, and that is Airflow's constraint rather than this
 loop's. The scheduler refuses to schedule task instances for a run whose logical date is in
 the future — `Logical date is in future` — and it refuses in silence: the run sits `running`
@@ -52,12 +63,12 @@ where the warehouse volume is.
    already holds — and on nothing in each other, so they are triggered together and waited
    for together.
 
-A day is complete when core banking registered all forty-five entities for it and every feed
-due that day has a successful run. A feed run that fails on breaking drift halts the loop as a
-failed core batch does, naming the batch and the reason, because a person resolves it with a
-contract commit. A delivery refused as structurally malformed or for a declaration conflict
-does not halt it: the sender resolves those by sending again, the delivery is parked (ADR 0016)
-and the run stays failed in Airflow, so the loop reports it and goes on to the next day.
+A feed batch that fails on breaking drift halts the loop as a failed core batch does, naming
+the batch and the reason, because a person resolves it with a contract commit; its delivery is
+parked too, but it waits on a person, not on the sender. A delivery refused as structurally
+malformed or for a declaration conflict does not halt it: the sender resolves those by sending
+again, the delivery is parked (ADR 0016) and the run stays failed in Airflow, so the loop
+reports it, on this run and on every later one that passes the day, and goes on.
 
 **Bronze is built once, at the end.** `transform_bronze` is scheduled on every registration,
 and during a backfill that is about four builds a day, each holding the warehouse file.
@@ -84,6 +95,7 @@ import json
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -217,11 +229,6 @@ def feeds_due(day: dt.date) -> list[str]:
     return due
 
 
-def run_state(dag_id: str, day: dt.date) -> str | None:
-    held = existing_run(dag_id, day)
-    return held["state"] if held else None
-
-
 def start_run(dag_id: str, day: dt.date, conf: dict | None = None) -> str:
     """Start one run for one logical date without waiting, clearing it if it already exists."""
     held = existing_run(dag_id, day)
@@ -258,9 +265,87 @@ def sender_resolves(reason: str | None) -> bool:
     return bool(reason) and str(reason).startswith(SENDER_RESOLVES)
 
 
-def feed_failures(run_id: str) -> list[dict]:
+def feed_batches(run_id: str) -> list[dict]:
+    """Every batch a feed run allocated, over all its tries, with each failed delivery's fate."""
     payload = in_container("feed_state.py", "--run-id", run_id)
-    return json.loads(payload.strip().splitlines()[-1])["failed"]
+    return json.loads(payload.strip().splitlines()[-1])["batches"]
+
+
+# Reference data and core banking write into one registry interval; the schema tells them apart.
+RELATIONAL = {REFERENCE_DAG: "ref", CORE_DAG: "core"}
+
+
+def relational_complete(batches: list[dict]) -> dict[str, bool]:
+    """Whether reference data and core banking each registered every entity for the day.
+
+    An entity is done when any of its batches registered: a failed batch beside a registered
+    one is a drift that was resolved, not one outstanding.
+    """
+    registered = {(b["source_schema"], b["entity"]) for b in batches if b["status"] == "registered"}
+    return {
+        dag: sum(1 for schema_, _ in registered if schema_ == schema) >= EXPECTED[dag]
+        for dag, schema in RELATIONAL.items()
+    }
+
+
+@dataclass(frozen=True)
+class FeedDay:
+    """One feed's standing for one day, as the registry records it."""
+
+    complete: bool
+    parked: tuple[dict, ...] = ()
+    failures: tuple[dict, ...] = ()
+
+
+def judge_feed(dag_id: str, run_state_: str | None, batches: list[dict]) -> FeedDay:
+    """Whether a feed is complete for a day, from the batches its run allocated.
+
+    Complete when every failed batch is accounted for: its delivery has since landed, or it is
+    parked and waits on its sender, or, for an API feed with no delivery, a later try of the run
+    registered the same entity and interval. A run that never happened is incomplete, and so is
+    one that failed without a failed batch to say why. Parked for breaking drift is a failure:
+    a person resolves it, with a contract commit, and the loop halts for it.
+    """
+    if run_state_ is None:
+        return FeedDay(complete=False)
+    registered = {
+        (b["entity"], b["interval_start"]) for b in batches if b["status"] == "registered"
+    }
+    parked: list[dict] = []
+    failures: list[dict] = []
+    for batch in batches:
+        if batch["status"] != "failed":
+            continue
+        delivery = batch.get("delivery")
+        if delivery == "landed":
+            continue
+        if delivery == "parked" and sender_resolves(batch["failure_reason"]):
+            parked.append(batch)
+        elif delivery is None and (batch["entity"], batch["interval_start"]) in registered:
+            continue
+        else:
+            failures.append(batch)
+    if run_state_ == "failed" and not any(b["status"] == "failed" for b in batches):
+        reason = "the run failed before any batch failed; see its tasks"
+        failures.append({"entity": dag_id, "failure_reason": reason})
+    return FeedDay(complete=not failures, parked=tuple(parked), failures=tuple(failures))
+
+
+def feed_day(dag_id: str, day: dt.date) -> FeedDay:
+    held = existing_run(dag_id, day)
+    if held is None:
+        return FeedDay(complete=False)
+    return judge_feed(dag_id, held["state"], feed_batches(held["run_id"]))
+
+
+def report_parked(day: dt.date, feeds: dict[str, FeedDay]) -> None:
+    for verdict in feeds.values():
+        for batch in verdict.parked:
+            print(
+                f"backfill: {day}: {batch['entity']} parked, for the sender to resolve: "
+                f"{batch['failure_reason']}",
+                flush=True,
+            )
 
 
 def deferral_demo(day: dt.date) -> str:
@@ -569,8 +654,11 @@ def ingest_days(start: dt.date, end: dt.date, anchor: dt.date, demo: dt.date | N
         # Both DAGs write into one registry, so one interval's registered set covers both and
         # a day is complete when all forty-five entities are in it.
         state = interval_state(day, EXPECTED[CORE_DAG] + EXPECTED[REFERENCE_DAG])
-        pending = [dag for dag in feeds_due(day) if run_state(dag, day) != "success"]
-        if state["complete"] and not pending:
+        relational = all(relational_complete(state["batches"]).values())
+        feeds = {dag: feed_day(dag, day) for dag in feeds_due(day)}
+        report_parked(day, feeds)
+        pending = [dag for dag, verdict in feeds.items() if not verdict.complete]
+        if relational and not pending:
             skipped += 1
             day += dt.timedelta(days=1)
             continue
@@ -586,7 +674,7 @@ def ingest_days(start: dt.date, end: dt.date, anchor: dt.date, demo: dt.date | N
         demo_today = demo == day and SETTLEMENT_DAG in pending
         deliver(day, settlement_files=not demo_today)
 
-        if not state["complete"]:
+        if not relational:
             print(f"backfill: {day}: {REFERENCE_DAG}", flush=True)
             trigger_and_wait(REFERENCE_DAG, day)
             print(f"backfill: {day}: {CORE_DAG}", flush=True)
@@ -606,28 +694,11 @@ def ingest_days(start: dt.date, end: dt.date, anchor: dt.date, demo: dt.date | N
             conf = SETTLEMENT_CONF if dag == SETTLEMENT_DAG else None
             print(f"backfill: {day}: {dag}", flush=True)
             started[dag] = start_run(dag, day, conf)
-        failed_feeds = []
+        verdicts = {}
         for dag, run_id in started.items():
-            if wait_for(dag, run_id) != "success":
-                failed_feeds.extend(
-                    feed_failures(run_id)
-                    or [
-                        {
-                            "entity": dag,
-                            "failure_reason": (
-                                "the run failed before any batch failed; see its tasks"
-                            ),
-                        }
-                    ]
-                )
-        for_the_sender = [f for f in failed_feeds if sender_resolves(f["failure_reason"])]
-        for failure in for_the_sender:
-            print(
-                f"backfill: {day}: {failure['entity']} parked, for the sender to resolve: "
-                f"{failure['failure_reason']}",
-                flush=True,
-            )
-        failed_feeds = [f for f in failed_feeds if f not in for_the_sender]
+            verdicts[dag] = judge_feed(dag, wait_for(dag, run_id), feed_batches(run_id))
+        report_parked(day, verdicts)
+        failed_feeds = [batch for verdict in verdicts.values() for batch in verdict.failures]
         if failed_feeds:
             return halt(day, failed_feeds)
 
