@@ -32,6 +32,10 @@ ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 class AirflowApiError(RuntimeError):
     """The API refused a request; carries the method, path and status, never a credential."""
 
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 class Client:
     def __init__(self, env_file: Path = ENV_FILE) -> None:
@@ -62,7 +66,7 @@ class Client:
             if error.code == 401 and path != "/auth/token" and not _retried:
                 self._token = None
                 return self.call(method, path, body, _retried=True)
-            raise AirflowApiError(f"{method} {path}: HTTP {error.code}") from None
+            raise AirflowApiError(f"{method} {path}: HTTP {error.code}", error.code) from None
         return json.loads(text) if text else None
 
     @staticmethod
@@ -98,6 +102,24 @@ class Client:
 
     def set_paused(self, dag_id: str, paused: bool) -> None:
         self.call("PATCH", f"/api/v2/dags/{dag_id}", {"is_paused": paused})
+
+    def get_variable(self, key: str) -> str | None:
+        """An Airflow Variable's value, or None when it is not set."""
+        try:
+            return self.call("GET", f"/api/v2/variables/{key}")["value"]
+        except AirflowApiError as error:
+            if error.status == 404:
+                return None
+            raise
+
+    def set_variable(self, key: str, value: str) -> None:
+        if self.get_variable(key) is None:
+            self.call("POST", "/api/v2/variables", {"key": key, "value": value})
+        else:
+            self.call("PATCH", f"/api/v2/variables/{key}", {"key": key, "value": value})
+
+    def delete_variable(self, key: str) -> None:
+        self.call("DELETE", f"/api/v2/variables/{key}")
 
     def run_state(self, dag_id: str, run_id: str) -> str | None:
         return self.call("GET", f"/api/v2/dags/{dag_id}/dagRuns/{run_id}").get("state")
