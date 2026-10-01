@@ -62,9 +62,12 @@ and the run stays failed in Airflow, so the loop reports it and goes on to the n
 **Bronze is built once, at the end.** `transform_bronze` is scheduled on every registration,
 and during a backfill that is about four builds a day, each holding the warehouse file.
 Measured over sixty-one days, it slowed the backfill by more than the 15 per cent specification
-007 allows, so the loop pauses the DAG while it runs, unpauses it whatever happens, triggers one
-build at the end, and reports the window complete only when that build has succeeded. Daily
-operation keeps the schedule.
+007 allows, so the loop pauses the DAG while it runs, restores the pause state it found whatever
+happens, triggers one build at the end, and reports the window complete only when that build has
+succeeded. Daily operation keeps the schedule. The state it found is recorded in an Airflow
+Variable before the pause, so a loop killed before it could restore leaves the record behind and
+the next invocation restores the state the DAG had before either of them, not the pause the
+killed one left. A DAG that was paused before the loop stays paused, and bronze is not built.
 
 **One day demonstrates the sensor waiting.** `--defer-demo DATE` triggers the settlement DAG on
 that day *before* the clearing file is delivered, watches its sensor task until Airflow reports
@@ -412,28 +415,50 @@ def _after(run_: dict, since: dt.datetime) -> bool:
     return bool(stamp) and dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")) >= since
 
 
+# Where the loop records the pause state `transform_bronze` had before it, for as long as the
+# loop holds the DAG. In the stack rather than on the host, so it goes with the stack it describes.
+HOLD_RECORD = "backfill_transform_bronze_paused_before"
+
+
 def hold_transforms() -> bool:
-    """Pause `transform_bronze` for the loop, if it is running; True when this paused it.
+    """Pause `transform_bronze` for the loop; returns the pause state to restore after it.
 
     Specification 007's rule, applied by measurement: building bronze after every registration
     slowed the sixty-one-day backfill by more than 15 per cent of its wall time, so the backfill
     builds it once, at the end. Daily operation is unchanged: the DAG stays scheduled on every
     registration, and is paused only while a backfill runs. An event that arrives while a DAG is
-    paused queues nothing, so no backlog of builds follows the unpause.
+    paused queues nothing, so no backlog of builds follows the restore.
+
+    **The prior state is recorded before the pause, and restored explicitly.** Kept only in this
+    process, it is lost when the process is killed before its `finally` runs, and the next
+    invocation finds the DAG paused by the killed one and takes that pause for the operator's: it
+    would leave the DAG paused for good and never build bronze. A record left behind is that
+    case, and its state, not the DAG's present one, is what is restored.
     """
-    if api().is_paused(TRANSFORM_DAG):
-        print(f"backfill: {TRANSFORM_DAG} is already paused; leaving it paused", flush=True)
-        return False
-    api().set_paused(TRANSFORM_DAG, True)
-    print(f"backfill: {TRANSFORM_DAG} paused while the loop runs; it builds once at the end")
-    return True
+    recorded = api().get_variable(HOLD_RECORD)
+    if recorded is None:
+        prior = api().is_paused(TRANSFORM_DAG)
+        api().set_variable(HOLD_RECORD, json.dumps(prior))
+    else:
+        prior = bool(json.loads(recorded))
+        print(
+            f"backfill: an earlier backfill ended without restoring {TRANSFORM_DAG}; it was "
+            f"{'paused' if prior else 'unpaused'} before that one, and that is what is restored",
+            flush=True,
+        )
+    if prior:
+        print(f"backfill: {TRANSFORM_DAG} was paused before the loop and stays paused", flush=True)
+    else:
+        api().set_paused(TRANSFORM_DAG, True)
+        print(f"backfill: {TRANSFORM_DAG} paused while the loop runs; it builds once at the end")
+    return prior
 
 
-def release_transforms(held: bool) -> None:
-    """Unpause what `hold_transforms` paused, whatever happened in between."""
-    if held:
-        api().set_paused(TRANSFORM_DAG, False)
-        print(f"backfill: {TRANSFORM_DAG} unpaused", flush=True)
+def release_transforms(prior: bool) -> None:
+    """Restore the pause state `hold_transforms` recorded, whatever happened in between."""
+    api().set_paused(TRANSFORM_DAG, prior)
+    api().delete_variable(HOLD_RECORD)
+    print(f"backfill: {TRANSFORM_DAG} {'left paused' if prior else 'unpaused'}", flush=True)
 
 
 def build_once() -> None:
@@ -519,15 +544,18 @@ def main(argv: list[str]) -> int:
     anchor, _simulated, _sequence = simulation_state()
     started_at = dt.datetime.now(dt.UTC)
 
-    held = hold_transforms()
+    prior = hold_transforms()
     try:
         code = ingest_days(start, end, anchor, demo)
     finally:
-        release_transforms(held)
+        release_transforms(prior)
     if code != 0:
         return code
-    if held:
-        build_once()
+    if prior:
+        # A paused DAG does not run a triggered run, so there is nothing to build into.
+        print(f"backfill: bronze is not built: {TRANSFORM_DAG} is paused", flush=True)
+        return 0
+    build_once()
     return settle_transforms(started_at)
 
 
