@@ -1,9 +1,9 @@
-"""The backfill resumes from the registry, and restores the pause.
+"""The backfill resumes from the registry, never re-ticks a past day, and restores the pause.
 
-A day's completeness is read from the registry; `transform_bronze`'s pause state is restored as
-it was found. The loop runs against a world held in memory: Airflow's runs, the registry's
-batches and the simulation's day, and every action the loop takes is recorded so a test can say
-what it did not do.
+A day's completeness is read from the registry; the source is ticked only from the day before;
+`transform_bronze`'s pause state is restored as it was found. The loop runs against a world held in
+memory: Airflow's runs, the registry's batches and the simulation's day, and every action the
+loop takes is recorded so a test can say what it did not do.
 """
 
 from __future__ import annotations
@@ -138,6 +138,43 @@ def test_a_feed_is_judged_by_its_batches(state, batches, complete, parked, failu
     assert len(verdict.failures) == failures
 
 
+# --- The tick only from the day before --------------------------------------------------------
+
+
+TICK_CASES = [
+    # (name, simulated, relational pending, expected: True, False or "refuse")
+    ("the source one day behind, a new day", DAY - dt.timedelta(days=1), True, True),
+    ("the source at the day, interrupted after its tick", DAY, True, False),
+    ("the source at the day, only a feed outstanding", DAY, False, False),
+    ("the source past the day, only a feed outstanding", DAY + dt.timedelta(days=3), False, False),
+    ("the source past the day, core outstanding", DAY + dt.timedelta(days=3), True, "refuse"),
+    ("the source two days behind", DAY - dt.timedelta(days=2), True, "refuse"),
+    ("the registry ahead of the source", DAY - dt.timedelta(days=1), False, "refuse"),
+]
+
+
+def test_the_tick_cases_cover_ticking_waiting_and_refusing() -> None:
+    assert len(TICK_CASES) >= 7
+    assert {str(case[3]) for case in TICK_CASES} == {"True", "False", "refuse"}
+
+
+@pytest.mark.parametrize(
+    ("simulated", "pending", "expected"),
+    [case[1:] for case in TICK_CASES],
+    ids=[case[0] for case in TICK_CASES],
+)
+def test_the_source_is_ticked_only_from_the_day_before(simulated, pending, expected) -> None:
+    if expected == "refuse":
+        with pytest.raises(SystemExit):
+            backfill.tick_needed(DAY, simulated, ANCHOR, pending)
+    else:
+        assert backfill.tick_needed(DAY, simulated, ANCHOR, pending) is expected
+
+
+def test_the_anchor_is_never_ticked() -> None:
+    assert backfill.tick_needed(ANCHOR, ANCHOR, ANCHOR, True) is False
+
+
 class World:
     """Airflow's runs, the registry and the simulation, as the loop sees them."""
 
@@ -165,7 +202,7 @@ class World:
         monkeypatch.setattr(backfill, "feed_batches", lambda run_id: self.feed_batches[run_id])
         monkeypatch.setattr(backfill, "simulation_state", lambda: (ANCHOR, self.simulated, 0))
         monkeypatch.setattr(backfill, "interval_state", self.interval_state)
-        monkeypatch.setattr(backfill, "tick_one_day", self.tick)
+        monkeypatch.setattr(backfill, "tick", self.tick)
         monkeypatch.setattr(
             backfill, "deliver", lambda day, **_: self.actions.append(("deliver", day))
         )
@@ -176,9 +213,8 @@ class World:
     def interval_state(self, day: dt.date, _expected: int) -> dict:
         return {"batches": self.intervals.get(day, []), "failed": []}
 
-    def tick(self, day: dt.date, _simulated: dt.date) -> None:
-        if day != self.simulated:
-            self.actions.append(("tick", day))
+    def tick(self, day: dt.date) -> None:
+        self.actions.append(("tick", day))
         self.simulated = day
 
     def trigger_and_wait(self, dag: str, day: dt.date) -> str:
@@ -215,6 +251,43 @@ def test_a_re_run_over_the_parked_day_completes_and_does_nothing(monkeypatch, ca
     assert len(parked) >= 2
     assert all(str(CUT_OFF_DAY) in line for line in parked)
     assert "0 day(s) processed, 3 already complete" in out
+
+
+def test_a_resumed_day_re_runs_only_its_incomplete_dags(monkeypatch) -> None:
+    """Measurement (b) in miniature: reference data and the clearing file done, the rest not."""
+    world = World(simulated=DAY)
+    world.intervals[DAY] = _relational(DAY, core=7)
+    world.add_run(backfill.SETTLEMENT_DAG, DAY, "success", [_batch("settlements", "registered")])
+    world.install(monkeypatch)
+
+    assert backfill.ingest_days(DAY, DAY, ANCHOR, None) == 0
+
+    runs = [action for action in world.actions if action[0] == "run"]
+    assert len(runs) >= 2
+    assert runs == [("run", backfill.CORE_DAG, DAY), ("run", backfill.FX_DAG, DAY)]
+    assert not [action for action in world.actions if action[0] == "tick"]
+
+
+def test_a_feed_outstanding_on_a_past_day_is_re_run_without_a_tick(monkeypatch) -> None:
+    world = World(simulated=dt.date(2026, 9, 18))
+    world.complete_day(DAY)
+    del world.runs[(backfill.FX_DAG, DAY)]
+    world.install(monkeypatch)
+
+    assert backfill.ingest_days(DAY, DAY, ANCHOR, None) == 0
+
+    assert [a for a in world.actions if a[0] in ("run", "tick")] == [("run", backfill.FX_DAG, DAY)]
+
+
+def test_core_outstanding_on_a_past_day_halts_rather_than_extracting(monkeypatch) -> None:
+    world = World(simulated=dt.date(2026, 9, 18))
+    world.complete_day(DAY)
+    world.intervals[DAY] = _relational(DAY, core=15)
+    world.install(monkeypatch)
+
+    with pytest.raises(SystemExit, match="past it"):
+        backfill.ingest_days(DAY, DAY, ANCHOR, None)
+    assert world.actions == []
 
 
 # --- The pause state is restored as it was found ----------------------------------------------

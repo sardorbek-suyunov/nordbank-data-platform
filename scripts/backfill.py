@@ -33,6 +33,12 @@ failed with a delivery that has since landed or is parked for its sender (ADR 00
 is consulted only to wait for a run still going, and to catch a run that failed before
 allocating anything.
 
+**It never ticks a past day.** It ticks only when the source sits exactly one day before the day
+being ingested. A day the source has already reached re-runs only the DAGs whose batches are
+incomplete: the feeds read nothing from the source and can be re-run on any later day, but
+reference data and core banking can only be extracted while the source still holds the day, so
+an incomplete relational day the source has moved past halts, as the tick guard always did.
+
 **The whole window must lie in the past**, and that is Airflow's constraint rather than this
 loop's. The scheduler refuses to schedule task instances for a run whose logical date is in
 the future — `Logical date is in future` — and it refuses in silence: the run sits `running`
@@ -331,6 +337,19 @@ def judge_feed(dag_id: str, run_state_: str | None, batches: list[dict]) -> Feed
     return FeedDay(complete=not failures, parked=tuple(parked), failures=tuple(failures))
 
 
+def settle_runs(dag_ids: list[str], day: dt.date) -> None:
+    """Wait for a run of the day that an earlier, interrupted invocation left going.
+
+    Clearing a run that is still going would restart work already under way; it is waited for,
+    and judged when it ends.
+    """
+    for dag_id in dag_ids:
+        held = existing_run(dag_id, day)
+        if held is not None and held["state"] in ACTIVE:
+            print(f"backfill: {day}: {dag_id} is still {held['state']}; waiting for it", flush=True)
+            wait_for(dag_id, held["run_id"])
+
+
 def feed_day(dag_id: str, day: dt.date) -> FeedDay:
     held = existing_run(dag_id, day)
     if held is None:
@@ -444,8 +463,14 @@ def on_latest_version(dag_id: str, run_id: str) -> None:
     print(f"backfill: {dag_id} {run_id}: all {len(versions)} task(s) ran on version {latest}")
 
 
-def tick_one_day(day: dt.date, simulated: dt.date) -> None:
-    """Advance the simulation by exactly one day, or refuse.
+def tick_needed(
+    day: dt.date, simulated: dt.date, anchor: dt.date, relational_pending: bool
+) -> bool:
+    """Whether to tick the source to a day before working on it, or refuse.
+
+    **It ticks only from the day before.** A source at D-1 is ticked to D, and nothing else is
+    ever ticked: a day the source has already reached is not ticked again, however incomplete
+    the registry says it is, and the anchor is where the seed put the source.
 
     **One day, never a catch-up.** `make tick-to` will happily run forty-four ticks in one
     call, and using it here would break the invariant the whole loop exists to preserve: a
@@ -454,33 +479,48 @@ def tick_one_day(day: dt.date, simulated: dt.date) -> None:
     produce a reconciliation that quietly disagrees.
 
     **The check is two-sided, and the second side was missing for an hour.** At the moment of
-    ingesting day D the simulation must be at D, already ticked, or at D-1, about to be. A
+    extracting day D the simulation must be at D, already ticked, or at D-1, about to be. A
     simulation *ahead* of D breaks the same invariant as one behind it and was not caught by
     the first version of this guard, because "is it behind" is the obvious question and only
     half the property. It was found the way these things are: by reseeding the source while a
     backfill's state was still in the warehouse, and watching the loop resume happily against
     a source that no longer had the history the registry was recording.
+
+    The second side binds only the relational extraction. A day whose reference data and core
+    banking registered, and whose only outstanding work is a feed, reads nothing from the
+    source, and is re-run whatever day the source has reached. Until the fix the guard ran for
+    every day the loop did not skip, and a day with a parked delivery was never skipped.
     """
-    if simulated == day:
-        return
-    if simulated != day - dt.timedelta(days=1):
-        distance = (day - simulated).days
-        behind = (
-            f"{distance} tick(s) short of it" if distance > 0 else f"{-distance} day(s) past it"
-        )
-        raise SystemExit(
-            f"backfill: the simulation is at {simulated} and the next day to ingest is {day}, "
-            f"which is {behind}. Either way the interleaving the reconciliation depends on is "
-            "already broken: a later tick re-stamps a row an earlier one wrote, so extracting "
-            "day D once the simulation has moved past it reads a window that no longer holds "
-            "what the tick log says changed on D, and catching up in bulk first produces the "
-            "same thing. The simulation and the registry disagree about what has happened; "
-            "reseed and clear the warehouse together, or pick a range that starts where the "
-            "simulation is. "
-            "The usual cause is something that reseeds the source while a backfill's state is "
-            "still in the warehouse. `make test-integration` is one: its generator tests seed "
-            "the database, so running it against a loaded acceptance run destroys that run."
-        )
+    if day > anchor and simulated == day - dt.timedelta(days=1):
+        if not relational_pending:
+            raise SystemExit(
+                f"backfill: the registry holds reference data and core banking for {day}, but the "
+                f"source is at {simulated} and has not reached it. The two disagree about what has "
+                "happened; reseed and clear the warehouse together."
+            )
+        return True
+    if simulated == day or (simulated > day and not relational_pending):
+        return False
+    distance = (day - simulated).days
+    behind = f"{distance} tick(s) short of it" if distance > 0 else f"{-distance} day(s) past it"
+    raise SystemExit(
+        f"backfill: the simulation is at {simulated} and the next day to extract is {day}, "
+        f"which is {behind}. Either way the interleaving the reconciliation depends on is "
+        "already broken: a later tick re-stamps a row an earlier one wrote, so extracting "
+        "day D once the simulation has moved past it reads a window that no longer holds "
+        "what the tick log says changed on D, and catching up in bulk first produces the "
+        "same thing. The simulation and the registry disagree about what has happened; "
+        "reseed and clear the warehouse together, or pick a range that starts where the "
+        "simulation is. "
+        "The usual cause is something that reseeds the source while a backfill's state is "
+        "still in the warehouse. `make test-integration` is one: its generator tests seed "
+        "the database, so running it against a loaded acceptance run destroys that run."
+    )
+
+
+def tick(day: dt.date) -> None:
+    """Advance the simulation by exactly one day, to `day`."""
+    print(f"backfill: ticking the source to {day}", flush=True)
     completed = run(
         [sys.executable, "-m", "generator.mutation", "--date", day.isoformat()], capture=False
     )
@@ -651,35 +691,31 @@ def ingest_days(start: dt.date, end: dt.date, anchor: dt.date, demo: dt.date | N
     processed = 0
     day = start
     while day <= end:
-        # Both DAGs write into one registry, so one interval's registered set covers both and
-        # a day is complete when all forty-five entities are in it.
+        due = feeds_due(day)
+        settle_runs([REFERENCE_DAG, CORE_DAG, *due], day)
         state = interval_state(day, EXPECTED[CORE_DAG] + EXPECTED[REFERENCE_DAG])
-        relational = all(relational_complete(state["batches"]).values())
-        feeds = {dag: feed_day(dag, day) for dag in feeds_due(day)}
+        relational = relational_complete(state["batches"])
+        feeds = {dag: feed_day(dag, day) for dag in due}
         report_parked(day, feeds)
-        pending = [dag for dag, verdict in feeds.items() if not verdict.complete]
-        if relational and not pending:
+        relational_pending = [dag for dag, done in relational.items() if not done]
+        feeds_pending = [dag for dag, verdict in feeds.items() if not verdict.complete]
+        if not relational_pending and not feeds_pending:
             skipped += 1
             day += dt.timedelta(days=1)
             continue
 
-        # The tick for a day past the anchor, and only if the simulation has not reached it.
-        # On a resume the tick for the failed day has already run and must not run twice.
         _anchor, simulated, _sequence = simulation_state()
-        if day > anchor:
-            if simulated < day:
-                print(f"backfill: ticking the source to {day}", flush=True)
-            tick_one_day(day, simulated)
+        if tick_needed(day, simulated, anchor, bool(relational_pending)):
+            tick(day)
 
-        demo_today = demo == day and SETTLEMENT_DAG in pending
+        demo_today = demo == day and SETTLEMENT_DAG in feeds_pending
         deliver(day, settlement_files=not demo_today)
 
-        if not relational:
-            print(f"backfill: {day}: {REFERENCE_DAG}", flush=True)
-            trigger_and_wait(REFERENCE_DAG, day)
-            print(f"backfill: {day}: {CORE_DAG}", flush=True)
-            trigger_and_wait(CORE_DAG, day)
-
+        # Reference data runs ahead of core banking, and a DAG already complete is not re-run.
+        for dag in relational_pending:
+            print(f"backfill: {day}: {dag}", flush=True)
+            trigger_and_wait(dag, day)
+        if relational_pending:
             state = interval_state(day, EXPECTED[CORE_DAG] + EXPECTED[REFERENCE_DAG])
             if state["failed"]:
                 return halt(day, state["failed"])
@@ -688,7 +724,7 @@ def ingest_days(start: dt.date, end: dt.date, anchor: dt.date, demo: dt.date | N
         if demo_today:
             print(f"backfill: {day}: {SETTLEMENT_DAG}, triggered before its file", flush=True)
             started[SETTLEMENT_DAG] = deferral_demo(day)
-        for dag in pending:
+        for dag in feeds_pending:
             if dag in started:
                 continue
             conf = SETTLEMENT_CONF if dag == SETTLEMENT_DAG else None
