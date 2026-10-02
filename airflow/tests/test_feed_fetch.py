@@ -10,7 +10,7 @@ import random
 
 import pytest
 import requests
-from nordbank_ops.feeds.fetch import FetchFailedError, RetryPolicy, fetch
+from nordbank_ops.feeds.fetch import FetchFailedError, RetryPolicy, fetch, is_retried
 
 URL = "https://api.frankfurter.dev/v1/2026-07-24"
 POLICY = RetryPolicy(max_attempts=4, base_delay=1.0, max_delay=8.0, timeout=5.0)
@@ -101,6 +101,19 @@ def test_a_rate_limit_honours_retry_after_up_to_the_cap() -> None:
     )
     assert result.ok
     assert waits == [3.0, POLICY.max_delay]
+
+
+SERVER_ERRORS = [500, 501, 502, 503, 504, 520, 521, 522, 524, 599]
+
+
+def test_every_server_error_is_retried_including_the_gateway_ones() -> None:
+    """Cloudflare's 52x answered four of eight live Frankfurter requests on 2026-10-02."""
+    assert len(SERVER_ERRORS) >= 10
+    for status in SERVER_ERRORS:
+        result, calls, waits = _run(status, 200)
+        assert result.ok and len(calls) == 2 and len(waits) == 1, status
+    assert is_retried(429)
+    assert not any(is_retried(status) for status in (400, 401, 403, 404, 422, 499, 600))
 
 
 @pytest.mark.parametrize("status", [404, 422, 400])
