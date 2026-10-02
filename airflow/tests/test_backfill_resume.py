@@ -376,6 +376,7 @@ def test_the_build_is_skipped_and_the_state_restored_when_the_dag_was_paused(mon
     monkeypatch.setattr(backfill, "_API", airflow)
     monkeypatch.setattr(backfill.db, "require_stack", lambda: None)
     monkeypatch.setattr(backfill, "simulation_state", lambda: (ANCHOR, DAY, 0))
+    monkeypatch.setattr(backfill, "load_fx_history", lambda anchor: 0)
     monkeypatch.setattr(backfill, "ingest_days", lambda *_: 0)
     built: list[bool] = []
     monkeypatch.setattr(backfill, "build_once", lambda: built.append(True))
@@ -391,6 +392,7 @@ def test_the_state_is_restored_when_the_loop_fails(monkeypatch) -> None:
     monkeypatch.setattr(backfill, "_API", airflow)
     monkeypatch.setattr(backfill.db, "require_stack", lambda: None)
     monkeypatch.setattr(backfill, "simulation_state", lambda: (ANCHOR, DAY, 0))
+    monkeypatch.setattr(backfill, "load_fx_history", lambda anchor: 0)
 
     def boom(*_):
         raise SystemExit("backfill: halted")
