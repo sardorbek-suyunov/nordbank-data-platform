@@ -91,6 +91,16 @@ RECORDINGS: tuple[dict, ...] = (
             ("26", "the CI window: a Sunday, answered with Friday's date, lands nothing"),
         )
     ),
+    # The ci book's FX history (spec 008's prerequisite fix): the one time-series request the
+    # backfill makes before its first day, from the day before the book's earliest business
+    # instant, 2024-01-24, to the day before the acceptance anchor. The stack job replays it.
+    {
+        "name": "fx_history_ci",
+        "url": f"{FRANKFURTER}/v1/2024-01-23..2026-07-19",
+        "params": {"base": "EUR"},
+        "why": "the ci FX history: one request, every publication 2024-01-23 to 2026-07-17",
+        "contract": ("ecb", "fx_rates"),
+    },
     {
         "name": "fx_v2_rates",
         "url": f"{FRANKFURTER}/v2/rates",

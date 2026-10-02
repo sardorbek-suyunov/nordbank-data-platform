@@ -67,7 +67,7 @@ def test_every_fixture_says_when_and_where_it_was_captured() -> None:
 
 @pytest.mark.parametrize("name", [
     "fx_2026-07-24", "fx_2026-07-25", "fx_2026-05-01", "fx_2026-04-03", "fx_2026-12-25",
-    "fx_v2_rates", "fred_without_key", "fred_documented_example",
+    "fx_v2_rates", "fred_without_key", "fred_documented_example", "fx_history_ci",
 ])  # fmt: skip
 def test_every_fixture_was_validated_against_the_contract_in_force(name) -> None:
     _body, meta = _load(name)
@@ -152,3 +152,40 @@ def test_the_documented_fred_example_parses_under_the_contract() -> None:
     parsed = fred.parse_observations(body, "GNPCA", _contract("fred.series"))
     assert parsed.breaking is None and len(parsed.records) == 2
     assert parsed.records[0]["value"] == decimal.Decimal("1065.9")
+
+
+def test_the_recorded_ci_history_lands_every_publication_and_nothing_else() -> None:
+    """The one request the backfill makes for the ci book: 2024-01-23 to 2026-07-19."""
+    body, meta = _load("fx_history_ci")
+    assert meta["status"] == 200
+    records, payloads, drift, breaking = fx.parse_range(
+        body, dt.date(2024, 1, 23), dt.date(2026, 7, 19)
+    )
+    assert breaking is None and drift == []
+    days = sorted({r["rate_date"] for r in records})
+    assert len(days) >= 600
+    assert len(days) == 634 and len(records) == 18882 == len(payloads)
+    assert days[0] == dt.date(2024, 1, 23) and days[-1] == dt.date(2026, 7, 17)
+    assert not [d for d in days if d.weekday() >= 5]
+    gaps = {(b - a).days for a, b in zip(days, days[1:], strict=False)}
+    assert gaps <= {1, 2, 3, 4, 5}, "a gap longer than a weekend and a holiday run"
+    usd = next(r for r in records if r["rate_date"] == days[-1] and r["quote_currency"] == "USD")
+    assert isinstance(usd["rate"], decimal.Decimal)
+
+
+def test_the_history_ends_with_the_currencies_the_daily_recordings_carry() -> None:
+    """No date is in both recordings, so the check is the currency set at the seam."""
+    history = json.loads(_load("fx_history_ci")[0], parse_float=decimal.Decimal)["rates"]
+    single = json.loads(_load("fx_2026-07-20")[0], parse_float=decimal.Decimal)
+    assert len(single["rates"]) >= 29
+    assert set(history["2026-07-17"]) == set(single["rates"])
+
+
+def test_the_stack_job_is_served_the_history_at_the_url_the_backfill_requests() -> None:
+    from nordbank_ops.feeds import replay
+
+    served = replay.Replay(FIXTURES)
+    url = fx.range_url("http://192.0.2.1/v1", dt.date(2024, 1, 23), dt.date(2026, 7, 19))
+    response = served(url, params=fx.QUERY)
+    assert response.status_code == 200
+    assert response.content == _load("fx_history_ci")[0]
