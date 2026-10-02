@@ -76,6 +76,17 @@ malformed or for a declaration conflict does not halt it: the sender resolves th
 again, the delivery is parked (ADR 0016) and the run stays failed in Airflow, so the loop
 reports it, on this run and on every later one that passes the day, and goes on.
 
+**The FX history lands once, before the first day.** The daily FX run requests its own date
+only, and the source's book reaches back years before the anchor: 64 per cent of the `ci` book's
+non-EUR transactions predated any landed rate. So before the first day the loop runs
+`ingest_fx_rates` once with a history range in its conf, through the same contract and landing
+path. The range starts the day before the earliest business instant in the source, the earlier
+of `core.transactions.booked_at` and `core.payments.initiated_at`, read from the source and never
+written down here; Frankfurter snaps a start that was not a publication back to the one before
+it, so the first fact has a rate published before it. It ends the day before the anchor, the
+first day the daily runs request. The run's logical date is that last day, and a history already
+registered there is a no-op, so every later invocation passes over it.
+
 **Bronze is built once, at the end.** `transform_bronze` is scheduled on every registration,
 and during a backfill that is about four builds a day, each holding the warehouse file.
 Measured over sixty-one days, it slowed the backfill by more than the 15 per cent specification
@@ -631,6 +642,56 @@ def settle_transforms(since: dt.datetime) -> int:
     raise SystemExit(f"backfill: {TRANSFORM_DAG} did not settle within {RUN_TIMEOUT_SECONDS}s")
 
 
+EARLIEST_BUSINESS_INSTANT = (
+    "select least((select min(booked_at) from core.transactions),"
+    " (select min(initiated_at) from core.payments))"
+)
+
+
+def earliest_business_day() -> dt.date | None:
+    """The UTC day of the earliest business instant in the source's book, or None for no book."""
+    rows = db.executor()(EARLIEST_BUSINESS_INSTANT)
+    if not rows or not rows[0][0]:
+        return None
+    return dt.date.fromisoformat(str(rows[0][0])[:10])
+
+
+def history_range(earliest: dt.date, anchor: dt.date) -> tuple[dt.date, dt.date] | None:
+    """From the day before the earliest business day, through the day before the anchor."""
+    start, end = earliest - dt.timedelta(days=1), anchor - dt.timedelta(days=1)
+    return (start, end) if start <= end else None
+
+
+def history_registered(day: dt.date) -> bool:
+    """Whether the registry holds a registered FX history batch keyed on a day."""
+    payload = in_container("ingest_state.py", "--interval", day.isoformat(), "--system", "ecb")
+    state = json.loads(payload.strip().splitlines()[-1])
+    return any(b["entity"] == "fx_rates" and b["status"] == "registered" for b in state["batches"])
+
+
+def load_fx_history(anchor: dt.date) -> int:
+    """Land the FX history before the first day, once; 0, or the halt's code."""
+    earliest = earliest_business_day()
+    span = history_range(earliest, anchor) if earliest else None
+    if span is None:
+        print("backfill: no business instant before the anchor; no FX history to load")
+        return 0
+    first, last = span
+    if history_registered(last):
+        print(f"backfill: the FX history to {last} is registered; nothing to load", flush=True)
+        return 0
+    print(f"backfill: loading the FX history, {first} to {last}, in one request", flush=True)
+    run_id = start_run(
+        FX_DAG, last, {"history": {"from": first.isoformat(), "to": last.isoformat()}}
+    )
+    verdict = judge_feed(FX_DAG, wait_for(FX_DAG, run_id), feed_batches(run_id))
+    if verdict.failures:
+        return halt(last, list(verdict.failures))
+    landed = [b for b in feed_batches(run_id) if b["status"] == "registered"]
+    print(f"backfill: the FX history is registered: {len(landed)} batch(es)", flush=True)
+    return 0
+
+
 def halt(day: dt.date, failed: list[dict]) -> int:
     print(
         f"\nbackfill: halted at {day}. {len(failed)} batch(es) failed and were not registered.",
@@ -671,7 +732,7 @@ def main(argv: list[str]) -> int:
 
     prior = hold_transforms()
     try:
-        code = ingest_days(start, end, anchor, demo)
+        code = load_fx_history(anchor) or ingest_days(start, end, anchor, demo)
     finally:
         release_transforms(prior)
     if code != 0:
