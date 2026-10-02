@@ -280,14 +280,42 @@ def _admit(
 
 
 def fx_open(context: dict) -> list[dict]:
+    """Open the day's FX batch, or, with `history` in the run's conf, the one history batch.
+
+    `history` is `{"from": date, "to": date}`, set by `make backfill` before its first day. The
+    history batch is keyed on the run's logical date like any other, and a history whose
+    interval already has a registered batch opens nothing, so a cleared or repeated history run
+    lands nothing twice.
+    """
     from nordbank_ops.feeds.fx import dates_to_fetch
 
     start, day = _logical(context)
     run_id = context["dag_run"].run_id
     opened_at = dt.datetime.now(dt.UTC)
+    history = _conf(context).get("history")
 
     def allocate(connection, chains):
         held = registry.watermark(connection, FX, "fx_rates")
+        if history:
+            registered = connection.execute(
+                "select batch_id from ops.batch_registry where source_system = ? and entity = ? "
+                "and interval_start = ? and status = 'registered'",
+                [FX, "fx_rates", start],
+            ).fetchone()
+            if registered:
+                print(f"open: the FX history is registered as {registered[0]}; nothing to do")
+                return []
+            batch = _allocate(
+                connection,
+                chains,
+                "fx_rates",
+                interval_start=start,
+                ingest_date=day,
+                watermark_from=held,
+                opened_at=opened_at,
+                run_id=run_id,
+            )
+            return [{"batches": [batch], "range": [history["from"], history["to"]]}]
         dates = dates_to_fetch(held.date() if held else None, day)
         batch = _allocate(
             connection,
@@ -302,7 +330,11 @@ def fx_open(context: dict) -> list[dict]:
         return [{"batches": [batch], "dates": [d.isoformat() for d in dates]}]
 
     units = open_unit(FX, allocate)
-    print(f"open: fx_rates for {day}: dates {units[0]['dates']}")
+    for unit in units:
+        if "range" in unit:
+            print(f"open: fx_rates history for {day}: {unit['range'][0]}..{unit['range'][1]}")
+        else:
+            print(f"open: fx_rates for {day}: dates {unit['dates']}")
     return units
 
 
@@ -315,6 +347,8 @@ def fx_extract(unit: dict, context: dict) -> list[dict]:
     (batch,) = unit["batches"]
     contract = _contract(FX, batch)
     base_url = conf.get("base_url") or os.environ["FRANKFURTER_BASE_URL"]
+    if "range" in unit:
+        return [_fx_history(unit, batch, contract, base_url, conf)]
     dates = [dt.date.fromisoformat(d) for d in unit["dates"]]
     fetched = fx.fetch_dates(dates, contract, base_url=base_url, fetch=_fetcher(conf))
 
@@ -343,6 +377,43 @@ def fx_extract(unit: dict, context: dict) -> list[dict]:
             f"{', ' + outcome.detail if outcome.detail else ''}"
         )
     return [out]
+
+
+def _fx_history(unit: dict, batch: dict, contract, base_url: str, conf: dict) -> dict:
+    """Land the history through the same contract and landing path as a day's rates.
+
+    The watermark does not move: it says which dates the daily runs have requested, and the
+    history is before all of them, so a first daily run still requests its own date only and a
+    history loaded after the daily runs began leaves them where they are.
+    """
+    from nordbank_ops.feeds import fx
+    from nordbank_ops.feeds.land import failed, land
+    from nordbank_ops.tokenise import Tokeniser
+
+    start, end = (dt.date.fromisoformat(d) for d in unit["range"])
+    fetched = fx.fetch_range(start, end, base_url=base_url, fetch=_fetcher(conf))
+    if fetched.failure:
+        report = failed(contract, batch, fetched.failure)
+    else:
+        client, bucket = _lake()
+        source = fx.range_requested_as(base_url, start, end)
+        report = land(
+            client=client,
+            bucket=bucket,
+            contract=contract,
+            batch=_resolved(batch),
+            parsed=fetched.parsed,
+            tokeniser=Tokeniser.from_environment(),
+            source_file=lambda _record: source,
+        )
+    out = report.as_dict()
+    out["requests"] = [o.as_dict() for o in fetched.outcomes]
+    for outcome in fetched.outcomes:
+        print(
+            f"extract: fx history {outcome.key}: {outcome.outcome} after {outcome.attempts} "
+            f"attempt(s){', ' + outcome.detail if outcome.detail else ''}"
+        )
+    return out
 
 
 # --- card settlement files --------------------------------------------------------------------

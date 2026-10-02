@@ -17,6 +17,19 @@ The same rule makes a rate for a simulated day ahead of the real clock impossibl
 the API answers such a request with an earlier date, and the rule lands nothing.
 
 Rates are parsed from the JSON as decimals and never pass through a float.
+
+**History arrives through the time-series endpoint, once.** The daily run requests its own date
+only, so before this the platform held no rate before its first day, and 64 per cent of the `ci`
+book's non-EUR transactions had none to convert at. The history before the first day is one
+request, `GET /v1/<from>..<to>`, measured on 2026-10-02 before relying on it: it answers with
+`start_date`, `end_date` and `rates` keyed by date; every returned date is a publication (634
+dates for 2024-01-23 to 2026-07-19, no weekend, no sampling, gaps only at weekends and TARGET
+holidays); its rates for 2026-07-20 equal the single-date response's; and a range starting or
+ending on a day the ECB did not publish **snaps back** to the publication before it: asked from
+Saturday 2026-07-18, it started at Friday 2026-07-17. Each returned date lands as the daily
+request would have landed it, and a date not returned is absent, never filled. The one date
+before the requested start is that snapped-back publication, and it is landed, because it is the
+rate in force at the start; any other date outside the request refuses the whole response.
 """
 
 from __future__ import annotations
@@ -84,7 +97,10 @@ def dates_to_fetch(watermark: dt.date | None, day: dt.date) -> list[dt.date]:
 
 
 def shape_drift(response: dict, contract) -> tuple[list[dict], str | None]:
-    expected = contract.format["top_level"]
+    return _shape_drift(response, contract.format["top_level"])
+
+
+def _shape_drift(response: dict, expected: dict) -> tuple[list[dict], str | None]:
     observations = []
     for key in response:
         if key not in expected:
@@ -267,4 +283,143 @@ def fetch_dates(dates: list[dt.date], contract, *, base_url: str, fetch) -> Fetc
             if outcome.outcome == LANDED:
                 outcome.outcome, outcome.rows = DISCARDED, 0
                 outcome.detail = "answered; not landed, because the interval failed"
+    return out
+
+
+# --- the history, through the time-series endpoint -------------------------------------------
+
+# The top level of a range response. The contract's `format` describes the per-date response,
+# which is what each returned date becomes; the range is a transport for many of them, so its
+# own shape is checked here.
+RANGE_TOP_LEVEL = {
+    "amount": "number",
+    "base": "string",
+    "start_date": "date",
+    "end_date": "date",
+    "rates": "object",
+}
+
+
+def range_url(base_url: str, start: dt.date, end: dt.date) -> str:
+    """The time-series endpoint for a span of dates, without its query."""
+    return f"{base_url.rstrip('/')}/{start.isoformat()}..{end.isoformat()}"
+
+
+def range_requested_as(base_url: str, start: dt.date, end: dt.date) -> str:
+    """The URL the history was requested at, query included: the `_source_file` of its rates."""
+    query = "&".join(f"{key}={value}" for key, value in QUERY.items())
+    return f"{range_url(base_url, start, end)}?{query}"
+
+
+def _json_value(value) -> str:
+    """A parsed value written back as it was received: a decimal keeps its own digits."""
+    if isinstance(value, decimal.Decimal):
+        return str(value)
+    return json.dumps(value)
+
+
+def date_payload(response: dict, day: str) -> str:
+    """One returned date's slice of the response: the envelope, and that date's rates only.
+
+    The whole body on every record would be the 258 KB response eighteen thousand times over.
+    The slice keeps every key in the order received and every number in the digits received.
+    """
+    parts = []
+    for key, value in response.items():
+        if key == "rates":
+            entries = ",".join(
+                f"{json.dumps(currency)}:{_json_value(rate)}"
+                for currency, rate in value[day].items()
+            )
+            parts.append(f'"rates":{{{json.dumps(day)}:{{{entries}}}}}')
+        else:
+            parts.append(f"{json.dumps(key)}:{_json_value(value)}")
+    return "{" + ",".join(parts) + "}"
+
+
+def parse_range(body: bytes, start: dt.date, end: dt.date) -> tuple[list, list, list, str | None]:
+    """Records, payloads, drift and a breaking reason for one time-series response."""
+    response = json.loads(body.decode("utf-8"), parse_float=decimal.Decimal)
+    if not isinstance(response, dict):
+        observation = {
+            "column": "*",
+            "kind": "type_change",
+            "detail": f"the response is a JSON {type(response).__name__}, not an object",
+            "action": "batch failed",
+        }
+        return [], [], [observation], "response shape changed: not a JSON object"
+    drift, breaking = _shape_drift(response, RANGE_TOP_LEVEL)
+    if breaking:
+        return [], [], drift, breaking
+    days = sorted(response["rates"])
+    try:
+        served = [dt.date.fromisoformat(day) for day in days]
+    except ValueError:
+        return [], [], drift, "response shape changed: a rates key is not a date"
+    before = [day for day in served if day < start]
+    after = [day for day in served if day > end]
+    if after or len(before) > 1 or (before and start in served):
+        reason = (
+            f"answered with dates outside {start}..{end}: "
+            f"{len(before)} before it, {len(after)} after it"
+        )
+        return [], [], drift, reason
+    records, payloads = [], []
+    for day, served_day in zip(days, served, strict=True):
+        rates = response["rates"][day]
+        if not isinstance(rates, dict) or not all(
+            _is_kind(rate, "number") for rate in rates.values()
+        ):
+            return [], [], drift, f"response shape changed: the rates for {day} are not numbers"
+        payload = date_payload(response, day)
+        for currency in sorted(rates):
+            records.append(
+                {
+                    "rate_date": served_day,
+                    "base_currency": response["base"],
+                    "quote_currency": currency,
+                    "rate": rates[currency],
+                }
+            )
+            payloads.append(payload)
+    return records, payloads, drift, None
+
+
+def fetch_range(start: dt.date, end: dt.date, *, base_url: str, fetch) -> Fetched:
+    """Request the history in one call, and land every publication date it returns, or nothing."""
+    from nordbank_ops.feeds.fetch import FetchFailedError
+
+    out = Fetched()
+    key = f"{start.isoformat()}..{end.isoformat()}"
+    try:
+        result = fetch(range_url(base_url, start, end), params=QUERY)
+    except FetchFailedError as exc:
+        last = exc.result.attempts[-1] if exc.result.attempts else None
+        status = last.status if last else None
+        outcome = RequestOutcome(key, FAILED, status, exc.result.attempt_count, detail=str(exc))
+        out.outcomes.append(outcome)
+        out.failure = f"the history request {key} failed: {exc}"
+        return out
+    if not result.ok:
+        detail = f"HTTP {result.status}"
+        out.outcomes.append(
+            RequestOutcome(key, FAILED, result.status, result.attempt_count, 0, detail)
+        )
+        out.failure = f"the history request {key} answered {detail}"
+        return out
+    records, payloads, drift, breaking = parse_range(result.body, start, end)
+    out.parsed.drift.extend(drift)
+    if breaking:
+        out.parsed.breaking = breaking
+    dates = sorted({record["rate_date"] for record in records})
+    if dates:
+        detail = f"{len(dates)} publication date(s), {dates[0]} to {dates[-1]}"
+    else:
+        detail = "no publication in the range; nothing landed"
+    outcome = LANDED if records else ABSENT
+    out.outcomes.append(
+        RequestOutcome(key, outcome, result.status, result.attempt_count, len(records), detail)
+    )
+    out.parsed.records.extend(records)
+    out.parsed.payloads.extend(payloads)
     return out
