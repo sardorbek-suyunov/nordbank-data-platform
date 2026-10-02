@@ -53,14 +53,15 @@ What exists and runs today:
   the simulated source to its run's logical date, unscheduled and paused by default, with the
   profile the source recorded when it was seeded. `ingest_reference_data` and
   `ingest_core_banking` extract by watermark; `ingest_card_settlements` waits on file arrival
-  with a deferrable sensor; `ingest_fx_rates` and `ingest_macro_series` request intervals;
+  with a deferrable sensor; `ingest_fx_rates` and `ingest_macro_series` request intervals, and
+  `ingest_fx_rates` lands the history before the first day in one time-series request;
   `ingest_sanctions_list` lands snapshots. Every ingestion DAG is unscheduled and driven by the
   backfill loop, which ticks, delivers and ingests one day at a time.
 - Identifiers tokenised at extraction in every mode, the payload of every file and API record
   kept in `_raw_payload` with its identifiers tokenised, quarantine per record with its reason,
   and a PII scan that searches every bronze and quarantine object, bytes and decoded values,
   for every vault value.
-- 603 unit tests, 41 DAG integrity tests and 84 integration tests; the unit
+- 629 unit tests, 41 DAG integrity tests and 84 integration tests; the unit
   and DAG suites also run with networking disabled (`make test-offline`); two CI workflows, the
   `stack` job seeding at the acceptance anchor, ingesting a week through the real DAGs with no
   live external call and building bronze.
@@ -222,15 +223,15 @@ Expected timings and results:
 | `make health` | Five components, all `pass`, exit 0 |
 | `make verify-dag` | Four tasks succeed; both warehouse tasks report pool `warehouse_access` |
 | `make schema-apply` | 14 schema files, 5 seed files, 463 classifications; running it twice changes nothing |
-| `make test` | 603 passed, 2 skipped (they run in the image) |
+| `make test` | 629 passed, 2 skipped (they run in the image) |
 | `make test-dags` | 41 passed, with the execution path printed |
 | `make seed` | 166,381 rows at `ci` in 11 s |
 | `make seed-verify` | 14 invariants, all pass, before and after any number of ticks; invariant 9's statistical band is not asserted at `ci` and says so |
 | `make tick` | One business day in about 450 ms at `ci`; refuses an out-of-order or skipped date by naming the one it expected |
 | `make tick-acceptance` | Sixty ticks and the evidence for specification 004; `REPLAY=1` proves replay determinism |
 | `make test-integration` | 84 tests, `schema-check` reports 463 columns agreeing, then `seed-verify`; refuses a loaded warehouse unless `FORCE=1`, because it reseeds the source; runs in CI's `stack` job |
-| `make test-offline` | 646 passed with `--network none`, about 70 seconds; httpfs loads from the build-time install |
-| `make backfill FROM=2026-07-20 TO=2026-09-18` | About an hour at `ci` after a fresh seed at the acceptance anchor, 59 seconds a day, then one bronze build of the whole history in about 30 seconds. Specification 007's runs ended with 2,971 batches, 4 explicitly failed (the scripted cut-off transmission and its reattempt), none open. The fourth acceptance run, before the registry fix below, had 3,000. Re-invoked over a finished range it ticks and triggers nothing, about 4 seconds a day |
+| `make test-offline` | 676 passed with `--network none`, about two minutes; httpfs loads from the build-time install |
+| `make backfill FROM=2026-07-20 TO=2026-09-18` | About an hour at `ci` after a fresh seed at the acceptance anchor, 59 seconds a day, then one bronze build of the whole history in about 30 seconds. Specification 007's runs ended with 2,971 batches, 4 explicitly failed (the scripted cut-off transmission and its reattempt), none open. The fourth acceptance run, before the registry fix below, had 3,000. Re-invoked over a finished range it ticks and triggers nothing, about 4 seconds a day. Before the first day it lands the FX history once: one request, 634 publication dates and 18,882 rates at `ci`, and a no-op once registered |
 | `make ingest-integrity` | `clean`, seven checks, across every batch: every identifier token resolves in the vault, and no entity has more physical schemas than contract versions |
 | `make dbt-build` | 50 views and 267 tests, 318 passing with `--warn-error` and no warning, in 10 to 20 seconds at `ci` |
 | `make dbt-prove` | About 18 seconds; every test and rule fails on its planted fixture and passes elsewhere |
@@ -269,6 +270,29 @@ Found at specification 007 and not fixed there:
 - **The `stack` job takes about fifteen minutes of its thirty**, 14 minutes 32 seconds measured.
   The loop drives Airflow through its REST API and builds bronze once, which took it from 28
   minutes 38 seconds; the window is fixed by coverage and is not shortened.
+
+Resolved before specification 008, on `fix/M4-fx-history`:
+
+- **64 per cent of the `ci` book's non-EUR transactions predated any landed rate.** The FX feed's
+  first run requests its own date only (specification 006), and the source's book reaches back
+  to 2024-01-24, so 3,950 of 6,176 non-EUR transactions and 672 of 1,097 non-EUR payments had no
+  rate published before them. Specification 008's planning traced it. `make backfill` now lands
+  the history once, before the first day, through the same contract and landing path, in one
+  request to Frankfurter's time-series endpoint, measured on 2026-10-02 before relying on it:
+  every returned date is a publication, with no weekend and no sampling over 634 dates; its
+  rates equal the single-date response's; and a range starting on a day the ECB did not publish
+  snaps back to the publication before it. The range runs from the day before the earliest
+  business instant in the source, read from it, to the day before the anchor; the history batch
+  never moves the watermark, and a registered history is a no-op. Measured on the throwaway stack
+  with the sixty-one-day history: one request, one attempt, 634 publication dates from
+  2024-01-23 to 2026-07-17 and 18,882 rates landed, none quarantined; `fx_is_missing` under the
+  publication-instant rule fell from 3,950 to 0 for transactions and from 672 to 0 for payments;
+  the FX watermark stayed at 2026-09-18; no date was landed twice; the window re-run with the
+  history took 300 seconds against 246 without it, and a second invocation loaded nothing. The
+  stack job replays the recorded request and makes no live call.
+- **The feed fetch retried four server errors, not every one.** Its policy said any 5xx and its
+  set named 500, 502, 503 and 504. Frankfurter, behind Cloudflare, answered HTTP 521 to four of
+  eight requests over a few minutes on 2026-10-02; every 5xx is now retried.
 
 Resolved after specification 007, on `fix/M4-backfill-resume`:
 
