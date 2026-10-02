@@ -29,7 +29,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-RETRIED_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+# A rate limit and every server error, as the docstring says. The set used to name 500, 502, 503
+# and 504 only, and Frankfurter, behind Cloudflare, answered HTTP 521 to four of eight requests
+# made over a few minutes on 2026-10-02, while its origin was unreachable; that is a server
+# error, and it passed straight through.
+def is_retried(status: int) -> bool:
+    return status == 429 or 500 <= status <= 599
+
 
 # A requests exception quotes the full URL it failed on, query string included, and the FRED
 # feed's query string carries its API key. Error text is logged and written to
@@ -134,7 +141,7 @@ def fetch(
         else:
             result.status, result.body, result.error = response.status_code, response.content, None
             result.attempts.append(Attempt(status=response.status_code, error=None, waited=0.0))
-            if response.status_code not in RETRIED_STATUSES:
+            if not is_retried(response.status_code):
                 return result
             retry_after = _retry_after(getattr(response, "headers", None))
 
