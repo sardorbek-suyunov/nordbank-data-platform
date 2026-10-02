@@ -387,6 +387,11 @@ Other known gaps:
   `make feeds-probe` and is not built.
 - **A file ingested the day after it was sent, across a contract bump, is read one version too
   new** (ADR 0016). The backfill never produces it.
+- **A parked delivery and a task error that left no batch are indistinguishable to the loop.**
+  Owner: M7. The backfill reads a failed feed run as explained when its failed batches are
+  deliveries parked for their sender, and a task that failed in the same run without allocating
+  a batch leaves nothing in the registry to say so. The run-outcome records M7 builds are where
+  the second failure becomes visible.
 - The warehouse file is not reachable from the host by design, so probes and smoke tests run
   inside a container.
 - `ops.stack_health_probe` grows by one row per health-check run and nothing prunes it.
