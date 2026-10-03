@@ -385,56 +385,106 @@ def parse_range(body: bytes, start: dt.date, end: dt.date) -> tuple[list, list, 
     return records, payloads, drift, None
 
 
-def fetch_range(start: dt.date, end: dt.date, *, base_url: str, fetch) -> Fetched:
-    """Request the history in one call, and land every publication date it returns, or nothing.
+# A single time-series request was measured complete over five years on 2026-10-02: 2021-07-19 to
+# 2026-07-19 returned 1,281 publication dates in 530 KB, the same dates with the same rates as six
+# calendar-year requests over the span, with no weekend and no sampling. A longer range is
+# unmeasured, so a history longer than that is requested one calendar year at a time.
+MEASURED_RANGE_DAYS = 1827
 
-    Each calendar date in the range the response did not return is logged
-    `absent_no_publication`, as a single-date request for a weekend is, because the count of
-    unpublished dates is read from `ops.feed_request` (architecture.md).
+
+def history_requests(start: dt.date, end: dt.date) -> list[tuple[dt.date, dt.date]]:
+    """The spans to request: the whole history up to the measured five years, else by year."""
+    if (end - start).days + 1 <= MEASURED_RANGE_DAYS:
+        return [(start, end)]
+    spans, first = [], start
+    while first <= end:
+        last = min(dt.date(first.year, 12, 31), end)
+        spans.append((first, last))
+        first = last + dt.timedelta(days=1)
+    return spans
+
+
+def fetch_history(start: dt.date, end: dt.date, *, base_url: str, fetch) -> Fetched:
+    """Request the history, and land every publication date returned, once, or nothing.
+
+    Each calendar date in the range that no request returned is logged `absent_no_publication`,
+    as a single-date request for a weekend is, because the count of unpublished dates is read
+    from `ops.feed_request` (architecture.md). A date two yearly requests both return, the
+    publication a later year's request snaps back to, lands once; if they disagree on it, the
+    response is refused. A failed request fails the whole history, and the dates other requests
+    answered are logged `discarded`, as a failed daily interval's are.
     """
     from nordbank_ops.feeds.fetch import FetchFailedError
 
     out = Fetched()
-    key = f"{start.isoformat()}..{end.isoformat()}"
-    try:
-        result = fetch(range_url(base_url, start, end), params=QUERY)
-    except FetchFailedError as exc:
-        last = exc.result.attempts[-1] if exc.result.attempts else None
-        status = last.status if last else None
-        outcome = RequestOutcome(key, FAILED, status, exc.result.attempt_count, detail=str(exc))
-        out.outcomes.append(outcome)
-        out.failure = f"the history request {key} failed: {exc}"
-        return out
-    if not result.ok:
-        detail = f"HTTP {result.status}"
-        out.outcomes.append(
-            RequestOutcome(key, FAILED, result.status, result.attempt_count, 0, detail)
+    seen: dict[tuple[dt.date, str], decimal.Decimal] = {}
+    covered: list[tuple[dt.date, dt.date, RequestOutcome]] = []
+    for first, last in history_requests(start, end):
+        key = f"{first.isoformat()}..{last.isoformat()}"
+        try:
+            result = fetch(range_url(base_url, first, last), params=QUERY)
+        except FetchFailedError as exc:
+            attempt = exc.result.attempts[-1] if exc.result.attempts else None
+            status = attempt.status if attempt else None
+            outcome = RequestOutcome(key, FAILED, status, exc.result.attempt_count, detail=str(exc))
+            out.outcomes.append(outcome)
+            out.failure = f"the history request {key} failed: {exc}"
+            break
+        if not result.ok:
+            detail = f"HTTP {result.status}"
+            outcome = RequestOutcome(key, FAILED, result.status, result.attempt_count, 0, detail)
+            out.outcomes.append(outcome)
+            out.failure = f"the history request {key} answered {detail}"
+            break
+        records, payloads, drift, breaking = parse_range(result.body, first, last)
+        out.parsed.drift.extend(drift)
+        if breaking:
+            out.parsed.breaking = breaking
+        kept = 0
+        for record, payload in zip(records, payloads, strict=True):
+            identity = (record["rate_date"], record["quote_currency"])
+            if identity in seen:
+                if seen[identity] != record["rate"]:
+                    out.parsed.breaking = (
+                        f"two history requests disagree on {identity[1]} for {identity[0]}"
+                    )
+                continue
+            seen[identity] = record["rate"]
+            out.parsed.records.append(record)
+            out.parsed.payloads.append(payload)
+            kept += 1
+        dates = sorted({record["rate_date"] for record in records})
+        if dates:
+            detail = f"{len(dates)} publication date(s), {dates[0]} to {dates[-1]}"
+        else:
+            detail = "no publication in the range; nothing landed"
+        outcome = RequestOutcome(
+            key, LANDED if kept else ABSENT, result.status, result.attempt_count, kept, detail
         )
-        out.failure = f"the history request {key} answered {detail}"
+        out.outcomes.append(outcome)
+        covered.append((first, last, outcome))
+
+    if out.failure:
+        out.parsed.records, out.parsed.payloads = [], []
+        for outcome in out.outcomes:
+            if outcome.outcome == LANDED:
+                outcome.outcome, outcome.rows = DISCARDED, 0
+                outcome.detail = "answered; not landed, because the history failed"
         return out
-    records, payloads, drift, breaking = parse_range(result.body, start, end)
-    out.parsed.drift.extend(drift)
-    if breaking:
-        out.parsed.breaking = breaking
-    dates = sorted({record["rate_date"] for record in records})
-    if dates:
-        detail = f"{len(dates)} publication date(s), {dates[0]} to {dates[-1]}"
-    else:
-        detail = "no publication in the range; nothing landed"
-    outcome = LANDED if records else ABSENT
-    out.outcomes.append(
-        RequestOutcome(key, outcome, result.status, result.attempt_count, len(records), detail)
-    )
-    out.parsed.records.extend(records)
-    out.parsed.payloads.extend(payloads)
-    returned = {record["rate_date"] for record in records}
-    for offset in range((end - start).days + 1):
-        day = start + dt.timedelta(days=offset)
-        if day not in returned:
-            detail = f"not in the time-series response {key}; nothing landed"
-            out.outcomes.append(
-                RequestOutcome(
-                    day.isoformat(), ABSENT, result.status, result.attempt_count, 0, detail
+
+    returned = {day for day, _currency in seen}
+    for first, last, request in covered:
+        for offset in range((last - first).days + 1):
+            day = first + dt.timedelta(days=offset)
+            if day not in returned:
+                out.outcomes.append(
+                    RequestOutcome(
+                        day.isoformat(),
+                        ABSENT,
+                        request.status,
+                        request.attempts,
+                        0,
+                        f"not in the time-series response {request.key}; nothing landed",
+                    )
                 )
-            )
     return out

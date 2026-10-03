@@ -397,7 +397,7 @@ def _fx_history(unit: dict, batch: dict, contract, base_url: str, conf: dict) ->
     from nordbank_ops.tokenise import Tokeniser
 
     start, end = (dt.date.fromisoformat(d) for d in unit["range"])
-    fetched = fx.fetch_range(start, end, base_url=base_url, fetch=_fetcher(conf))
+    fetched = fx.fetch_history(start, end, base_url=base_url, fetch=_fetcher(conf))
     if fetched.failure:
         report = failed(contract, batch, fetched.failure)
     else:

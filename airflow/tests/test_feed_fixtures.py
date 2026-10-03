@@ -178,7 +178,7 @@ def test_the_recorded_ci_history_logs_every_unpublished_date() -> None:
     from nordbank_ops.feeds import replay
 
     served = replay.Replay(FIXTURES)
-    fetched = fx.fetch_range(
+    fetched = fx.fetch_history(
         dt.date(2024, 1, 23),
         dt.date(2026, 7, 19),
         base_url="http://192.0.2.1/v1",
