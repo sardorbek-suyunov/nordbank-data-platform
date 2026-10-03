@@ -153,7 +153,9 @@ def _fetcher(status: int, body: bytes = b""):
 
 def test_the_history_is_one_request_and_logs_every_unpublished_date() -> None:
     fetch, calls = _fetcher(200, _body(WEEK, "2026-07-16", "2026-07-20"))
-    fetched = fx.fetch_range(dt.date(2026, 7, 16), dt.date(2026, 7, 20), base_url=BASE, fetch=fetch)
+    fetched = fx.fetch_history(
+        dt.date(2026, 7, 16), dt.date(2026, 7, 20), base_url=BASE, fetch=fetch
+    )
     assert calls == [(f"{BASE}/2026-07-16..2026-07-20", {"base": "EUR"})]
     assert fetched.failure is None
     assert len(fetched.parsed.records) >= 9
@@ -172,18 +174,116 @@ def test_the_history_is_one_request_and_logs_every_unpublished_date() -> None:
 
 def test_a_failed_history_request_lands_nothing() -> None:
     fetch, _calls = _fetcher(404)
-    fetched = fx.fetch_range(dt.date(2026, 7, 16), dt.date(2026, 7, 20), base_url=BASE, fetch=fetch)
+    fetched = fx.fetch_history(
+        dt.date(2026, 7, 16), dt.date(2026, 7, 20), base_url=BASE, fetch=fetch
+    )
     assert fetched.failure and "HTTP 404" in fetched.failure
     assert fetched.parsed.records == []
 
     def exhausted(url, params=None):
         raise FetchFailedError(FetchResult(url=url, status=521, body=b""))
 
-    fetched = fx.fetch_range(
+    fetched = fx.fetch_history(
         dt.date(2026, 7, 16), dt.date(2026, 7, 20), base_url=BASE, fetch=exhausted
     )
     assert fetched.failure and fetched.parsed.records == []
     assert fetched.outcomes[0].outcome == fx.FAILED
+
+
+SPANS = [
+    # (name, start, end, number of requests)
+    ("the ci history, two and a half years", "2024-01-23", "2026-07-19", 1),
+    ("exactly the measured five years", "2021-07-19", "2026-07-19", 1),
+    ("a day longer than measured", "2021-07-18", "2026-07-19", 6),
+    ("seven years and a half", "2019-01-23", "2026-07-19", 8),
+]
+
+
+def test_the_span_cases_cover_both_sides_of_the_measured_length() -> None:
+    assert len(SPANS) >= 4
+    assert {c[3] for c in SPANS} >= {1, 6}
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "count"), [c[1:] for c in SPANS], ids=[c[0] for c in SPANS]
+)
+def test_a_history_beyond_five_years_is_requested_one_calendar_year_at_a_time(
+    start, end, count
+) -> None:
+    first, last = dt.date.fromisoformat(start), dt.date.fromisoformat(end)
+    spans = fx.history_requests(first, last)
+    assert len(spans) == count
+    assert spans[0][0] == first and spans[-1][1] == last
+    for (_a, b), (c, _d) in zip(spans, spans[1:], strict=False):
+        assert c == b + dt.timedelta(days=1), "the spans leave a gap or overlap"
+    if count > 1:
+        assert all(a.year == b.year for a, b in spans)
+
+
+def _yearly(bodies: dict[str, bytes]):
+    calls = []
+
+    def fetch(url, params=None):
+        calls.append(url)
+        return FetchResult(url=url, status=200, body=bodies[url.rsplit("/", 1)[1]])
+
+    return fetch, calls
+
+
+Y1 = {"2020-12-30": {"USD": "1.2271"}, "2020-12-31": {"USD": "1.2271"}}
+Y2 = {"2020-12-31": {"USD": "1.2271"}, "2021-01-04": {"USD": "1.2296"}}
+
+
+def test_a_date_two_yearly_requests_return_lands_once(monkeypatch) -> None:
+    monkeypatch.setattr(fx, "MEASURED_RANGE_DAYS", 3)
+    fetch, calls = _yearly(
+        {
+            "2020-12-30..2020-12-31": _body(Y1, "2020-12-30", "2020-12-31"),
+            # The second year's request snaps back to the first year's last publication.
+            "2021-01-01..2021-01-04": _body(Y2, "2020-12-31", "2021-01-04"),
+        }
+    )
+    fetched = fx.fetch_history(
+        dt.date(2020, 12, 30), dt.date(2021, 1, 4), base_url=BASE, fetch=fetch
+    )
+    assert len(calls) == 2
+    assert fetched.failure is None and fetched.parsed.breaking is None
+    landed = sorted(r["rate_date"] for r in fetched.parsed.records)
+    assert landed == [dt.date(2020, 12, 30), dt.date(2020, 12, 31), dt.date(2021, 1, 4)]
+    absent = [o.key for o in fetched.outcomes if o.outcome == fx.ABSENT]
+    assert absent == ["2021-01-01", "2021-01-02", "2021-01-03"]
+
+
+def test_yearly_requests_that_disagree_on_a_date_refuse_the_history(monkeypatch) -> None:
+    monkeypatch.setattr(fx, "MEASURED_RANGE_DAYS", 3)
+    disagreeing = {**Y2, "2020-12-31": {"USD": "1.2272"}}
+    fetch, _calls = _yearly(
+        {
+            "2020-12-30..2020-12-31": _body(Y1, "2020-12-30", "2020-12-31"),
+            "2021-01-01..2021-01-04": _body(disagreeing, "2020-12-31", "2021-01-04"),
+        }
+    )
+    fetched = fx.fetch_history(
+        dt.date(2020, 12, 30), dt.date(2021, 1, 4), base_url=BASE, fetch=fetch
+    )
+    assert fetched.parsed.breaking == "two history requests disagree on USD for 2020-12-31"
+
+
+def test_a_later_request_failing_discards_what_the_earlier_ones_answered(monkeypatch) -> None:
+    monkeypatch.setattr(fx, "MEASURED_RANGE_DAYS", 3)
+    answered = _body(Y1, "2020-12-30", "2020-12-31")
+
+    def fetch(url, params=None):
+        if url.endswith("2020-12-30..2020-12-31"):
+            return FetchResult(url=url, status=200, body=answered)
+        return FetchResult(url=url, status=503, body=b"")
+
+    fetched = fx.fetch_history(
+        dt.date(2020, 12, 30), dt.date(2021, 1, 4), base_url=BASE, fetch=fetch
+    )
+    assert fetched.failure and fetched.parsed.records == []
+    outcomes = [o.outcome for o in fetched.outcomes]
+    assert outcomes == [fx.DISCARDED, fx.FAILED]
 
 
 # --- the open step -----------------------------------------------------------------------------
