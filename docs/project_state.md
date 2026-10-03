@@ -173,6 +173,8 @@ its area.
 | [0016](adr/0016-contract-of-the-delivery.md) | Accepted | The contract in force is chosen by when the sender produced the delivery; a delivery refused with a verdict is parked |
 | [0017](adr/0017-mirrored-minio-server.md) | Accepted | The MinIO server from an unmodified mirror pinned by the upstream digest; bucket provisioning with boto3, and no `mc` image |
 | [0018](adr/0018-bronze-as-registry-filtered-views.md) | Accepted | Bronze is a generated view per entity over the lake, read by column name and cast to the contract, keeping only rows whose object key's batch is registered |
+| [0019](adr/0019-conversion-at-the-publication-instant.md) | Accepted | A fact converts at the latest rate published before its business instant, exactly, rounded half away from zero; a final conversion is never restated and a provisional one is flagged |
+| [0020](adr/0020-historisation-by-a-projection-based-version-rule.md) | Accepted | Silver versions an entity when its projection changes or nothing visible did, from the epoch, with business validity half-open beside system time and soft deletes closing the last version |
 
 Milestone checkpoints are in [checkpoints/](checkpoints/), one per completed milestone.
 
@@ -264,6 +266,14 @@ Deferred work, with the milestone that owns it:
 | Power BI, Streamlit, the `exports/` snapshot task | M9 |
 | BigQuery target, Terraform | M10 |
 | Replace the frozen MinIO mirror with a maintained S3-compatible server (ADR 0017) | M10 |
+
+Found at specification 008 and not fixed there:
+
+- **The reference seed is stamped with wall-clock time.** 28 of the 29 `ref` tables carry
+  `created_at` and `updated_at` equal to the real moment `make schema-apply` seeded them, not a
+  simulated instant before the book. Silver works around it by opening every first version at the
+  epoch (ADR 0020), so a reference row's `_valid_from` says nothing about when it came to exist.
+  The source owns the fix: seeding with a simulated stamp before the history start.
 
 Found at specification 007 and not fixed there:
 

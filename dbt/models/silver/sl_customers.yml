@@ -53,7 +53,7 @@ models:
             classification: pseudonymous_key
       - name: customer_reference
         data_type: VARCHAR
-        description: "Bank-assigned customer number. The business key every customer-keyed model joins on, and a token after ingest. Holds a token, 32 lowercase hexadecimal characters of a keyed hash of the cleartext, never the cleartext; the token resolves only through the vault. Classification: `identifier` (tokenised at extraction)."
+        description: "Bank-assigned customer number, a token after ingest. Not a join key: customer-keyed models join and hash surrogate keys on `customer_id`, the pseudonymous key, because an identifier is erasable through the vault. Holds a token, 32 lowercase hexadecimal characters of a keyed hash of the cleartext, never the cleartext; the token resolves only through the vault. Classification: `identifier` (tokenised at extraction)."
         config:
           meta:
             classification: identifier

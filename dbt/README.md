@@ -9,8 +9,8 @@ lake that reads only registered batches, and dbt owns those views (specification
 
 One profile, `profiles.yml`, with one target, `warehouse`, reading everything from the
 environment. dbt runs in its own virtual environment in the image, as a subprocess
-(`airflow/plugins/nordbank_ops/transform.py`): from `transform_bronze` inside the
-`warehouse_access` pool, and from `make dbt-build`. The project is mounted read-only; dbt writes
+(`airflow/plugins/nordbank_ops/transform.py`): from `transform_bronze` and `transform_silver`
+inside the `warehouse_access` pool, and from `make dbt-build`. The project is mounted read-only; dbt writes
 its target and logs under `/tmp/dbt` in the container.
 
 Primary target is DuckDB; BigQuery is kept as a secondary target to prove portability
