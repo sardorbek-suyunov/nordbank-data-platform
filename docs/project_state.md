@@ -16,6 +16,9 @@ and bronze landing) and 006 (the external feeds), merged, and 007 (the dbt proje
 models), delivered on `feat/M4-dbt-bronze`. The M4 checkpoint is
 [checkpoints/M4-summary.md](checkpoints/M4-summary.md).
 
+**M5 has begun.** Specification 008, silver for the core banking and reference entities and for
+FX rates, is approved at version 2 and in progress on `feat/M5-silver-core`.
+
 What exists and runs today:
 
 - A local stack of nine services brought up by `make up`: a source Postgres with `core`,
@@ -66,7 +69,7 @@ What exists and runs today:
   `stack` job seeding at the acceptance anchor, ingesting a week through the real DAGs with no
   live external call and building bronze.
 - The documentation set: architecture, conventions, business questions, metric definitions,
-  data dictionary, model inventory, PII classification, runbook, eight specifications and
+  data dictionary, model inventory, PII classification, runbook, nine specifications and
   eighteen decision records.
 
 What does not exist yet: silver, gold, the quality framework and its gates,
@@ -148,6 +151,7 @@ its area.
 | [005](specs/005-extraction-and-bronze-landing.md) | Approved, implemented, amended | Extraction and bronze landing: watermark extraction, the batch registry, contracts bootstrapped from the dictionary, quarantine, tokenisation at extraction, schema drift and the interleaved backfill |
 | [006](specs/006-external-feeds.md) | Approved version 2, implemented, amended | The four external feeds: snapshot, file-arrival and interval modes, file identity by checksum, contract selection, payload fidelity, the simulated processor and publisher, and recorded fixtures |
 | [007](specs/007-dbt-bronze-models.md) | Approved version 2, implemented, amended | The dbt project and bronze models: registry-filtered views over the lake, generated from the contracts, a `ci` ingestion and dbt build in CI, and the documentation on GitHub Pages |
+| [008](specs/008-silver-core-conformance.md) | Approved version 2, in progress on `feat/M5-silver-core` | Silver for the core banking and reference entities and for FX rates: deduplication, SCD2 by a projection-based version rule, soft deletes, exact EUR conversion at the publication instant with provenance, and the quasi-identifier bands |
 
 | Record | Status | Decision |
 |---|---|---|
