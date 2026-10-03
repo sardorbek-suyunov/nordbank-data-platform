@@ -38,3 +38,9 @@ models:
       +schema: silver
       +contract:
         enforced: true
+
+# The one seed, the band edges silver generalises quasi-identifiers by (specification 008
+# section 8), lives beside the silver models it feeds.
+seeds:
+  nordbank:
+    +schema: silver

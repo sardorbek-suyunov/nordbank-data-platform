@@ -1,0 +1,12 @@
+band_kind,band,lower_years,upper_years
+age,under 18,0,18
+age,18-24,18,25
+age,25-34,25,35
+age,35-44,35,45
+age,45-54,45,55
+age,55-64,55,65
+age,65+,65,
+tenure,under 1 year,0,1
+tenure,1-2 years,1,2
+tenure,2-5 years,2,5
+tenure,5+ years,5,
