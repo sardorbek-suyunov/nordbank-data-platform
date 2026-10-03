@@ -129,3 +129,23 @@ def test_the_inventory_section_lists_every_generated_model_with_a_consumer():
     rows = [line for line in section.splitlines() if line.startswith("| `sl_")]
     assert len(rows) == GENERATED_SQL
     assert all(not line.rstrip().endswith("|  |") for line in rows)
+
+
+def test_converted_facts_carry_their_provenance_and_its_test():
+    models = {m.name: m for m in silver_generate.build()}
+    for name, prefix in (("sl_transactions", "transaction"), ("sl_payments", "payment")):
+        names = [c.name for c in models[name].columns]
+        for column in (f"{prefix}_amount_eur", "fx_rate", "fx_rate_date", "fx_is_carried",
+                       "fx_is_missing", "fx_is_provisional"):  # fmt: skip
+            assert column in names, (name, column)
+        assert "silver_fx_provenance" in silver_generate.render_yml(models[name])
+
+
+def test_every_latest_state_fact_resolves_its_dimensions_at_its_instant():
+    facts = [m for m in silver_generate.build() if m.spec.history == silver_generate.LATEST]
+    # Seven latest-state facts, each resolving at least one dimension. Stated, not read.
+    assert len(facts) == 7
+    for model in facts:
+        text = silver_generate.render_yml(model)
+        assert text.count("silver_resolves_one_version") == len(model.spec.resolves) >= 1
+        assert model.spec.instant in text

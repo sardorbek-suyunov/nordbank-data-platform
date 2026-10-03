@@ -97,6 +97,12 @@ class Spec:
     added: tuple[Added, ...] = ()
     generated: bool = False
     deleted: str = "is_deleted"
+    # A fact's business instant, the dimension versions it must resolve to at that instant
+    # (column, silver model, that model's column), and the amount it converts to EUR with its
+    # currency column.
+    instant: str = ""
+    resolves: tuple[tuple[str, str, str], ...] = ()
+    converts: tuple[str, str] | None = None
 
 
 SCD2_COLUMNS = (
@@ -182,6 +188,53 @@ REFERENCE_ADDED = {"interchange_rates": business_validity(NON_PERSONAL)}
 # Core banking entities whose silver is historisation alone, generated like the `ref` tables.
 GENERATED_CORE = {"agent_locations": 3}
 
+
+def fx_columns(prefix: str) -> tuple[Added, ...]:
+    """The converted amount and its provenance (specification 008 section 6)."""
+    return (
+        Added(
+            f"{prefix}_amount_eur",
+            "DECIMAL(18,4)",
+            f"`{prefix}_amount` in EUR: divided by the latest rate published at or before the "
+            "business instant, in exact integer arithmetic, rounded half away from zero to four "
+            "places. The amount itself for EUR; null when no rate was published before the "
+            "instant, never zero and never the original amount.",
+        ),
+        Added(
+            "fx_rate",
+            "DECIMAL(18,8)",
+            "The rate converted at, in currency per euro; 1 for EUR; null when missing.",
+        ),
+        Added(
+            "fx_rate_date",
+            "DATE",
+            "The date of the rate converted at. Null for EUR and when missing.",
+        ),
+        Added(
+            "fx_is_carried",
+            "BOOLEAN",
+            "The rate's date is not the business instant's UTC date: carried across a weekend "
+            "or a holiday, or from the day before when the fact precedes the day's publication.",
+        ),
+        Added(
+            "fx_is_missing",
+            "BOOLEAN",
+            "No rate for the currency was published at or before the business instant.",
+        ),
+        Added(
+            "fx_is_provisional",
+            "BOOLEAN",
+            "The rate is the latest landed for its currency and the business instant is after "
+            "the publication instant of the next weekday after the rate's date: a newer rate may "
+            "still land, and a rebuild may restate this row. Every other conversion is final and "
+            "never restated. Never true for EUR or a missing rate.",
+        ),
+    )
+
+
+# A ledger row's instant: the start of its posting date, in UTC.
+POSTING_INSTANT = "timezone('UTC', cast(posting_date as timestamp))"
+
 # Entities whose silver is written by hand; the properties are still generated from here. The
 # floors sit below what the `ci` book lands on its first day (customers 500, addresses 590,
 # accounts 566, holders 637, cards 341, merchants 120, loans 11, installments 528), so the stack
@@ -225,6 +278,96 @@ HAND_WRITTEN: tuple[Spec, ...] = (
     ),
     Spec("loans", SCD2, 5),
     Spec("loan_installments", SCD2, 400),
+    # Latest state. Floors below the `ci` book's first day: transactions 31,473, payments 6,062,
+    # applications 21, alerts 21, sessions 20,139, posting batches 34,287, ledger lines 68,600.
+    Spec(
+        "transactions",
+        LATEST,
+        25000,
+        added=fx_columns("transaction"),
+        instant="booked_at",
+        resolves=(
+            ("account_id", "sl_accounts", "account_id"),
+            ("card_id", "sl_cards", "card_id"),
+            ("merchant_id", "sl_merchants", "merchant_id"),
+            ("agent_location_id", "sl_agent_locations", "agent_location_id"),
+            ("transaction_type_code", "sl_transaction_types", "code"),
+            ("channel_code", "sl_channels", "code"),
+            ("transaction_status_code", "sl_transaction_statuses", "code"),
+            ("transaction_currency_code", "sl_currencies", "code"),
+        ),
+        converts=("transaction_amount", "transaction_currency_code"),
+    ),
+    Spec(
+        "payments",
+        LATEST,
+        5000,
+        added=fx_columns("payment"),
+        instant="initiated_at",
+        resolves=(
+            ("account_id", "sl_accounts", "account_id"),
+            ("payment_type_code", "sl_payment_types", "code"),
+            ("payment_scheme_code", "sl_payment_schemes", "code"),
+            ("payment_status_code", "sl_payment_statuses", "code"),
+            ("payment_currency_code", "sl_currencies", "code"),
+        ),
+        converts=("payment_amount", "payment_currency_code"),
+    ),
+    Spec(
+        "loan_applications",
+        LATEST,
+        10,
+        instant="applied_at",
+        resolves=(
+            ("customer_id", "sl_customers", "customer_id"),
+            ("loan_product_code", "sl_loan_products", "code"),
+            ("loan_application_status_code", "sl_loan_application_statuses", "code"),
+            ("risk_band_code", "sl_risk_bands", "code"),
+            ("decision_reason_code", "sl_decision_reasons", "code"),
+            ("application_currency_code", "sl_currencies", "code"),
+        ),
+    ),
+    Spec(
+        "fraud_alerts",
+        LATEST,
+        10,
+        instant="alerted_at",
+        resolves=(
+            ("customer_id", "sl_customers", "customer_id"),
+            ("fraud_rule_code", "sl_fraud_rules", "code"),
+            ("fraud_disposition_code", "sl_fraud_dispositions", "code"),
+        ),
+    ),
+    Spec(
+        "login_sessions",
+        LATEST,
+        15000,
+        instant="started_at",
+        resolves=(
+            ("customer_id", "sl_customers", "customer_id"),
+            ("channel_code", "sl_channels", "code"),
+            ("login_outcome_code", "sl_login_outcomes", "code"),
+        ),
+    ),
+    Spec(
+        "gl_transactions",
+        LATEST,
+        30000,
+        instant=POSTING_INSTANT,
+        resolves=(("source_entity_code", "sl_gl_source_entities", "code"),),
+    ),
+    Spec(
+        "gl_entries",
+        LATEST,
+        60000,
+        instant=POSTING_INSTANT,
+        resolves=(
+            ("account_id", "sl_accounts", "account_id"),
+            ("gl_account_code", "sl_gl_accounts", "code"),
+            ("entry_side_code", "sl_entry_sides", "code"),
+            ("entry_currency_code", "sl_currencies", "code"),
+        ),
+    ),
 )
 
 
@@ -454,7 +597,19 @@ def render_yml(silver: Silver) -> str:
             "          config:",
             "            severity: error",
         ]
+    if spec.converts:
+        amount, currency = spec.converts
+        lines += [
+            "      - silver_fx_provenance:",
+            "          arguments:",
+            f"            key: {silver.key[0]}",
+            f"            amount: {amount}",
+            f"            currency: {currency}",
+            "          config:",
+            "            severity: error",
+        ]
     lines.append("    columns:")
+    resolves = {column: (to, to_column) for column, to, to_column in spec.resolves}
     for column in silver.columns:
         lines += [
             f"      - name: {column.name}",
@@ -464,6 +619,20 @@ def render_yml(silver: Silver) -> str:
             "          meta:",
             f"            classification: {column.classification}",
         ]
+        if column.name in resolves:
+            to, to_column = resolves.pop(column.name)
+            lines += [
+                "        data_tests:",
+                "          - silver_resolves_one_version:",
+                "              arguments:",
+                f"                to: ref('{to}')",
+                f"                to_column: {to_column}",
+                "                at: " + _quote(spec.instant),
+                "              config:",
+                "                severity: error",
+            ]
+    if resolves:
+        raise SystemExit(f"silver-generate: {silver.name} resolves unknown {sorted(resolves)}")
     return "\n".join(lines) + "\n"
 
 

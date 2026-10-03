@@ -62,3 +62,70 @@ cast({{ fx_scaled_units(units) }} as decimal(18,4))
 {% macro fx_to_eur(amount, rate) -%}
 {{ fx_units_to_eur(fx_quotient_units(amount, rate)) }}
 {%- endmacro %}
+
+{#
+  The rule a fact is converted by (specification 008 section 6): the latest rate whose
+  publication instant is at or before the fact's business instant.
+
+  `fx_published_rates()`: every landed rate, one per currency and rate date (re-reads collapse to
+  the earliest batch), with its nominal publication instant, the publication instant of the next
+  weekday after its date, and whether it is the latest landed for its currency. A fact joins it
+  with `asof left join ... on currency and instant >= published_at`; `sl_fx_rates` joins it the
+  same way at 23:59:59 UTC of each calendar date, so the two cannot disagree.
+
+  `fx_next_weekday(d)`: Monday after a Friday or a Saturday, otherwise the next day. No holiday
+  calendar: a TARGET holiday is a weekday on which the expected publication does not come.
+
+  `fx_provenance(amount, currency, instant, rate, prefix)`: the converted amount and its
+  provenance from the joined rate `rate`:
+  - EUR converts at 1, with a null rate date, never carried, missing or provisional;
+  - no rate at or before the instant: a null amount, never zero and never the original amount,
+    and `fx_is_missing`;
+  - `fx_is_carried`: the rate's date is not the fact's UTC business date, so the rate was carried
+    to it: across a weekend or a holiday, or from the day before when the fact precedes the
+    day's publication;
+  - `fx_is_provisional`: the rate is the latest landed for its currency and the instant is after
+    the publication instant of the next weekday after the rate's date, so a newer rate may still
+    land and a rebuild may restate the row. Every other conversion is final and is never
+    restated by any rebuild.
+#}
+
+{% macro fx_next_weekday(rate_date) -%}
+(cast({{ rate_date }} as date)
+ + case dayofweek(cast({{ rate_date }} as date)) when 5 then 3 when 6 then 2 else 1 end)
+{%- endmacro %}
+
+{% macro utc_date(instant) -%}
+cast(timezone('UTC', {{ instant }}) as date)
+{%- endmacro %}
+
+{% macro fx_published_rates() -%}
+select
+    quote_currency as currency_code,
+    rate_date,
+    rate,
+    {{ fx_publication_instant('rate_date') }} as published_at,
+    {{ fx_publication_instant(fx_next_weekday('rate_date')) }} as next_published_at,
+    rate_date = max(rate_date) over (partition by quote_currency) as is_latest_landed
+from (
+    select distinct on (quote_currency, rate_date) quote_currency, rate_date, rate
+    from {{ ref('br_ecb__fx_rates') }}
+    order by quote_currency, rate_date, _batch_id
+)
+{%- endmacro %}
+
+{% macro fx_provenance(amount, currency, instant, rate, prefix) -%}
+case
+    when {{ currency }} = 'EUR' then cast({{ amount }} as decimal(18,4))
+    when {{ rate }}.rate is null then null
+    else {{ fx_to_eur(amount, rate ~ '.rate') }}
+end as {{ prefix }}_amount_eur,
+case when {{ currency }} = 'EUR' then cast(1 as decimal(18,8)) else {{ rate }}.rate end as fx_rate,
+case when {{ currency }} = 'EUR' then null else {{ rate }}.rate_date end as fx_rate_date,
+coalesce({{ currency }} <> 'EUR'
+         and {{ rate }}.rate_date <> {{ utc_date(instant) }}, false) as fx_is_carried,
+({{ currency }} <> 'EUR' and {{ rate }}.rate is null) as fx_is_missing,
+coalesce({{ currency }} <> 'EUR'
+         and {{ rate }}.is_latest_landed
+         and {{ instant }} > {{ rate }}.next_published_at, false) as fx_is_provisional
+{%- endmacro %}
