@@ -189,22 +189,16 @@ adjective on a lookup.
 carries `created_at`, `updated_at` and `is_deleted`. A `ref` table carries `created_at`,
 `updated_at` and `is_active`, and never `is_deleted`: reference rows are deactivated, not
 deleted, and two overlapping flags on one row would be a defect rather than thoroughness. The
-distinction is a downstream contract, not a naming preference. `is_deleted` on a `core` row
-means the entity is removed from silver. `is_active = false` on a `ref` row means the row is
-**retained**, because a dimension must still describe historical facts that reference a retired
-code: a transaction booked under a channel the bank has since withdrawn still needs that
-channel to have a name.
+distinction is a downstream contract, not a naming preference, and what silver does with each is
+the soft-delete rule in [architecture.md](architecture.md), stated there once.
 
 ## Currency provenance
 
-Wherever an `_amount_eur` column exists, `fx_rate` and `fx_rate_date` exist beside it, and
-`fx_is_carried` where the rate may have been carried forward. A converted amount with no
-visible rate provenance is a defect: the number cannot be reproduced, checked or explained
-without them.
-
-`fx_is_missing` marks a row for which no rate existed at or before the transaction date. Such
-a row has a null `amount_eur` and raises a `dq` check of severity `error`. A missing rate is
-never written as zero and never as the unconverted amount.
+Wherever an `_amount_eur` column exists, `fx_rate`, `fx_rate_date`, `fx_is_carried`,
+`fx_is_missing` and `fx_is_provisional` exist beside it. A converted amount with no visible rate
+provenance is a defect: the number cannot be reproduced, checked or explained without them. What
+each flag means, and the rule that chooses the rate, is the currency conversion rule in
+[architecture.md](architecture.md), stated there once.
 
 ## Dimensional modelling
 

@@ -275,7 +275,7 @@ why `ref.card_products.code` is `varchar(12)` while every other reference code i
 | Column | Type | Nullable | Classification | Description | Consumed by |
 |---|---|---|---|---|---|
 | `customer_id` | bigint | no | `pseudonymous_key` | Surrogate primary key, and the platform join path to a person. A pseudonymous key: it is the pseudonym rather than the identifier, so it is never tokenised, and its personal character is neutralised by shredding the vault mappings of the identifiers on this row. | - |
-| `customer_reference` | character varying(40) | no | `identifier` | Bank-assigned customer number. The business key every customer-keyed model joins on, and a token after ingest. | - |
+| `customer_reference` | character varying(40) | no | `identifier` | Bank-assigned customer number, a token after ingest. Not a join key: customer-keyed models join and hash surrogate keys on `customer_id`, the pseudonymous key, because an identifier is erasable through the vault. | - |
 | `full_name` | character varying(200) | no | `identifier` | Legal name as captured at onboarding. | - |
 | `email` | character varying(320) | yes | `identifier` | Contact email address. | - |
 | `phone` | character varying(40) | yes | `identifier` | Contact telephone number in international format. | - |

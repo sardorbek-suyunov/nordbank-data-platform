@@ -3,8 +3,9 @@
 Every object the platform plans to build, with its layer, grain, upstream inputs and the
 business questions it serves. Each row carries the milestone that builds it. The platform tables
 marked M1 and M4 exist, defined in `infra/warehouse/schema/` and, for the health probe, by the
-warehouse initialiser, and so do the bronze models, generated from the contracts; nothing in any
-other section exists yet.
+warehouse initialiser, and so do the bronze models, generated from the contracts, the seed, and
+the silver models specification 008 builds; the settlement, sanctions and FRED silver models are
+specification 009's, and nothing in the gold sections exists yet.
 
 The inventory exists so that the coverage rule in
 [business_questions.md](business_questions.md) can be checked in both directions: no source
@@ -151,7 +152,7 @@ dimension that takes a reference table's attributes reads them from its silver m
 | `sl_loan_statuses` | One row per version (SCD2): `loan_status_id`, `_valid_from` | `br_corebank__loan_statuses` | Attributes of `dim_loan_product` consumers and `fct_loan_balance_daily` |
 | `sl_login_outcomes` | One row per version (SCD2): `login_outcome_id`, `_valid_from` | `br_corebank__login_outcomes` | Attributes of `fct_login_sessions` |
 | `sl_mcc_bands` | One row per version (SCD2): `mcc_band_id`, `_valid_from` | `br_corebank__mcc_bands` | Attributes of `dim_merchant` |
-| `sl_mcc_codes` | One row per version (SCD2): `mcc_code_id`, `_valid_from` | `br_corebank__mcc_codes` | Attributes of `dim_merchant` |
+| `sl_mcc_codes` | One row per version (SCD2): `mcc_code_id`, `_valid_from` | `br_corebank__mcc_codes` | Attributes of `dim_merchant`; `dim_merchant` |
 | `sl_payment_schemes` | One row per version (SCD2): `payment_scheme_id`, `_valid_from` | `br_corebank__payment_schemes` | Attributes of `fct_payments` |
 | `sl_payment_statuses` | One row per version (SCD2): `payment_status_id`, `_valid_from` | `br_corebank__payment_statuses` | Attributes of `fct_payments` |
 | `sl_payment_types` | One row per version (SCD2): `payment_type_id`, `_valid_from` | `br_corebank__payment_types` | Attributes of `fct_payments` |
@@ -191,10 +192,10 @@ and a durable business key, per the conventions.
 | `dim_customer` | One row per customer version | `sl_customers`, `sl_customer_addresses` | Q1, Q2, Q6, Q8, Q11, Q12, Q19 |
 | `dim_account` | One row per account version | `sl_accounts`, `sl_account_types` | Q1, Q3, Q13 |
 | `dim_card` | One row per card version | `sl_cards`, `sl_card_products` | Q4, Q10 |
-| `dim_merchant` | One row per merchant version | `sl_merchants`, `ref.mcc_codes` attributes | Q4 |
+| `dim_merchant` | One row per merchant version | `sl_merchants`, `sl_mcc_codes` attributes | Q4 |
 | `dim_loan_product` | One row per loan product version | `sl_loan_products` | Q5, Q7, Q8 |
 | `dim_agent_location` | One row per agent location version | `sl_agent_locations` | Q11 |
-| `dim_currency` | One row per currency | `ref.currencies` | Q3, Q14 |
+| `dim_currency` | One row per currency | `sl_currencies` | Q3, Q14 |
 | `dim_detection_rule` | One row per fraud detection rule version | `sl_fraud_rules` | Q10 |
 | `dim_date` | One row per calendar date | Generated | All time series questions |
 | `bridge_account_holder` | One row per account and holder | `sl_account_holders` | Q3, Q6, Q11 |
@@ -301,6 +302,7 @@ would lose the fact that the row moved.
 | Flag | Defined in | Derived in | Serves |
 |---|---|---|---|
 | `is_customer_initiated` | `ref.transaction_types`, `ref.payment_types` | `sl_transactions`, `sl_payments` | Q1, Q6 |
-| `fx_is_carried` | [architecture.md](architecture.md) | `sl_fx_rates` | Every converted amount |
-| `fx_is_missing` | [architecture.md](architecture.md) | Conversion macro | Every converted amount |
+| `fx_is_carried` | [architecture.md](architecture.md) | `fx_provenance` macro and `sl_fx_rates` | Every converted amount |
+| `fx_is_missing` | [architecture.md](architecture.md) | `fx_provenance` macro, `sl_transactions`, `sl_payments` | Every converted amount |
+| `fx_is_provisional` | [architecture.md](architecture.md) | `fx_provenance` macro and `sl_fx_rates` | Every converted amount: the conversions a rebuild may still restate |
 | `_is_current` | [conventions.md](conventions.md) | Every SCD2 silver model | History-aware joins |
