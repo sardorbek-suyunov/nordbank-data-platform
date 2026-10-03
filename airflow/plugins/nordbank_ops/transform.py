@@ -88,9 +88,17 @@ def run(arguments: Sequence[str]) -> int:
     return process.wait()
 
 
+# A test is built with bronze only when every model it reads is bronze. dbt's default, eager,
+# selects a test when any of its parents is selected, which takes in the silver tests that read
+# bronze beside silver: on a warehouse whose silver is not built yet they fail, and they belong to
+# `transform_silver`'s build, which follows. Measured: 354 tests selected eagerly, 86 of them
+# silver's, and 268 cautiously, the bronze tests and one that reads bronze alone.
+BRONZE_TESTS = ("--indirect-selection", "cautious")
+
+
 def build_bronze() -> None:
     """`dbt build --warn-error` over the bronze models; raises when dbt fails."""
-    code = run(["build", "--select", BRONZE, "--warn-error"])
+    code = run(["build", "--select", BRONZE, *BRONZE_TESTS, "--warn-error"])
     if code != 0:
         raise RuntimeError(f"dbt build over bronze exited {code}; see the output above")
 
