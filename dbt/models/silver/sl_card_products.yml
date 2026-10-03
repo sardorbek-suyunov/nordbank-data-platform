@@ -38,6 +38,13 @@ models:
             key: [card_product_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__card_products')
+            key: [card_product_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: card_product_id
         data_type: BIGINT

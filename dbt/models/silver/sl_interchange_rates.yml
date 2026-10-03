@@ -38,6 +38,13 @@ models:
             key: [interchange_rate_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__interchange_rates')
+            key: [interchange_rate_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: interchange_rate_id
         data_type: BIGINT
@@ -137,7 +144,7 @@ models:
             classification: non-personal
       - name: _business_valid_to_date
         data_type: DATE
-        description: "The day after the last day the row applies in business time, exclusive: `valid_to_date` plus one day, or 9999-12-31 while open. The source's last day is inclusive; silver exposes it half-open so a fact joins with `>=` and `<`. Classification: `non-personal` (no restriction)."
+        description: "The day after the last day the row applies in business time, exclusive: `valid_to_date` plus one day, or 9999-12-31 while open. The source's last day is inclusive; silver exposes it half-open so a fact joins with `>=` and `<`, on the current system-time version. Classification: `non-personal` (no restriction)."
         config:
           meta:
             classification: non-personal

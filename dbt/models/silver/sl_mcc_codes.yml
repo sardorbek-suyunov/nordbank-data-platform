@@ -38,6 +38,13 @@ models:
             key: [mcc_code_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__mcc_codes')
+            key: [mcc_code_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: mcc_code_id
         data_type: BIGINT

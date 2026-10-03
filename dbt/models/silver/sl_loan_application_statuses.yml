@@ -38,6 +38,13 @@ models:
             key: [loan_application_status_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__loan_application_statuses')
+            key: [loan_application_status_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: loan_application_status_id
         data_type: BIGINT

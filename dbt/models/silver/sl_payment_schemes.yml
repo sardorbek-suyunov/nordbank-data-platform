@@ -38,6 +38,13 @@ models:
             key: [payment_scheme_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__payment_schemes')
+            key: [payment_scheme_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: payment_scheme_id
         data_type: BIGINT

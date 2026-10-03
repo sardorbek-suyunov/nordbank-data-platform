@@ -97,3 +97,31 @@ select {{ key | join(', ') }}, updated_at, count(distinct row({{ columns | join(
  group by {{ key | join(', ') }}, updated_at
 having count(distinct row({{ columns | join(', ') }})) > 1
 {% endtest %}
+
+{#
+  Every observation is a version (criterion 3), for an SCD2 model with no excluded measure:
+  each observation of the upstream that is not a soft delete opens one, whether or not a contract
+  column changed, because a new `updated_at` with nothing visible changed is a source update the
+  contract does not describe (the merchants case). Returns the observations with no version
+  opening at them; a key's first opens at the epoch.
+#}
+{% test silver_observations_versioned(model, upstream, key, deleted='is_deleted') %}
+{%- set k = key | join(', ') -%}
+with observed as (
+    select distinct on ({{ k }}, updated_at) {{ k }}, updated_at, ({{ deleted }}) as _deleted
+      from {{ upstream }}
+     order by {{ k }}, updated_at, _batch_id
+),
+
+expected as (
+    select {{ k }},
+           case when row_number() over (partition by {{ k }} order by updated_at) = 1
+                then {{ scd2_epoch() }} else updated_at end as _valid_from
+      from observed
+     where not _deleted
+)
+
+select {{ k }}, _valid_from from expected
+except
+select {{ k }}, _valid_from from {{ model }}
+{% endtest %}

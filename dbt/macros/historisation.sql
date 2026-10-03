@@ -152,3 +152,16 @@ coalesce({{ valid_to_inclusive }} + 1, date '9999-12-31')
  and {{ alias }}._business_valid_from_date <= {{ on_date }}
  and {{ on_date }} < {{ alias }}._business_valid_to_date)
 {%- endmacro %}
+
+{#- The names of a relation's columns, less those named in `skip`; empty when not executing. -#}
+{% macro relation_columns(relation, skip=[]) -%}
+  {%- set names = [] -%}
+  {%- if execute -%}
+    {%- for column in adapter.get_columns_in_relation(relation) -%}
+      {%- if column.name not in skip -%}
+        {%- do names.append(column.name) -%}
+      {%- endif -%}
+    {%- endfor -%}
+  {%- endif -%}
+  {{ return(names) }}
+{%- endmacro %}

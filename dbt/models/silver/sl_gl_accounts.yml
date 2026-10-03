@@ -38,6 +38,13 @@ models:
             key: [gl_account_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__gl_accounts')
+            key: [gl_account_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: gl_account_id
         data_type: BIGINT

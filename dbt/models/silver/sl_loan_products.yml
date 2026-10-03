@@ -38,6 +38,13 @@ models:
             key: [loan_product_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__loan_products')
+            key: [loan_product_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: loan_product_id
         data_type: BIGINT

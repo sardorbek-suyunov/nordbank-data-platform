@@ -1,0 +1,57 @@
+version: 2
+models:
+  - name: sl_account_balance_observations
+    description: "Every balance observed on an account: one row per account per observation of `br_corebank__accounts`, the measure `sl_accounts` excludes from its projection because 99.8 per cent of account changes move only the balance. Re-reads collapse to the earliest batch; the observation recording a soft delete is not a balance. For M7 to reconcile against derived balances. Grain: `account_id`, `observed_at`."
+    config:
+      meta:
+        history: observations
+        upstream: br_corebank__accounts
+        grain: [account_id, observed_at]
+    data_tests:
+      - silver_unique_key:
+          arguments:
+            columns: [account_id, observed_at]
+          config:
+            severity: error
+      - silver_not_null:
+          arguments:
+            columns: [account_id, observed_at, current_balance_amount, currency_code]
+          config:
+            severity: error
+      # Below the 566 accounts the `ci` book lands on its first day, each observed at least once.
+      - silver_min_rows:
+          arguments:
+            minimum: 450
+          config:
+            severity: error
+    columns:
+      - name: account_id
+        data_type: BIGINT
+        description: "The account. Classification: `pseudonymous_key` (a key to a person-bearing entity, retained unchanged)."
+        config:
+          meta:
+            classification: pseudonymous_key
+      - name: observed_at
+        data_type: TIMESTAMP WITH TIME ZONE
+        description: "The observation's `updated_at`: when the source last changed the row, which is when it held this balance. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: current_balance_amount
+        data_type: DECIMAL(18,4)
+        description: "The balance the observation held, signed, in the account's currency. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: currency_code
+        data_type: VARCHAR
+        description: "The account's currency, the companion of the balance. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: _batch_id
+        data_type: VARCHAR
+        description: "The earliest batch that read the observation. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
