@@ -36,6 +36,8 @@ MINIMUM_TASKS: dict[str, int] = {
     "ingest_macro_series": 6,
     # dbt build over bronze, one pooled task (spec 007).
     "transform_bronze": 1,
+    # dbt build over the seed and silver, one pooled task (spec 008).
+    "transform_silver": 1,
 }
 
 
@@ -336,6 +338,30 @@ def test_transform_bronze_runs_one_build_at_a_time_in_the_warehouse_pool() -> No
     dag = _dagbag().dags["transform_bronze"]
     assert dag.max_active_runs == 1
     assert len(dag.tasks) >= MINIMUM_TASKS["transform_bronze"]
+    for task in dag.tasks:
+        assert task.pool == "warehouse_access", f"{task.task_id} holds pool {task.pool}"
+        assert task.retries == 0
+
+
+def test_transform_bronze_announces_a_successful_build() -> None:
+    """Spec 008 section 10: the build declares the asset silver is scheduled on."""
+    dag = _dagbag().dags["transform_bronze"]
+    outlets = {o.name for task in dag.tasks for o in task.outlets}
+    assert outlets == {"transform_bronze/built"}
+
+
+def test_transform_silver_fires_when_bronze_has_been_built() -> None:
+    dag = _dagbag().dags["transform_silver"]
+    condition = dag.timetable.asset_condition
+    assert type(condition).__name__ == "Asset", f"schedule is {type(condition).__name__}"
+    assert condition.name == "transform_bronze/built"
+    assert dag.catchup is False
+
+
+def test_transform_silver_runs_one_build_at_a_time_in_the_warehouse_pool() -> None:
+    dag = _dagbag().dags["transform_silver"]
+    assert dag.max_active_runs == 1
+    assert len(dag.tasks) >= MINIMUM_TASKS["transform_silver"]
     for task in dag.tasks:
         assert task.pool == "warehouse_access", f"{task.task_id} holds pool {task.pool}"
         assert task.retries == 0

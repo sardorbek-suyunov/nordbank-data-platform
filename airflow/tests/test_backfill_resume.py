@@ -404,3 +404,78 @@ def test_the_state_is_restored_when_the_loop_fails(monkeypatch) -> None:
 
     assert airflow.pauses == [True, False]
     assert airflow.variables == {}
+
+
+# --- Silver follows the one bronze build ------------------------------------------------------
+
+
+class Builds:
+    """`transform_silver` as the settle step sees it: its pause flag and its runs, which appear
+    only after a few polls, the way an asset-triggered run appears after the build behind it."""
+
+    def __init__(self, paused: bool, states: list[str], appear_after: int = 2) -> None:
+        self.paused = paused
+        self.states = states
+        self.polls = 0
+        self.appear_after = appear_after
+
+    def is_paused(self, _dag: str) -> bool:
+        return self.paused
+
+    def runs(self, _dag: str) -> list[dict]:
+        self.polls += 1
+        if self.polls <= self.appear_after:
+            return []
+        return [{"state": s, "run_after": "2026-10-03T12:00:00Z"} for s in self.states]
+
+
+SINCE = dt.datetime(2026, 10, 3, 11, 0, tzinfo=dt.UTC)
+
+
+def _quick(monkeypatch) -> None:
+    monkeypatch.setattr(backfill, "POLL_SECONDS", 0)
+    monkeypatch.setattr(backfill, "SETTLED_SECONDS", 0)
+
+
+def test_the_silver_build_is_waited_for_until_it_appears_and_succeeds(monkeypatch) -> None:
+    _quick(monkeypatch)
+    builds = Builds(paused=False, states=["success"])
+    monkeypatch.setattr(backfill, "_API", builds)
+    assert backfill.settle_silver(SINCE) == 0
+    # It did not take the empty listing before the run appeared for an idle DAG.
+    assert builds.polls > builds.appear_after
+
+
+def test_a_failed_silver_build_fails_the_backfill(monkeypatch) -> None:
+    _quick(monkeypatch)
+    monkeypatch.setattr(backfill, "_API", Builds(paused=False, states=["failed"]))
+    assert backfill.settle_silver(SINCE) == 1
+
+
+def test_a_paused_silver_dag_is_reported_and_not_waited_for(monkeypatch, capsys) -> None:
+    builds = Builds(paused=True, states=[])
+    monkeypatch.setattr(backfill, "_API", builds)
+    assert backfill.settle_silver(SINCE) == 0
+    assert builds.polls == 0
+    assert "transform_silver is paused" in capsys.readouterr().out
+
+
+def test_silver_is_settled_after_bronze_and_only_when_bronze_succeeded(monkeypatch) -> None:
+    airflow = Airflow(paused=False)
+    monkeypatch.setattr(backfill, "_API", airflow)
+    monkeypatch.setattr(backfill.db, "require_stack", lambda: None)
+    monkeypatch.setattr(backfill, "simulation_state", lambda: (ANCHOR, DAY, 0))
+    monkeypatch.setattr(backfill, "load_fx_history", lambda anchor: 0)
+    monkeypatch.setattr(backfill, "ingest_days", lambda *_: 0)
+    monkeypatch.setattr(backfill, "build_once", lambda: None)
+    order: list[str] = []
+
+    def bronze(_since, *_args, **_kwargs):
+        order.append("bronze")
+        return 1
+
+    monkeypatch.setattr(backfill, "settle_transforms", bronze)
+    monkeypatch.setattr(backfill, "settle_silver", lambda _since: order.append("silver") or 0)
+
+    assert backfill.main(["--from", str(DAY), "--to", str(DAY)]) == 1
+    assert order == ["bronze"]

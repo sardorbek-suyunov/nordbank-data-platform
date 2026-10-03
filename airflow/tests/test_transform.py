@@ -1,7 +1,7 @@
 """dbt's child process gets the lake credentials as the profile reads them, and nothing else."""
 
 import pytest
-from nordbank_ops.transform import BRONZE, PROJECT_DIR, command, lake_settings
+from nordbank_ops.transform import BRONZE, PROJECT_DIR, SILVER, command, lake_settings
 
 
 def test_the_lake_connection_becomes_the_profiles_variables():
@@ -36,4 +36,13 @@ def test_the_command_names_the_project_and_the_bronze_selection():
         "path:models/bronze",
         "--project-dir",
         PROJECT_DIR,
+    ]
+
+
+def test_silver_is_selected_with_the_seed_it_reads():
+    assert command(["build", "--select", *SILVER])[1:5] == [
+        "build",
+        "--select",
+        "path:seeds",
+        "path:models/silver",
     ]
