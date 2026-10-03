@@ -39,49 +39,49 @@ Built at M4 by specification 007. The section below is generated from the contra
 | `br_cardnet__settlement_totals` | `network`, `settlement_currency`, `_batch_id` | `bronze/cardnet/settlement_totals/` | 1 | `sl_card_settlement_totals` |
 | `br_cardnet__settlements` | `transaction_reference`, `_batch_id` | `bronze/cardnet/settlements/` | 1, 2 | `sl_card_settlements` |
 | `br_corebank__account_holders` | `account_holder_id`, `_batch_id` | `bronze/corebank/account_holders/` | 1 | `sl_account_holders`; bridge_account_holder, Q3, Q6, Q11 |
-| `br_corebank__account_statuses` | `account_status_id`, `_batch_id` | `bronze/corebank/account_statuses/` | 1 | Active account rule, Q1; Attributes of `dim_account` |
+| `br_corebank__account_statuses` | `account_status_id`, `_batch_id` | `bronze/corebank/account_statuses/` | 1 | Active account rule, Q1; Attributes of `dim_account`; `sl_account_statuses` |
 | `br_corebank__account_types` | `account_type_id`, `_batch_id` | `bronze/corebank/account_types/` | 1 | Attributes of `dim_account`; Deposit balance, Q3; `sl_account_types` |
 | `br_corebank__accounts` | `account_id`, `_batch_id` | `bronze/corebank/accounts/` | 1 | Active account rule, Q1; Cross-border rule, Q13; `sl_accounts`; deposit balance, Q3; dim_account, Q3; fct_account_balance_daily, Q3 |
 | `br_corebank__agent_locations` | `agent_location_id`, `_batch_id` | `bronze/corebank/agent_locations/` | 1 | `sl_agent_locations` |
-| `br_corebank__card_product_classes` | `card_product_class_id`, `_batch_id` | `bronze/corebank/card_product_classes/` | 1 | Attributes of `dim_card` |
+| `br_corebank__card_product_classes` | `card_product_class_id`, `_batch_id` | `bronze/corebank/card_product_classes/` | 1 | Attributes of `dim_card`; `sl_card_product_classes` |
 | `br_corebank__card_products` | `card_product_id`, `_batch_id` | `bronze/corebank/card_products/` | 1 | Attributes of `dim_card`; Interchange rule, Q4; `sl_card_products` |
 | `br_corebank__cards` | `card_id`, `_batch_id` | `bronze/corebank/cards/` | 1 | Interchange rule, Q4; `sl_cards` |
-| `br_corebank__channels` | `channel_id`, `_batch_id` | `bronze/corebank/channels/` | 1 | Attributes of `fct_transactions` and `fct_login_sessions`; mart_fraud_device_risk, Q19 |
-| `br_corebank__countries` | `country_id`, `_batch_id` | `bronze/corebank/countries/` | 1 | Attributes of `dim_account`, `dim_merchant`, `dim_customer`, `dim_agent_location`; Cross-border rule, Q13; Interchange rule, Q4; cross-border, Q13 |
-| `br_corebank__currencies` | `currency_id`, `_batch_id` | `bronze/corebank/currencies/` | 1 | Presentation rounding; `dim_currency` |
+| `br_corebank__channels` | `channel_id`, `_batch_id` | `bronze/corebank/channels/` | 1 | Attributes of `fct_transactions` and `fct_login_sessions`; `sl_channels`; mart_fraud_device_risk, Q19 |
+| `br_corebank__countries` | `country_id`, `_batch_id` | `bronze/corebank/countries/` | 1 | Attributes of `dim_account`, `dim_merchant`, `dim_customer`, `dim_agent_location`; Cross-border rule, Q13; Interchange rule, Q4; `sl_countries`; cross-border, Q13 |
+| `br_corebank__currencies` | `currency_id`, `_batch_id` | `bronze/corebank/currencies/` | 1 | Presentation rounding; `dim_currency`; `sl_currencies` |
 | `br_corebank__customer_addresses` | `customer_address_id`, `_batch_id` | `bronze/corebank/customer_addresses/` | 1 | `sl_customer_addresses` |
 | `br_corebank__customers` | `customer_id`, `_batch_id` | `bronze/corebank/customers/` | 1 | `sl_customers` |
-| `br_corebank__decision_reasons` | `decision_reason_id`, `_batch_id` | `bronze/corebank/decision_reasons/` | 1 | Attributes of `fct_loan_applications` |
-| `br_corebank__entry_sides` | `entry_side_id`, `_batch_id` | `bronze/corebank/entry_sides/` | 1 | Attributes of `fct_gl_entries`; GL integrity, Q16 |
+| `br_corebank__decision_reasons` | `decision_reason_id`, `_batch_id` | `bronze/corebank/decision_reasons/` | 1 | Attributes of `fct_loan_applications`; `sl_decision_reasons` |
+| `br_corebank__entry_sides` | `entry_side_id`, `_batch_id` | `bronze/corebank/entry_sides/` | 1 | Attributes of `fct_gl_entries`; GL integrity, Q16; `sl_entry_sides` |
 | `br_corebank__fraud_alerts` | `fraud_alert_id`, `_batch_id` | `bronze/corebank/fraud_alerts/` | 1 | Alert precision, Q10; `sl_fraud_alerts` |
-| `br_corebank__fraud_dispositions` | `fraud_disposition_id`, `_batch_id` | `bronze/corebank/fraud_dispositions/` | 1 | Alert precision, Q10; Attributes of `fct_fraud_alerts` |
+| `br_corebank__fraud_dispositions` | `fraud_disposition_id`, `_batch_id` | `bronze/corebank/fraud_dispositions/` | 1 | Alert precision, Q10; Attributes of `fct_fraud_alerts`; `sl_fraud_dispositions` |
 | `br_corebank__fraud_rules` | `fraud_rule_id`, `_batch_id` | `bronze/corebank/fraud_rules/` | 1 | `dim_detection_rule`; `sl_fraud_rules`; dim_detection_rule, Q10 |
-| `br_corebank__gl_account_types` | `gl_account_type_id`, `_batch_id` | `bronze/corebank/gl_account_types/` | 1 | Attributes of `fct_gl_entries`; GL integrity, Q16 |
-| `br_corebank__gl_accounts` | `gl_account_id`, `_batch_id` | `bronze/corebank/gl_accounts/` | 1 | Attributes of `fct_gl_entries` |
+| `br_corebank__gl_account_types` | `gl_account_type_id`, `_batch_id` | `bronze/corebank/gl_account_types/` | 1 | Attributes of `fct_gl_entries`; GL integrity, Q16; `sl_gl_account_types` |
+| `br_corebank__gl_accounts` | `gl_account_id`, `_batch_id` | `bronze/corebank/gl_accounts/` | 1 | Attributes of `fct_gl_entries`; `sl_gl_accounts` |
 | `br_corebank__gl_entries` | `gl_entry_id`, `_batch_id` | `bronze/corebank/gl_entries/` | 1 | GL integrity, Q16; `sl_gl_entries`; settlement reconciliation, Q15 |
-| `br_corebank__gl_source_entities` | `gl_source_entity_id`, `_batch_id` | `bronze/corebank/gl_source_entities/` | 1 | Attributes of `fct_gl_entries`; fct_gl_entries, Q16, spec 003 invariant 6 |
+| `br_corebank__gl_source_entities` | `gl_source_entity_id`, `_batch_id` | `bronze/corebank/gl_source_entities/` | 1 | Attributes of `fct_gl_entries`; `sl_gl_source_entities`; fct_gl_entries, Q16, spec 003 invariant 6 |
 | `br_corebank__gl_transactions` | `gl_transaction_id`, `_batch_id` | `bronze/corebank/gl_transactions/` | 1 | GL integrity, Q16; `sl_gl_transactions`; fct_gl_entries, Q16, spec 003 invariant 6 |
-| `br_corebank__holder_roles` | `holder_role_id`, `_batch_id` | `bronze/corebank/holder_roles/` | 1 | `bridge_account_holder`; bridge_account_holder, Q3, Q6 |
-| `br_corebank__interchange_rates` | `interchange_rate_id`, `_batch_id` | `bronze/corebank/interchange_rates/` | 1 | Interchange rule, Q4, Q6; `mart_revenue_interchange` |
-| `br_corebank__loan_application_statuses` | `loan_application_status_id`, `_batch_id` | `bronze/corebank/loan_application_statuses/` | 1 | Approval rate, Q8; Attributes of `fct_loan_applications` |
+| `br_corebank__holder_roles` | `holder_role_id`, `_batch_id` | `bronze/corebank/holder_roles/` | 1 | `bridge_account_holder`; `sl_holder_roles`; bridge_account_holder, Q3, Q6 |
+| `br_corebank__interchange_rates` | `interchange_rate_id`, `_batch_id` | `bronze/corebank/interchange_rates/` | 1 | Interchange rule, Q4, Q6; `mart_revenue_interchange`; `sl_interchange_rates` |
+| `br_corebank__loan_application_statuses` | `loan_application_status_id`, `_batch_id` | `bronze/corebank/loan_application_statuses/` | 1 | Approval rate, Q8; Attributes of `fct_loan_applications`; `sl_loan_application_statuses` |
 | `br_corebank__loan_applications` | `loan_application_id`, `_batch_id` | `bronze/corebank/loan_applications/` | 1 | Approval rate, Q8; `sl_loan_applications`; mart_credit_loan_lifecycle, Q9 |
 | `br_corebank__loan_installments` | `loan_installment_id`, `_batch_id` | `bronze/corebank/loan_installments/` | 1 | Delinquency rule, Q7; `sl_loan_installments`; mart_credit_loan_lifecycle, Q9 |
 | `br_corebank__loan_products` | `loan_product_id`, `_batch_id` | `bronze/corebank/loan_products/` | 1 | Net interest income proxy, Q5; `dim_loan_product`; `sl_loan_products` |
-| `br_corebank__loan_statuses` | `loan_status_id`, `_batch_id` | `bronze/corebank/loan_statuses/` | 1 | Attributes of `dim_loan_product` consumers and `fct_loan_balance_daily`; Default rule, Q8; fct_loan_balance_daily, Q5, Q7 |
+| `br_corebank__loan_statuses` | `loan_status_id`, `_batch_id` | `bronze/corebank/loan_statuses/` | 1 | Attributes of `dim_loan_product` consumers and `fct_loan_balance_daily`; Default rule, Q8; `sl_loan_statuses`; fct_loan_balance_daily, Q5, Q7 |
 | `br_corebank__loans` | `loan_id`, `_batch_id` | `bronze/corebank/loans/` | 1 | Default rule, Q8; Net interest income proxy, Q5; Origination vintage, Q5, Q7; `sl_loans`; fct_loan_balance_daily, Q5, Q7 |
-| `br_corebank__login_outcomes` | `login_outcome_id`, `_batch_id` | `bronze/corebank/login_outcomes/` | 1 | Attributes of `fct_login_sessions`; Unrecognised device, Q19 |
+| `br_corebank__login_outcomes` | `login_outcome_id`, `_batch_id` | `bronze/corebank/login_outcomes/` | 1 | Attributes of `fct_login_sessions`; Unrecognised device, Q19; `sl_login_outcomes` |
 | `br_corebank__login_sessions` | `login_session_id`, `_batch_id` | `bronze/corebank/login_sessions/` | 1 | Unrecognised device, Q19; `sl_login_sessions`; mart_fraud_device_risk, Q19 |
-| `br_corebank__mcc_bands` | `mcc_band_id`, `_batch_id` | `bronze/corebank/mcc_bands/` | 1 | Attributes of `dim_merchant` |
-| `br_corebank__mcc_codes` | `mcc_code_id`, `_batch_id` | `bronze/corebank/mcc_codes/` | 1 | Attributes of `dim_merchant`; Interchange revenue, Q4; Interchange rule, Q4 |
+| `br_corebank__mcc_bands` | `mcc_band_id`, `_batch_id` | `bronze/corebank/mcc_bands/` | 1 | Attributes of `dim_merchant`; `sl_mcc_bands` |
+| `br_corebank__mcc_codes` | `mcc_code_id`, `_batch_id` | `bronze/corebank/mcc_codes/` | 1 | Attributes of `dim_merchant`; Interchange revenue, Q4; Interchange rule, Q4; `sl_mcc_codes` |
 | `br_corebank__merchants` | `merchant_id`, `_batch_id` | `bronze/corebank/merchants/` | 1 | Interchange rule, Q4; `sl_merchants` |
-| `br_corebank__payment_schemes` | `payment_scheme_id`, `_batch_id` | `bronze/corebank/payment_schemes/` | 1 | Attributes of `fct_payments`; Cross-border rule, Q13 |
-| `br_corebank__payment_statuses` | `payment_status_id`, `_batch_id` | `bronze/corebank/payment_statuses/` | 1 | Attributes of `fct_payments`; fct_account_balance_daily, Q3, spec 003 invariant 4; mart_payments_cross_border, Q13 |
-| `br_corebank__payment_types` | `payment_type_id`, `_batch_id` | `bronze/corebank/payment_types/` | 1 | Attributes of `fct_payments`; Customer-initiated rule, Q1, Q6; fct_payments |
+| `br_corebank__payment_schemes` | `payment_scheme_id`, `_batch_id` | `bronze/corebank/payment_schemes/` | 1 | Attributes of `fct_payments`; Cross-border rule, Q13; `sl_payment_schemes` |
+| `br_corebank__payment_statuses` | `payment_status_id`, `_batch_id` | `bronze/corebank/payment_statuses/` | 1 | Attributes of `fct_payments`; `sl_payment_statuses`; fct_account_balance_daily, Q3, spec 003 invariant 4; mart_payments_cross_border, Q13 |
+| `br_corebank__payment_types` | `payment_type_id`, `_batch_id` | `bronze/corebank/payment_types/` | 1 | Attributes of `fct_payments`; Customer-initiated rule, Q1, Q6; `sl_payment_types`; fct_payments |
 | `br_corebank__payments` | `payment_id`, `_batch_id` | `bronze/corebank/payments/` | 1, 2 | Active account rule, Q1; Cross-border rule, Q13; Customer-initiated rule, Q1, Q6; `sl_payments`; fct_sanctions_screening, Q12 |
-| `br_corebank__regions` | `region_id`, `_batch_id` | `bronze/corebank/regions/` | 1 | Attributes of `dim_merchant` |
-| `br_corebank__risk_bands` | `risk_band_id`, `_batch_id` | `bronze/corebank/risk_bands/` | 1 | `mart_credit_underwriting`; mart_credit_underwriting, Q8 |
-| `br_corebank__transaction_statuses` | `transaction_status_id`, `_batch_id` | `bronze/corebank/transaction_statuses/` | 1 | Active account rule, Q1; Attributes of `fct_transactions` |
-| `br_corebank__transaction_types` | `transaction_type_id`, `_batch_id` | `bronze/corebank/transaction_types/` | 1 | Attributes of `fct_transactions`, and the source of `is_customer_initiated`; Customer-initiated rule, Q1, Q6; fct_transactions |
+| `br_corebank__regions` | `region_id`, `_batch_id` | `bronze/corebank/regions/` | 1 | Attributes of `dim_merchant`; `sl_regions` |
+| `br_corebank__risk_bands` | `risk_band_id`, `_batch_id` | `bronze/corebank/risk_bands/` | 1 | `mart_credit_underwriting`; `sl_risk_bands`; mart_credit_underwriting, Q8 |
+| `br_corebank__transaction_statuses` | `transaction_status_id`, `_batch_id` | `bronze/corebank/transaction_statuses/` | 1 | Active account rule, Q1; Attributes of `fct_transactions`; `sl_transaction_statuses` |
+| `br_corebank__transaction_types` | `transaction_type_id`, `_batch_id` | `bronze/corebank/transaction_types/` | 1 | Attributes of `fct_transactions`, and the source of `is_customer_initiated`; Customer-initiated rule, Q1, Q6; `sl_transaction_types`; fct_transactions |
 | `br_corebank__transactions` | `transaction_id`, `_batch_id` | `bronze/corebank/transactions/` | 1 | Active account rule, Q1; Customer-initiated rule, Q1, Q6, Q11; Q15, Q16; Q19; Structuring, Q11; `sl_transactions`; fct_transactions, Q10, Q19; fct_transactions, Q4, Q6, Q11; structuring, Q11 |
 | `br_ecb__fx_rates` | `rate_date`, `quote_currency`, `_batch_id` | `bronze/ecb/fx_rates/` | 1 | `sl_fx_rates` |
 | `br_fred__series` | `series_id`, `observation_date`, `realtime_start`, `_batch_id` | `bronze/fred/series/` | 1 | `sl_macro_indicators` |
@@ -110,16 +110,54 @@ One model per source entity, at entity grain, built at M5 unless noted.
 | `sl_gl_entries` | One row per ledger line | `br_corebank__gl_entries` | Q15, Q16 |
 | `sl_fraud_alerts` | One row per alert version | `br_corebank__fraud_alerts` | Q10 |
 | `sl_login_sessions` | One row per session | `br_corebank__login_sessions` | Q19 |
-| `sl_fraud_rules` | One row per detection rule version (SCD2) | `br_corebank__fraud_rules` | Q10 |
-| `sl_account_types` | One row per account type version (SCD2) | `br_corebank__account_types` | Q1, Q3 |
-| `sl_card_products` | One row per card product version (SCD2) | `br_corebank__card_products` | Q4 |
-| `sl_loan_products` | One row per loan product version (SCD2) | `br_corebank__loan_products` | Q5 |
-| `sl_agent_locations` | One row per agent location version (SCD2) | `br_corebank__agent_locations` | Q11 |
 | `sl_fx_rates` | One row per currency per calendar date | `br_ecb__fx_rates`, gap-filled | Every EUR conversion, Q14 |
 | `sl_sanctions_entities` | One row per sanctioned entity per list version | `br_opensanctions__entities` | Q12 |
 | `sl_card_settlements` | One row per settlement file line | `br_cardnet__settlements` | Q15 |
 | `sl_card_settlement_totals` | One row per clearing file trailer: settlement date, sequence, revision, network and currency | `br_cardnet__settlement_totals` | Q15, the processor's own totals `mart_control_settlement_reconciliation` compares with the ledger |
 | `sl_macro_indicators` | One row per series and period | `br_fred__series` | Reference-only at M5; consumer decided with the funding cost assumption before M6 |
+
+Every `ref` table and `agent_locations` has a silver model generated from its contract
+(specification 008 section 5), listed below with what consumes it. Gold reads silver only, so a
+dimension that takes a reference table's attributes reads them from its silver model.
+
+<!-- silver models: generated by scripts/silver_generate.py, do not edit by hand -->
+
+30 models generated from the contracts by `make silver-generate`: every `ref` table and `agent_locations`, each the entity historised and nothing more. An inactive `ref` row is retained as a version, current with `is_active` false.
+
+| Object | Grain | Upstream | Consumed by |
+|---|---|---|---|
+| `sl_account_statuses` | One row per version (SCD2): `account_status_id`, `_valid_from` | `br_corebank__account_statuses` | Attributes of `dim_account` |
+| `sl_account_types` | One row per version (SCD2): `account_type_id`, `_valid_from` | `br_corebank__account_types` | Attributes of `dim_account`; `dim_account` |
+| `sl_agent_locations` | One row per version (SCD2): `agent_location_id`, `_valid_from` | `br_corebank__agent_locations` | `dim_agent_location` |
+| `sl_card_product_classes` | One row per version (SCD2): `card_product_class_id`, `_valid_from` | `br_corebank__card_product_classes` | Attributes of `dim_card` |
+| `sl_card_products` | One row per version (SCD2): `card_product_id`, `_valid_from` | `br_corebank__card_products` | Attributes of `dim_card`; `dim_card` |
+| `sl_channels` | One row per version (SCD2): `channel_id`, `_valid_from` | `br_corebank__channels` | Attributes of `fct_transactions` and `fct_login_sessions` |
+| `sl_countries` | One row per version (SCD2): `country_id`, `_valid_from` | `br_corebank__countries` | Attributes of `dim_account`, `dim_merchant`, `dim_customer`, `dim_agent_location` |
+| `sl_currencies` | One row per version (SCD2): `currency_id`, `_valid_from` | `br_corebank__currencies` | `dim_currency` |
+| `sl_decision_reasons` | One row per version (SCD2): `decision_reason_id`, `_valid_from` | `br_corebank__decision_reasons` | Attributes of `fct_loan_applications` |
+| `sl_entry_sides` | One row per version (SCD2): `entry_side_id`, `_valid_from` | `br_corebank__entry_sides` | Attributes of `fct_gl_entries` |
+| `sl_fraud_dispositions` | One row per version (SCD2): `fraud_disposition_id`, `_valid_from` | `br_corebank__fraud_dispositions` | Attributes of `fct_fraud_alerts` |
+| `sl_fraud_rules` | One row per version (SCD2): `fraud_rule_id`, `_valid_from` | `br_corebank__fraud_rules` | `dim_detection_rule` |
+| `sl_gl_account_types` | One row per version (SCD2): `gl_account_type_id`, `_valid_from` | `br_corebank__gl_account_types` | Attributes of `fct_gl_entries` |
+| `sl_gl_accounts` | One row per version (SCD2): `gl_account_id`, `_valid_from` | `br_corebank__gl_accounts` | Attributes of `fct_gl_entries` |
+| `sl_gl_source_entities` | One row per version (SCD2): `gl_source_entity_id`, `_valid_from` | `br_corebank__gl_source_entities` | Attributes of `fct_gl_entries` |
+| `sl_holder_roles` | One row per version (SCD2): `holder_role_id`, `_valid_from` | `br_corebank__holder_roles` | `bridge_account_holder` |
+| `sl_interchange_rates` | One row per version (SCD2): `interchange_rate_id`, `_valid_from` | `br_corebank__interchange_rates` | `mart_revenue_interchange` |
+| `sl_loan_application_statuses` | One row per version (SCD2): `loan_application_status_id`, `_valid_from` | `br_corebank__loan_application_statuses` | Attributes of `fct_loan_applications` |
+| `sl_loan_products` | One row per version (SCD2): `loan_product_id`, `_valid_from` | `br_corebank__loan_products` | `dim_loan_product` |
+| `sl_loan_statuses` | One row per version (SCD2): `loan_status_id`, `_valid_from` | `br_corebank__loan_statuses` | Attributes of `dim_loan_product` consumers and `fct_loan_balance_daily` |
+| `sl_login_outcomes` | One row per version (SCD2): `login_outcome_id`, `_valid_from` | `br_corebank__login_outcomes` | Attributes of `fct_login_sessions` |
+| `sl_mcc_bands` | One row per version (SCD2): `mcc_band_id`, `_valid_from` | `br_corebank__mcc_bands` | Attributes of `dim_merchant` |
+| `sl_mcc_codes` | One row per version (SCD2): `mcc_code_id`, `_valid_from` | `br_corebank__mcc_codes` | Attributes of `dim_merchant` |
+| `sl_payment_schemes` | One row per version (SCD2): `payment_scheme_id`, `_valid_from` | `br_corebank__payment_schemes` | Attributes of `fct_payments` |
+| `sl_payment_statuses` | One row per version (SCD2): `payment_status_id`, `_valid_from` | `br_corebank__payment_statuses` | Attributes of `fct_payments` |
+| `sl_payment_types` | One row per version (SCD2): `payment_type_id`, `_valid_from` | `br_corebank__payment_types` | Attributes of `fct_payments` |
+| `sl_regions` | One row per version (SCD2): `region_id`, `_valid_from` | `br_corebank__regions` | Attributes of `dim_merchant` |
+| `sl_risk_bands` | One row per version (SCD2): `risk_band_id`, `_valid_from` | `br_corebank__risk_bands` | `mart_credit_underwriting` |
+| `sl_transaction_statuses` | One row per version (SCD2): `transaction_status_id`, `_valid_from` | `br_corebank__transaction_statuses` | Attributes of `fct_transactions` |
+| `sl_transaction_types` | One row per version (SCD2): `transaction_type_id`, `_valid_from` | `br_corebank__transaction_types` | Attributes of `fct_transactions`, and the source of `is_customer_initiated` |
+
+<!-- end of generated silver models -->
 
 `sl_card_settlements` and `sl_macro_indicators` come from sources whose entities are not in the
 M0 entity inventory, which lists the core banking entities plus `fx_rates` and
@@ -134,13 +172,11 @@ three reference tables, because the three have different attributes and differen
 one table would have been a union of three disjoint column sets. The three silver models above
 replace it.
 
-**The remaining reference tables** are consumed as conformed attributes of the dimensions that
-use them rather than as silver models of their own. Each is named in
-[data_dictionary.md](data_dictionary.md) with the dimension that consumes it, so the coverage
-rule is satisfied in both directions without twenty-eight silver models. Whether an individual
-reference table materialises as its own silver model or is joined in as attributes of the
-dimension that consumes it is an M5 decision; what M2 fixes is that none of them is
-unaccounted for.
+**The reference tables were attributes of dimensions until specification 008.** M2 accounted
+for each by naming the dimension that consumes it in [data_dictionary.md](data_dictionary.md),
+and left open whether any would have a silver model of its own. Specification 008 settled it:
+every one has, generated, because gold reads silver only and a reference row's history is
+versioned like any other entity's.
 
 ## Gold dimensions
 

@@ -13,7 +13,9 @@ fixture entity plants one violation, and the run requires:
   outside bronze that does, and on a test that stores its failures;
 - every macro test under `dbt/tests/macros` to pass on the repository's macros, and to fail on a
   copy of the macros with one planted defect (specification 008), each defect named in
-  `MUTATIONS` with the test that must catch it.
+  `MUTATIONS` with the test that must catch it;
+- every generic silver test to pass on a clean fixture model and to fail on the fixture planted
+  for it (`SILVER_FIXTURES`).
 
 It needs dbt and DuckDB and nothing else: no stack, no network. It runs from a temporary
 directory because dbt 1.12 loads the first `.env` it finds above its working directory, and the
@@ -313,6 +315,7 @@ def main() -> int:
                 failures.append(f"bronze_guard did not fail the build on {label}")
 
         failures += prove_macro_tests(work)
+        failures += prove_silver_tests(work)
 
     if failures:
         print("\ndbt-prove: FAILED")
@@ -425,6 +428,100 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
 ]
 # A floor stated as a number, never read from the folder: the macro tests that exist.
 MACRO_TEST_FLOOR = 6
+
+# Fixture models for the generic silver tests: each model's rows, and the one test planted to
+# fail on it. `clean` carries every test and must pass them all. A row is
+# (key, _valid_from, _valid_to, _is_current), with E for the epoch and Z for the end of time.
+E, Z = "{{ scd2_epoch() }}", "{{ scd2_end() }}"
+T1, T2 = "timestamptz '2026-07-21 09:00:00+00'", "timestamptz '2026-07-22 09:00:00+00'"
+CLEAN_VERSIONS = [(1, E, T1, "false"), (1, T1, Z, "true"), (2, E, Z, "true"), (3, E, T2, "false")]
+SILVER_FIXTURES: dict[str, tuple[list, str | None]] = {
+    "clean": (CLEAN_VERSIONS, None),
+    "duplicate": ([(1, E, Z, "true"), (1, E, Z, "true")], "silver_unique_key"),
+    "null_key": ([(None, E, Z, "true")], "silver_not_null"),
+    "short": (CLEAN_VERSIONS, "silver_min_rows"),
+    "gap": ([(1, E, T1, "false"), (1, T2, Z, "true")], "silver_scd2_intervals"),
+    "overlap": ([(1, E, T2, "false"), (1, T1, Z, "true")], "silver_scd2_intervals"),
+    "late_first": ([(1, T1, Z, "true")], "silver_scd2_intervals"),
+    "early_current": ([(1, E, T1, "true"), (1, T1, Z, "true")], "silver_scd2_intervals"),
+    "open_closed": ([(1, E, Z, "false")], "silver_scd2_intervals"),
+    "disagree": (CLEAN_VERSIONS, "silver_rereads_agree"),
+}
+# The upstream each fixture's re-read test reads: two batches of one version, which agree for
+# every fixture but `disagree`.
+UPSTREAM_AGREE = [(1, "a", "b-01"), (1, "a", "b-02"), (2, "b", "b-01")]
+UPSTREAM_DISAGREE = [(1, "a", "b-01"), (1, "z", "b-02"), (2, "b", "b-01")]
+
+
+def _values(rows: list, width: int) -> str:
+    def cell(value):
+        return "null::bigint" if value is None else str(value)
+
+    if not rows:
+        return "select " + ", ".join(["null"] * width) + " where false"
+    return "values " + ", ".join("(" + ", ".join(cell(v) for v in row) + ")" for row in rows)
+
+
+def silver_fixture_files() -> dict[str, str]:
+    """The fixture models and their properties, as files of the macro project."""
+    files = {}
+    properties = ["version: 2", "models:"]
+    for name, (rows, planted) in SILVER_FIXTURES.items():
+        upstream = UPSTREAM_DISAGREE if name == "disagree" else UPSTREAM_AGREE
+        files[f"models/upstream_{name}.sql"] = (
+            "select k, timestamptz '2026-07-20 00:00:00+00' as updated_at, v, _batch_id\n"
+            f"from ({_values([(k, repr(v), repr(b)) for k, v, b in upstream], 3)}) "
+            "as t (k, v, _batch_id)\n"
+        )
+        files[f"models/silver_{name}.sql"] = (
+            f"select * from ({_values(rows, 4)}) as t (k, _valid_from, _valid_to, _is_current)\n"
+        )
+        tests = {
+            "silver_unique_key": "{arguments: {columns: [k, _valid_from]}}",
+            "silver_not_null": "{arguments: {columns: [k, _valid_from]}}",
+            "silver_min_rows": "{arguments: {minimum: " + ("5" if name == "short" else "1") + "}}",
+            "silver_scd2_intervals": "{arguments: {key: [k]}}",
+            "silver_rereads_agree": (
+                "{arguments: {upstream: \"ref('upstream_" + name + "')\", key: [k]}}"
+            ),
+        }
+        chosen = tests if planted is None else {planted: tests[planted]}
+        properties += [f"  - name: silver_{name}", "    data_tests:"]
+        properties += [f"      - {test}: {arguments}" for test, arguments in chosen.items()]
+    files["models/fixtures.yml"] = "\n".join(properties) + "\n"
+    return files
+
+
+def prove_silver_tests(work: Path) -> list[str]:
+    """Every generic silver test passes on the clean fixture and fails where it was planted."""
+    home = macro_project(work)
+    for relative, text in silver_fixture_files().items():
+        path = home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    dbt(home, work, work / "lake", "build", "--select", "path:models")
+    manifest = json.loads((work / "target" / "manifest.json").read_text(encoding="utf-8"))
+    results = json.loads((work / "target" / "run_results.json").read_text(encoding="utf-8"))
+    seen: dict[tuple[str, str], str] = {}
+    for result in results["results"]:
+        node = manifest["nodes"].get(result["unique_id"], {})
+        if node.get("resource_type") == "test" and node.get("test_metadata"):
+            model = node["attached_node"].split(".")[-1].removeprefix("silver_")
+            seen[(model, node["test_metadata"]["name"])] = result["status"]
+    failures = []
+    clean = [k for k in seen if k[0] == "clean"]
+    if len(clean) < 5:
+        return [f"the clean silver fixture ran {len(clean)} test(s), expected 5"]
+    for (model, test), status in sorted(seen.items()):
+        planted = SILVER_FIXTURES[model][1]
+        expected = "fail" if test == planted else "pass"
+        if status != expected:
+            failures.append(f"silver fixture {model}: {test} was {status}, expected {expected}")
+        elif expected == "fail":
+            print(f"dbt-prove: {test} fails on the planted {model} fixture")
+    if not failures:
+        print("dbt-prove: every generic silver test passes on the clean fixture")
+    return failures
 
 
 def macro_project(work: Path, mutation: tuple[str, str, str] | None = None) -> Path:
