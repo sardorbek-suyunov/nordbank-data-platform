@@ -328,10 +328,15 @@ source recorded when it was seeded, from `platform.simulation_state`, and the Ai
 are not given the variable at all. Before specification 006's review they read it, and the
 stack's `.env` says `dev` whatever the source was seeded at.
 
-Before the first day the loop lands the FX history once, in one request to Frankfurter's
-time-series endpoint, from the day before the earliest business instant in the source to the
-day before the anchor; a history already registered is a no-op, and a failed one halts the
-loop before any day is ticked. Each day ticks the source, delivers the processor's clearing files and the sanctions publisher's
+Before the first day the loop lands the FX history once, through Frankfurter's time-series
+endpoint, from the day before the earliest business instant in the source to the day before
+the anchor, in one batch whose registry interval is that range. **One request covers at most
+five years**, the length measured complete on 2026-10-02 (2021-07-19 to 2026-07-19: 1,281
+publication dates, the same as six calendar-year requests); a longer history is requested
+one calendar year at a time, in the same batch. Every calendar date the response did not
+return is logged in `ops.feed_request` as `absent_no_publication`, 275 of them for the `ci`
+book. A history already registered is a no-op, and a failed one halts the loop before any day
+is ticked. Each day ticks the source, delivers the processor's clearing files and the sanctions publisher's
 list, runs reference data and then core banking, and then the feeds due that day together. The
 order and the reasons are in `scripts/backfill.py`. At `ci` a day takes about two minutes.
 

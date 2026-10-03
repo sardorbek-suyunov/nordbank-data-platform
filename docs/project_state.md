@@ -61,7 +61,7 @@ What exists and runs today:
   kept in `_raw_payload` with its identifiers tokenised, quarantine per record with its reason,
   and a PII scan that searches every bronze and quarantine object, bytes and decoded values,
   for every vault value.
-- 629 unit tests, 41 DAG integrity tests and 84 integration tests; the unit
+- 642 unit tests, 41 DAG integrity tests and 84 integration tests; the unit
   and DAG suites also run with networking disabled (`make test-offline`); two CI workflows, the
   `stack` job seeding at the acceptance anchor, ingesting a week through the real DAGs with no
   live external call and building bronze.
@@ -223,14 +223,14 @@ Expected timings and results:
 | `make health` | Five components, all `pass`, exit 0 |
 | `make verify-dag` | Four tasks succeed; both warehouse tasks report pool `warehouse_access` |
 | `make schema-apply` | 14 schema files, 5 seed files, 463 classifications; running it twice changes nothing |
-| `make test` | 629 passed, 2 skipped (they run in the image) |
+| `make test` | 642 passed, 2 skipped (they run in the image) |
 | `make test-dags` | 41 passed, with the execution path printed |
 | `make seed` | 166,381 rows at `ci` in 11 s |
 | `make seed-verify` | 14 invariants, all pass, before and after any number of ticks; invariant 9's statistical band is not asserted at `ci` and says so |
 | `make tick` | One business day in about 450 ms at `ci`; refuses an out-of-order or skipped date by naming the one it expected |
 | `make tick-acceptance` | Sixty ticks and the evidence for specification 004; `REPLAY=1` proves replay determinism |
 | `make test-integration` | 84 tests, `schema-check` reports 463 columns agreeing, then `seed-verify`; refuses a loaded warehouse unless `FORCE=1`, because it reseeds the source; runs in CI's `stack` job |
-| `make test-offline` | 676 passed with `--network none`, about two minutes; httpfs loads from the build-time install |
+| `make test-offline` | 685 passed with `--network none`, about two minutes; httpfs loads from the build-time install |
 | `make backfill FROM=2026-07-20 TO=2026-09-18` | About an hour at `ci` after a fresh seed at the acceptance anchor, 59 seconds a day, then one bronze build of the whole history in about 30 seconds. Specification 007's runs ended with 2,971 batches, 4 explicitly failed (the scripted cut-off transmission and its reattempt), none open. The fourth acceptance run, before the registry fix below, had 3,000. Re-invoked over a finished range it ticks and triggers nothing, about 4 seconds a day. Before the first day it lands the FX history once: one request, 634 publication dates and 18,882 rates at `ci`, and a no-op once registered |
 | `make ingest-integrity` | `clean`, seven checks, across every batch: every identifier token resolves in the vault, and no entity has more physical schemas than contract versions |
 | `make dbt-build` | 50 views and 267 tests, 318 passing with `--warn-error` and no warning, in 10 to 20 seconds at `ci` |
@@ -281,15 +281,22 @@ Resolved before specification 008, on `fix/M4-fx-history`:
   request to Frankfurter's time-series endpoint, measured on 2026-10-02 before relying on it:
   every returned date is a publication, with no weekend and no sampling over 634 dates; its
   rates equal the single-date response's; and a range starting on a day the ECB did not publish
-  snaps back to the publication before it. The range runs from the day before the earliest
-  business instant in the source, read from it, to the day before the anchor; the history batch
-  never moves the watermark, and a registered history is a no-op. Measured on the throwaway stack
+  snaps back to the publication before it. One request was measured complete over five years,
+  1,281 dates identical to six calendar-year requests; a longer history is requested a year at
+  a time in the same batch. The range runs from the day before the earliest business instant in
+  the source, read from it, to the day before the anchor; the batch's registry interval is that
+  range and its ingest date the run's logical date; every calendar date not returned is logged
+  `absent_no_publication`; the history batch never moves the watermark, and a registered
+  history is a no-op. Measured on the throwaway stack
   with the sixty-one-day history: one request, one attempt, 634 publication dates from
   2024-01-23 to 2026-07-17 and 18,882 rates landed, none quarantined; `fx_is_missing` under the
   publication-instant rule fell from 3,950 to 0 for transactions and from 672 to 0 for payments;
   the FX watermark stayed at 2026-09-18; no date was landed twice; the window re-run with the
-  history took 300 seconds against 246 without it, and a second invocation loaded nothing. The
-  stack job replays the recorded request and makes no live call.
+  history took 300 seconds against 246 without it, and a second invocation loaded nothing. On a
+  fresh stack backfilled with it: batch `fx_rates-20240123T000000-01`, ingest date 2026-07-19,
+  interval 2024-01-23 to 2026-07-20, and 275 dates logged `absent_no_publication`, 260 at
+  weekends and 15 on weekday TARGET holidays. The stack job replays the recorded request and
+  makes no live call.
 - **The feed fetch retried four server errors, not every one.** Its policy said any 5xx and its
   set named 500, 502, 503 and 504. Frankfurter, behind Cloudflare, answered HTTP 521 to four of
   eight requests over a few minutes on 2026-10-02; every 5xx is now retried.
@@ -411,6 +418,11 @@ Other known gaps:
   `make feeds-probe` and is not built.
 - **A file ingested the day after it was sent, across a contract bump, is read one version too
   new** (ADR 0016). The backfill never produces it.
+- **The FX contract's `format` describes the single-date response only.** Owner: M7. The
+  history's time-series envelope (`start_date`, `end_date`, `rates` by date) is checked in
+  `nordbank_ops/feeds/fx.py`, because editing `format` changes the contract's fingerprint and
+  so needs a new version. The range shape moves into the contract when its `format` is next
+  versioned for a real reason.
 - **A parked delivery and a task error that left no batch are indistinguishable to the loop.**
   Owner: M7. The backfill reads a failed feed run as explained when its failed batches are
   deliveries parked for their sender, and a task that failed in the same run without allocating
