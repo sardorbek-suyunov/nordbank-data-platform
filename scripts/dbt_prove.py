@@ -463,6 +463,83 @@ def _values(rows: list, width: int) -> str:
     return "values " + ", ".join("(" + ", ".join(cell(v) for v in row) + ")" for row in rows)
 
 
+# Facts against a dimension's versions, for `silver_resolves_one_version`: key 1 has two versions
+# split at T1, key 2 one version closed at T2 by a soft delete. A fact row is (fact_id, k, at).
+T0 = "timestamptz '2026-07-20 12:00:00+00'"
+T3 = "timestamptz '2026-07-23 09:00:00+00'"
+DIMENSION = [(1, E, T1), (1, T1, Z), (2, E, T2)]
+OVERLAPPING = [(1, E, T2), (1, T1, Z), (2, E, T2)]
+RESOLVE_FIXTURES: dict[str, tuple[list, list, bool]] = {
+    # Two facts with one key at one instant are two facts, each resolving to one version.
+    "resolves": ([(1, 1, T0), (2, 1, T0), (3, 1, T1), (4, 2, T0)], DIMENSION, False),
+    "after_delete": ([(1, 2, T3)], DIMENSION, True),
+    "before_first": ([(1, 3, T0)], DIMENSION + [(3, T2, Z)], True),
+    "overlapping": ([(1, 1, T1)], OVERLAPPING, True),
+}
+# Converted rows for `silver_fx_provenance`: (id, amount, currency, amount_eur, fx_rate,
+# fx_rate_date, carried, missing, provisional).
+D = "date '2026-07-20'"
+CONVERTED = [
+    (1, "100.00", "'EUR'", "100.00", "1", "null", "false", "false", "false"),
+    (2, "100.00", "'USD'", "87.5197", "1.1426", D, "false", "false", "true"),
+    (3, "100.00", "'USD'", "null", "null", "null", "false", "true", "false"),
+]
+PROVENANCE_FIXTURES: dict[str, tuple[list, bool]] = {
+    "converted": (CONVERTED, False),
+    "missing_as_zero": (CONVERTED[:2] + [(3, "100.00", "'USD'", "0", "null", "null",
+                                          "false", "true", "false")], True),
+    "missing_as_original": (CONVERTED[:2] + [(3, "100.00", "'USD'", "100.00", "null", "null",
+                                              "false", "true", "false")], True),
+    "eur_with_a_date": ([(1, "100.00", "'EUR'", "100.00", "1", D, "false", "false", "false")],
+                        True),
+    "missing_provisional": ([(3, "100.00", "'USD'", "null", "null", "null", "false", "true",
+                              "true")], True),
+}  # fmt: skip
+
+
+def fact_fixture_files() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
+    """Fixture facts for the resolution and provenance tests, and the status each must reach."""
+    files, expected = {}, {}
+    properties = ["version: 2", "models:"]
+    for name, (facts, versions, fails) in RESOLVE_FIXTURES.items():
+        files[f"models/dimension_{name}.sql"] = (
+            f"select * from ({_values(versions, 3)}) as t (k, _valid_from, _valid_to)\n"
+        )
+        files[f"models/facts_{name}.sql"] = (
+            f"select * from ({_values(facts, 3)}) as t (fact_id, k, event_at)\n"
+        )
+        properties += [
+            f"  - name: facts_{name}",
+            "    columns:",
+            "      - name: k",
+            "        data_tests:",
+            "          - silver_resolves_one_version:",
+            f"              arguments: {{to: \"ref('dimension_{name}')\", to_column: k, "
+            "at: event_at}",
+        ]
+        expected[(f"facts_{name}", "silver_resolves_one_version")] = "fail" if fails else "pass"
+    columns = "(id, amount, currency, amount_eur, fx_rate, fx_rate_date, fx_is_carried, " \
+        "fx_is_missing, fx_is_provisional)"  # fmt: skip
+    for name, (rows, fails) in PROVENANCE_FIXTURES.items():
+        typed = [
+            (i, f"cast({a} as decimal(18,4))", c, f"cast({e} as decimal(18,4))",
+             f"cast({r} as decimal(18,8))", f"cast({d} as date)", ca, m, pr)
+            for i, a, c, e, r, d, ca, m, pr in rows
+        ]  # fmt: skip
+        files[f"models/converted_{name}.sql"] = (
+            f"select * from ({_values(typed, 9)}) as t {columns}\n"
+        )
+        properties += [
+            f"  - name: converted_{name}",
+            "    data_tests:",
+            "      - silver_fx_provenance: {arguments: {key: id, amount: amount, "
+            "currency: currency}}",
+        ]
+        expected[(f"converted_{name}", "silver_fx_provenance")] = "fail" if fails else "pass"
+    files["models/facts.yml"] = "\n".join(properties) + "\n"
+    return files, expected
+
+
 def silver_fixture_files() -> dict[str, str]:
     """The fixture models and their properties, as files of the macro project."""
     files = {}
@@ -500,7 +577,8 @@ def silver_fixture_files() -> dict[str, str]:
 def prove_silver_tests(work: Path) -> list[str]:
     """Every generic silver test passes on the clean fixture and fails where it was planted."""
     home = macro_project(work)
-    for relative, text in silver_fixture_files().items():
+    facts, expected_facts = fact_fixture_files()
+    for relative, text in {**silver_fixture_files(), **facts}.items():
         path = home / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
@@ -508,15 +586,26 @@ def prove_silver_tests(work: Path) -> list[str]:
     manifest = json.loads((work / "target" / "manifest.json").read_text(encoding="utf-8"))
     results = json.loads((work / "target" / "run_results.json").read_text(encoding="utf-8"))
     seen: dict[tuple[str, str], str] = {}
+    failures: list[str] = []
     for result in results["results"]:
         node = manifest["nodes"].get(result["unique_id"], {})
         if node.get("resource_type") == "test" and node.get("test_metadata"):
-            model = node["attached_node"].split(".")[-1].removeprefix("silver_")
-            seen[(model, node["test_metadata"]["name"])] = result["status"]
-    failures = []
+            model = node["attached_node"].split(".")[-1]
+            key = (model, node["test_metadata"]["name"])
+            if key in expected_facts:
+                want = expected_facts.pop(key)
+                if result["status"] != want:
+                    failures.append(f"fixture {model}: {key[1]} was {result['status']}, "
+                                    f"expected {want}")  # fmt: skip
+                elif want == "fail":
+                    print(f"dbt-prove: {key[1]} fails on the planted {model} fixture")
+                continue
+            seen[(model.removeprefix("silver_"), key[1])] = result["status"]
+    for model, test in expected_facts:
+        failures.append(f"fixture {model}: {test} did not run")
     clean = [k for k in seen if k[0] == "clean"]
     if len(clean) < 6:
-        return [f"the clean silver fixture ran {len(clean)} test(s), expected 6"]
+        return failures + [f"the clean silver fixture ran {len(clean)} test(s), expected 6"]
     for (model, test), status in sorted(seen.items()):
         planted = SILVER_FIXTURES[model][1]
         expected = "fail" if test == planted else "pass"

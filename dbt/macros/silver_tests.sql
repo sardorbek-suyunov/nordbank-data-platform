@@ -125,3 +125,56 @@ select {{ k }}, _valid_from from expected
 except
 select {{ k }}, _valid_from from {{ model }}
 {% endtest %}
+
+{#
+  A fact resolves to exactly one version (criterion 4): for every row with a value in
+  `column_name`, the versions of `to` whose `to_column` holds it and whose interval contains the
+  fact's instant `at` number exactly one. None is a fact before its entity existed or after it
+  was deleted; two is an overlap. Returns the value and the count, never the fact's other
+  columns.
+#}
+{% test silver_resolves_one_version(model, column_name, to, to_column, at) %}
+with facts as (
+    select row_number() over () as fact_row, "{{ column_name }}" as value, {{ at }} as fact_at
+      from {{ model }}
+     where "{{ column_name }}" is not null
+),
+
+{#- Counted per fact: two facts with one value at one instant are two facts, not two versions. #}
+resolved as (
+    select f.fact_row, f.value, f.fact_at, count(v."{{ to_column }}") as versions
+      from facts f
+      left join {{ to }} v
+        on v."{{ to_column }}" = f.value
+       and v._valid_from <= f.fact_at
+       and f.fact_at < v._valid_to
+     group by f.fact_row, f.value, f.fact_at
+)
+
+select value, min(fact_at) as first_at, count(*) as facts, min(versions) as fewest,
+       max(versions) as most
+  from resolved
+ where versions <> 1
+ group by value
+{% endtest %}
+
+{#
+  A converted amount carries its provenance (criteria 11 and 12, `conventions.md`): EUR at a rate
+  of 1 with no rate date and the amount unchanged; a missing rate with a null amount, never zero
+  and never the original; every other row with its amount, rate and rate date; and only a
+  converted non-EUR row ever provisional or carried. Returns the offending rows' keys.
+#}
+{% test silver_fx_provenance(model, key, amount, currency) %}
+{%- set eur = amount ~ '_eur' -%}
+select {{ key }}, {{ currency }}, fx_is_missing, fx_is_provisional
+  from {{ model }}
+ where fx_is_missing is null or fx_is_carried is null or fx_is_provisional is null
+    or ({{ currency }} = 'EUR' and (fx_rate <> 1 or fx_rate_date is not null
+                                    or {{ eur }} is distinct from {{ amount }}
+                                    or fx_is_missing or fx_is_carried or fx_is_provisional))
+    or ({{ currency }} <> 'EUR' and fx_is_missing
+        and ({{ eur }} is not null or fx_rate is not null or fx_rate_date is not null
+             or fx_is_carried or fx_is_provisional))
+    or ({{ currency }} <> 'EUR' and not fx_is_missing
+        and ({{ eur }} is null or fx_rate is null or fx_rate_date is null))
+{% endtest %}
