@@ -38,6 +38,13 @@ models:
             key: [currency_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__currencies')
+            key: [currency_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: currency_id
         data_type: BIGINT

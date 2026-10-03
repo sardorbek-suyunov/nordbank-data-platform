@@ -38,6 +38,12 @@ models:
             key: [agent_location_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__agent_locations')
+            key: [agent_location_id]
+          config:
+            severity: error
     columns:
       - name: agent_location_id
         data_type: BIGINT

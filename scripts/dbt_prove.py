@@ -446,6 +446,7 @@ SILVER_FIXTURES: dict[str, tuple[list, str | None]] = {
     "early_current": ([(1, E, T1, "true"), (1, T1, Z, "true")], "silver_scd2_intervals"),
     "open_closed": ([(1, E, Z, "false")], "silver_scd2_intervals"),
     "disagree": (CLEAN_VERSIONS, "silver_rereads_agree"),
+    "unversioned": ([(1, E, Z, "true")], "silver_observations_versioned"),
 }
 # The upstream each fixture's re-read test reads: two batches of one version, which agree for
 # every fixture but `disagree`.
@@ -484,6 +485,10 @@ def silver_fixture_files() -> dict[str, str]:
             "silver_rereads_agree": (
                 "{arguments: {upstream: \"ref('upstream_" + name + "')\", key: [k]}}"
             ),
+            "silver_observations_versioned": (
+                "{arguments: {upstream: \"ref('upstream_" + name + "')\", key: [k], "
+                "deleted: 'false'}}"
+            ),
         }
         chosen = tests if planted is None else {planted: tests[planted]}
         properties += [f"  - name: silver_{name}", "    data_tests:"]
@@ -510,8 +515,8 @@ def prove_silver_tests(work: Path) -> list[str]:
             seen[(model, node["test_metadata"]["name"])] = result["status"]
     failures = []
     clean = [k for k in seen if k[0] == "clean"]
-    if len(clean) < 5:
-        return [f"the clean silver fixture ran {len(clean)} test(s), expected 5"]
+    if len(clean) < 6:
+        return [f"the clean silver fixture ran {len(clean)} test(s), expected 6"]
     for (model, test), status in sorted(seen.items()):
         planted = SILVER_FIXTURES[model][1]
         expected = "fail" if test == planted else "pass"

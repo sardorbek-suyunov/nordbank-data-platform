@@ -99,7 +99,9 @@ def test_every_model_tests_its_grain_floor_rereads_and_intervals():
         for test in ("silver_unique_key", "silver_not_null", "silver_min_rows"):
             assert test in text, (model.name, test)
         assert f"upstream: ref('{model.bronze.name}')" in text
-        assert ("silver_scd2_intervals" in text) == (model.spec.history == silver_generate.SCD2)
+        scd2 = model.spec.history == silver_generate.SCD2
+        assert ("silver_scd2_intervals" in text) == scd2
+        assert ("silver_observations_versioned" in text) == (scd2 and not model.spec.excluded)
         assert "store_failures" not in text
 
 

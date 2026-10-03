@@ -38,6 +38,13 @@ models:
             key: [gl_source_entity_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__gl_source_entities')
+            key: [gl_source_entity_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: gl_source_entity_id
         data_type: BIGINT

@@ -38,6 +38,13 @@ models:
             key: [fraud_disposition_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__fraud_dispositions')
+            key: [fraud_disposition_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: fraud_disposition_id
         data_type: BIGINT

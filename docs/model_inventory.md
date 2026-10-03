@@ -41,7 +41,7 @@ Built at M4 by specification 007. The section below is generated from the contra
 | `br_corebank__account_holders` | `account_holder_id`, `_batch_id` | `bronze/corebank/account_holders/` | 1 | `sl_account_holders`; bridge_account_holder, Q3, Q6, Q11 |
 | `br_corebank__account_statuses` | `account_status_id`, `_batch_id` | `bronze/corebank/account_statuses/` | 1 | Active account rule, Q1; Attributes of `dim_account`; `sl_account_statuses` |
 | `br_corebank__account_types` | `account_type_id`, `_batch_id` | `bronze/corebank/account_types/` | 1 | Attributes of `dim_account`; Deposit balance, Q3; `sl_account_types` |
-| `br_corebank__accounts` | `account_id`, `_batch_id` | `bronze/corebank/accounts/` | 1 | Active account rule, Q1; Cross-border rule, Q13; `sl_accounts`; deposit balance, Q3; dim_account, Q3; fct_account_balance_daily, Q3 |
+| `br_corebank__accounts` | `account_id`, `_batch_id` | `bronze/corebank/accounts/` | 1 | Active account rule, Q1; Cross-border rule, Q13; `sl_account_balance_observations`; `sl_accounts`; deposit balance, Q3; dim_account, Q3; fct_account_balance_daily, Q3 |
 | `br_corebank__agent_locations` | `agent_location_id`, `_batch_id` | `bronze/corebank/agent_locations/` | 1 | `sl_agent_locations` |
 | `br_corebank__card_product_classes` | `card_product_class_id`, `_batch_id` | `bronze/corebank/card_product_classes/` | 1 | Attributes of `dim_card`; `sl_card_product_classes` |
 | `br_corebank__card_products` | `card_product_id`, `_batch_id` | `bronze/corebank/card_products/` | 1 | Attributes of `dim_card`; Interchange rule, Q4; `sl_card_products` |
@@ -98,6 +98,7 @@ One model per source entity, at entity grain, built at M5 unless noted.
 | `sl_customers` | One row per customer version (SCD2) | `br_corebank__customers` | Q1, Q2, Q6, Q8, Q11, Q12, Q19 |
 | `sl_customer_addresses` | One row per customer address version (SCD2) | `br_corebank__customer_addresses` | Q1, Q13 |
 | `sl_accounts` | One row per account version (SCD2) | `br_corebank__accounts` | Q1, Q3, Q13 |
+| `sl_account_balance_observations` | One row per account per observed balance | `br_corebank__accounts` | The balance `sl_accounts` excludes from its projection; M7 reconciles it against derived balances |
 | `sl_account_holders` | One row per account and holder version (SCD2) | `br_corebank__account_holders` | Q3, Q6, Q11 |
 | `sl_cards` | One row per card version (SCD2) | `br_corebank__cards` | Q4, Q10 |
 | `sl_merchants` | One row per merchant version (SCD2) | `br_corebank__merchants` | Q4 |

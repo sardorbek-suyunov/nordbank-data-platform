@@ -38,6 +38,13 @@ models:
             key: [channel_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__channels')
+            key: [channel_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: channel_id
         data_type: BIGINT

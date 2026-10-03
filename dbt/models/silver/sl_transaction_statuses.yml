@@ -38,6 +38,13 @@ models:
             key: [transaction_status_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__transaction_statuses')
+            key: [transaction_status_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: transaction_status_id
         data_type: BIGINT

@@ -38,6 +38,13 @@ models:
             key: [entry_side_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__entry_sides')
+            key: [entry_side_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: entry_side_id
         data_type: BIGINT

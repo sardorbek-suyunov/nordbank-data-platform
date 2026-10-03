@@ -38,6 +38,13 @@ models:
             key: [holder_role_id]
           config:
             severity: error
+      - silver_observations_versioned:
+          arguments:
+            upstream: ref('br_corebank__holder_roles')
+            key: [holder_role_id]
+            deleted: "false"
+          config:
+            severity: error
     columns:
       - name: holder_role_id
         data_type: BIGINT
