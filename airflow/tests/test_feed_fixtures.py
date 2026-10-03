@@ -173,6 +173,38 @@ def test_the_recorded_ci_history_lands_every_publication_and_nothing_else() -> N
     assert isinstance(usd["rate"], decimal.Decimal)
 
 
+def test_the_recorded_ci_history_logs_every_unpublished_date() -> None:
+    """909 calendar dates from 2024-01-23 to 2026-07-19: 634 published, 275 absent."""
+    from nordbank_ops.feeds import replay
+
+    served = replay.Replay(FIXTURES)
+    fetched = fx.fetch_range(
+        dt.date(2024, 1, 23),
+        dt.date(2026, 7, 19),
+        base_url="http://192.0.2.1/v1",
+        fetch=served_fetch(served),
+    )
+    assert fetched.failure is None and fetched.parsed.breaking is None
+    landed = [o for o in fetched.outcomes if o.outcome == fx.LANDED]
+    absent = [o for o in fetched.outcomes if o.outcome == fx.ABSENT]
+    assert len(landed) == 1 and landed[0].rows == 18882
+    assert len(absent) >= 200
+    assert len(absent) == 275
+    days = {o.key for o in absent}
+    assert len(days) == len(absent)
+    weekend = sum(dt.date.fromisoformat(d).weekday() >= 5 for d in days)
+    assert weekend == 260, "the other 15 are TARGET holidays on weekdays"
+
+
+def served_fetch(served):
+    """The fetch the DAG builds over the recordings, with the production retry policy."""
+    import functools
+
+    from nordbank_ops.feeds.fetch import fetch
+
+    return functools.partial(fetch, get=served)
+
+
 def test_the_history_ends_with_the_currencies_the_daily_recordings_carry() -> None:
     """No date is in both recordings, so the check is the currency set at the seam."""
     history = json.loads(_load("fx_history_ci")[0], parse_float=decimal.Decimal)["rates"]

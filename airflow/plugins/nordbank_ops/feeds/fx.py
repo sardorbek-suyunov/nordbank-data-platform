@@ -386,7 +386,12 @@ def parse_range(body: bytes, start: dt.date, end: dt.date) -> tuple[list, list, 
 
 
 def fetch_range(start: dt.date, end: dt.date, *, base_url: str, fetch) -> Fetched:
-    """Request the history in one call, and land every publication date it returns, or nothing."""
+    """Request the history in one call, and land every publication date it returns, or nothing.
+
+    Each calendar date in the range the response did not return is logged
+    `absent_no_publication`, as a single-date request for a weekend is, because the count of
+    unpublished dates is read from `ops.feed_request` (architecture.md).
+    """
     from nordbank_ops.feeds.fetch import FetchFailedError
 
     out = Fetched()
@@ -422,4 +427,14 @@ def fetch_range(start: dt.date, end: dt.date, *, base_url: str, fetch) -> Fetche
     )
     out.parsed.records.extend(records)
     out.parsed.payloads.extend(payloads)
+    returned = {record["rate_date"] for record in records}
+    for offset in range((end - start).days + 1):
+        day = start + dt.timedelta(days=offset)
+        if day not in returned:
+            detail = f"not in the time-series response {key}; nothing landed"
+            out.outcomes.append(
+                RequestOutcome(
+                    day.isoformat(), ABSENT, result.status, result.attempt_count, 0, detail
+                )
+            )
     return out
