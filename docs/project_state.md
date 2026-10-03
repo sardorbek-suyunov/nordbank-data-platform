@@ -17,7 +17,8 @@ models), delivered on `feat/M4-dbt-bronze`. The M4 checkpoint is
 [checkpoints/M4-summary.md](checkpoints/M4-summary.md).
 
 **M5 has begun.** Specification 008, silver for the core banking and reference entities and for
-FX rates, is approved at version 2 and in progress on `feat/M5-silver-core`.
+FX rates, approved at version 2, is implemented on `feat/M5-silver-core` and awaits review. M5
+continues with 009 (settlement, sanctions and FRED silver) and 010 (entity resolution).
 
 What exists and runs today:
 
@@ -52,7 +53,16 @@ What exists and runs today:
   `make dbt-prove` shows failing on planted fixtures. `transform_bronze` builds and tests bronze
   after every registration; a backfill builds it once at the end. The documentation site is
   published to GitHub Pages from `main` after a scan for every secret and vault value.
-- Nine DAGs. `ops_stack_healthcheck` exercises every connection; `ops_source_tick` advances
+- Silver for the core banking and reference entities and for FX rates (specification 008):
+  49 tables and one seed. Every `ref` table and `agent_locations` has a model generated from its
+  contract; the core entities are SCD2 by a projection-based version rule from the epoch, or
+  latest state, with soft deletes applied (ADR 0020); transactions and payments convert to EUR
+  at the latest rate published before their business instant, exactly, with provenance and a
+  provisional flag (ADR 0019); `sl_fx_rates` is that rule at the end of every day; age and tenure
+  are generalised into contiguous band intervals. Every silver contract is enforced, every
+  mirroring model's properties are generated, and a guard refuses any gold model that selects a
+  quasi-identifier. `transform_silver` builds silver after every successful bronze build.
+- Ten DAGs. `ops_stack_healthcheck` exercises every connection; `ops_source_tick` advances
   the simulated source to its run's logical date, unscheduled and paused by default, with the
   profile the source recorded when it was seeded. `ingest_reference_data` and
   `ingest_core_banking` extract by watermark; `ingest_card_settlements` waits on file arrival
@@ -64,15 +74,16 @@ What exists and runs today:
   kept in `_raw_payload` with its identifiers tokenised, quarantine per record with its reason,
   and a PII scan that searches every bronze and quarantine object, bytes and decoded values,
   for every vault value.
-- 642 unit tests, 41 DAG integrity tests and 84 integration tests; the unit
+- 662 unit tests, 44 DAG integrity tests and 84 integration tests; the unit
   and DAG suites also run with networking disabled (`make test-offline`); two CI workflows, the
   `stack` job seeding at the acceptance anchor, ingesting a week through the real DAGs with no
   live external call and building bronze.
 - The documentation set: architecture, conventions, business questions, metric definitions,
   data dictionary, model inventory, PII classification, runbook, nine specifications and
-  eighteen decision records.
+  twenty decision records.
 
-What does not exist yet: silver, gold, the quality framework and its gates,
+What does not exist yet: silver for the settlement file, the sanctions list and FRED (009),
+entity resolution (010), gold, the quality framework and its gates,
 the reconciliation mart, freshness monitoring, retention and compaction, the governance work
 (lineage, the erasure DAG, access roles), Power BI, Streamlit, Terraform and the BigQuery
 target.
@@ -210,9 +221,10 @@ make bronze-pii-scan     # every bronze and quarantine object, bytes and decoded
 make fault-demo          # retry and no partial registration against injected faults
 make parking-demo        # a refused delivery parked, then released by a contract bump
 make feeds-probe         # the live APIs against the recorded fixtures (network)
+make silver-generate     # the generated silver models, every mirroring model's properties; CHECK=1
 make dbt-generate        # the bronze models and the inventory's section; CHECK=1 compares
-make dbt-prove           # every bronze test and rule failing on planted fixtures, no stack
-make dbt-build           # dbt build --warn-error over bronze, inside the stack
+make dbt-prove           # every test, macro test and rule failing on planted fixtures, no stack
+make dbt-build           # dbt build --warn-error over everything: bronze, the seed, silver
 make dbt-docs            # the static documentation site, to data/dbt-docs/
 make docs-scan           # the site against every secret and vault value; PLANT=1 proves it
 make bronze-plant ACTION=plant|verify|remove  # objects the registry never registered
@@ -229,8 +241,8 @@ Expected timings and results:
 | `make health` | Five components, all `pass`, exit 0 |
 | `make verify-dag` | Four tasks succeed; both warehouse tasks report pool `warehouse_access` |
 | `make schema-apply` | 14 schema files, 5 seed files, 463 classifications; running it twice changes nothing |
-| `make test` | 642 passed, 2 skipped (they run in the image) |
-| `make test-dags` | 41 passed, with the execution path printed |
+| `make test` | 662 passed, 2 skipped (they run in the image) |
+| `make test-dags` | 44 passed, with the execution path printed |
 | `make seed` | 166,381 rows at `ci` in 11 s |
 | `make seed-verify` | 14 invariants, all pass, before and after any number of ticks; invariant 9's statistical band is not asserted at `ci` and says so |
 | `make tick` | One business day in about 450 ms at `ci`; refuses an out-of-order or skipped date by naming the one it expected |
@@ -239,8 +251,9 @@ Expected timings and results:
 | `make test-offline` | 685 passed with `--network none`, about two minutes; httpfs loads from the build-time install |
 | `make backfill FROM=2026-07-20 TO=2026-09-18` | About an hour at `ci` after a fresh seed at the acceptance anchor, 59 seconds a day, then one bronze build of the whole history in about 30 seconds. Specification 007's runs ended with 2,971 batches, 4 explicitly failed (the scripted cut-off transmission and its reattempt), none open. The fourth acceptance run, before the registry fix below, had 3,000. Re-invoked over a finished range it ticks and triggers nothing, about 4 seconds a day. Before the first day it lands the FX history once: one request, 634 publication dates and 18,882 rates at `ci`, and a no-op once registered |
 | `make ingest-integrity` | `clean`, seven checks, across every batch: every identifier token resolves in the vault, and no entity has more physical schemas than contract versions |
-| `make dbt-build` | 50 views and 267 tests, 318 passing with `--warn-error` and no warning, in 10 to 20 seconds at `ci` |
-| `make dbt-prove` | About 18 seconds; every test and rule fails on its planted fixture and passes elsewhere |
+| `make dbt-build` | 50 views, the seed, 49 silver tables and 581 tests: 683 nodes passing with `--warn-error`, 25.6 seconds of dbt and 34 of wall time over the sixty-one-day `ci` history. `transform_bronze` alone runs 268 of the tests, those that read bronze alone, and `transform_silver` the rest in about 21 seconds |
+| `make silver-generate` | 45 silver models' properties and 30 generated models agree with the contracts; run before `make dbt-generate` |
+| `make dbt-prove` | About 160 seconds; every bronze and silver test, every macro test against its planted defects, and both guards fail where planted and pass elsewhere |
 | `make docs-scan` | No secret and no vault value; the site shows 811 of 811 classifications. `PLANT=1` catches a planted secret and vault value |
 | `make feeds-acceptance RUN=name` | One section per criterion and for the review's rulings; the dump searched for vault values finds none |
 | `make bronze-pii-scan` | About 40 seconds; 3,023 objects, no cleartext identifier in either reading; ten fixture names reported as list content. `PLANT=1` catches a card reference in a clearing file, a list name in a core banking object and a card reference in a snapshot |
@@ -274,6 +287,17 @@ Found at specification 008 and not fixed there:
   simulated instant before the book. Silver works around it by opening every first version at the
   epoch (ADR 0020), so a reference row's `_valid_from` says nothing about when it came to exist.
   The source owns the fix: seeding with a simulated stamp before the history start.
+- **A currency the ECB stops quoting stays provisional.** BGN's last rate is 2025-12-31, Bulgaria
+  having adopted the euro, and the conversion rule as specified carries it to the last fact date
+  as the latest landed rate: 261 provisional rows in `sl_fx_rates`, none ever settled. No fact is
+  in BGN. Raised for a ruling (ADR 0019).
+- **The gold column guard cannot see a rename.** It compares a gold model's declared columns with
+  its parents' quasi-identifier columns; `date_of_birth as born` passes. Column-level lineage,
+  M8's, would close it.
+- **A restoration after a soft delete would fail `silver_scd2_intervals`**, which refuses the gap
+  between the delete and the restore. None exists in the data; the first is a decision.
+- **`is_customer_initiated` is not derived in silver**, although the inventory's derived flags
+  say `sl_transactions` and `sl_payments` derive it: specification 008 does not scope it. Raised.
 
 Found at specification 007 and not fixed there:
 
@@ -455,10 +479,10 @@ Other known gaps:
 
 ## Next milestone
 
-**M5, silver conformance**: SCD2, deduplication on the business key and `updated_at`, the FX
-gap fill, and quasi-identifier generalisation, built on the bronze views. What it inherits from
-M4 is in the checkpoint's last section: bronze is a view and a read costs a listing, bronze is not
-deduplicated, a retired column is null by delivery date, and FRED has never landed.
+**M5 continues: specification 009, silver for the card settlement file, the sanctions list and
+FRED**, then 010, entity resolution. What 008 leaves them: the historisation and conversion
+macros, the silver generator, the generic silver tests and `transform_silver`, which builds every
+silver model after a successful bronze build. M5's checkpoint follows 010.
 
 The notes below were written when M4 began, and are kept as the record of what it had to
 resolve; each says how it was.
