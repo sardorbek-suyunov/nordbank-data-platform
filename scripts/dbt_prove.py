@@ -11,6 +11,9 @@ fixture entity plants one violation, and the run requires:
 - an entity with no registered rows to build as an empty relation of the declared types;
 - `bronze_guard` to fail the build on a bronze model that reads the lake itself, on a model
   outside bronze that does, and on a test that stores its failures;
+- `gold_guard` to fail the build on a gold model selecting a column its parent classifies
+  quasi-identifier and on one that does not enforce its contract, and to pass one selecting only
+  the generalisation;
 - every macro test under `dbt/tests/macros` to pass on the repository's macros, and to fail on a
   copy of the macros with one planted defect (specification 008), each defect named in
   `MUTATIONS` with the test that must catch it;
@@ -150,7 +153,7 @@ def project(work: Path, database: Path, extra_models: dict[str, str] | None = No
     (home / "dbt_project.yml").write_text(
         "name: prove\nversion: '1.0'\nconfig-version: 2\nprofile: prove\n"
         "flags:\n  send_anonymous_usage_stats: false\n"
-        'on-run-start:\n  - "{{ bronze_guard() }}"\n'
+        'on-run-start:\n  - "{{ bronze_guard() }}"\n  - "{{ gold_guard() }}"\n'
         "models:\n  prove:\n    bronze:\n      +materialized: view\n      +schema: bronze\n",
         encoding="utf-8",
     )
@@ -314,6 +317,19 @@ def main() -> int:
             else:
                 failures.append(f"bronze_guard did not fail the build on {label}")
 
+        for label, (gold_sql, gold_columns, enforced, refuse) in GOLD_CASES.items():
+            extra = gold_fixture(gold_sql, gold_columns, enforced)
+            home = project(work, database, extra)
+            run = dbt(home, work, lake, "build", "--select", "path:models/silver path:models/gold")
+            refused = "gold_guard" in run.stdout
+            if not refuse and run.returncode != 0:
+                failures.append(f"the build of {label} exited {run.returncode}")
+            elif refused == refuse:
+                verdict = "fails the build on" if refuse else "passes"
+                print(f"dbt-prove: gold_guard {verdict} {label}")
+            else:
+                failures.append(f"gold_guard was {'refusing' if refused else 'silent'} on {label}")
+
         failures += prove_macro_tests(work)
         failures += prove_silver_tests(work)
 
@@ -324,6 +340,56 @@ def main() -> int:
         return 1
     print("\ndbt-prove: every test and rule failed where it was planted, and passed where not")
     return 0
+
+
+# --- the gold column guard (specification 008 section 8) -----------------------------------
+
+# A silver model whose properties classify its columns, as the generated ones do, and gold models
+# over it: (gold SQL, the columns its properties declare, whether its contract is enforced, and
+# whether the guard must refuse it).
+GOLD_CASES: dict[str, tuple[str, list[str], bool, bool]] = {
+    "a gold model selecting only the band": (
+        "select customer_id, age_band from {{ ref('sl_people') }}",
+        ["customer_id", "age_band"], True, False,
+    ),
+    "a gold model selecting a date of birth": (
+        "select customer_id, date_of_birth from {{ ref('sl_people') }}",
+        ["customer_id", "date_of_birth"], True, True,
+    ),
+    "a gold model that does not enforce its contract": (
+        "select customer_id, age_band from {{ ref('sl_people') }}",
+        ["customer_id", "age_band"], False, True,
+    ),
+}  # fmt: skip
+PEOPLE = {
+    "customer_id": ("BIGINT", "pseudonymous_key"),
+    "date_of_birth": ("DATE", "quasi-identifier"),
+    "age_band": ("VARCHAR", "non-personal"),
+}
+
+
+def gold_fixture(gold_sql: str, gold_columns: list[str], enforced: bool) -> dict[str, str]:
+    silver = ["version: 2", "models:", "  - name: sl_people", "    columns:"]
+    for name, (data_type, classification) in PEOPLE.items():
+        silver += [
+            f"      - name: {name}",
+            f"        data_type: {data_type}",
+            f"        config: {{meta: {{classification: {classification}}}}}",
+        ]
+    gold = ["version: 2", "models:", "  - name: dim_people"]
+    gold += ["    config:", f"      contract: {{enforced: {'true' if enforced else 'false'}}}"]
+    gold += ["    columns:"]
+    for name in gold_columns:
+        gold += [f"      - name: {name}", f"        data_type: {PEOPLE[name][0]}"]
+    return {
+        "models/silver/sl_people.sql": (
+            "select cast(1 as bigint) as customer_id, date '1990-05-01' as date_of_birth, "
+            "'25-34' as age_band\n"
+        ),
+        "models/silver/sl_people.yml": "\n".join(silver) + "\n",
+        "models/gold/dim_people.sql": gold_sql + "\n",
+        "models/gold/dim_people.yml": "\n".join(gold) + "\n",
+    }
 
 
 # --- macro tests (specification 008) ---------------------------------------------------------
