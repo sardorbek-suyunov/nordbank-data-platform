@@ -36,3 +36,8 @@ load_macros_from_path = dbt/macros
 ref = {% macro ref(model_name) %}{{ model_name }}{% endmacro %}
 source = {% macro source(source_name, table_name) %}{{ source_name }}_{{ table_name }}{% endmacro %}
 config = {% macro config() %}{% set _ = kwargs %}{% endmacro %}
+# `scd2` and `latest_state` read the relation's columns through the adapter and return lists with
+# dbt's `return`, which this templater cannot run; for linting, each renders as a plain select
+# from its relation. What they render is tested by dbt itself (dbt/tests/macros, make dbt-prove).
+scd2 = {% macro scd2(relation, key, excluded=[], deleted='is_deleted', columns=none) %}select * from {{ relation }}{% endmacro %}
+latest_state = {% macro latest_state(relation, key, deleted='is_deleted', columns=none) %}select * from {{ relation }}{% endmacro %}

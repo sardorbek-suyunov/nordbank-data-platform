@@ -366,9 +366,65 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
         "timezone('UTC',",
         "assert_fx_publication_instant",
     ),
+    (
+        "a projection compared with <> rather than is distinct from",
+        "historisation.sql",
+        '({%- for column in projection %}\n            "{{ column }}" is distinct from lag(',
+        '({%- for column in projection %}\n            "{{ column }}" <> lag(',
+        "assert_scd2_version_rule",
+    ),
+    (
+        "a change the contract does not describe opening no version",
+        "historisation.sql",
+        "or (not _deleted and (_projection_changed or not _excluded_changed))",
+        "or (not _deleted and _projection_changed)",
+        "assert_scd2_version_rule",
+    ),
+    (
+        "the latest batch of a re-read winning",
+        "historisation.sql",
+        "order by {{ key | join(', ') }}, updated_at, _batch_id",
+        "order by {{ key | join(', ') }}, updated_at, _batch_id desc",
+        "assert_scd2_version_rule",
+    ),
+    (
+        "the first version opening at its updated_at",
+        "historisation.sql",
+        "then {{ scd2_epoch() }} else updated_at end",
+        "then updated_at else updated_at end",
+        "assert_scd2_version_rule",
+    ),
+    (
+        "a deletion that does not close the version before it",
+        "historisation.sql",
+        "or _deleted is distinct from _previous_deleted",
+        "or (not _deleted and _previous_deleted)",
+        "assert_scd2_version_rule",
+    ),
+    (
+        "is_active treated as an audit column",
+        "historisation.sql",
+        "'_object_ingest_date', '_raw_payload']",
+        "'_object_ingest_date', '_raw_payload', 'is_active']",
+        "assert_scd2_inactive_ref_is_current",
+    ),
+    (
+        "latest state keeping the oldest observation",
+        "historisation.sql",
+        "order by {{ key | join(', ') }}, updated_at desc",
+        "order by {{ key | join(', ') }}, updated_at",
+        "assert_latest_state",
+    ),
+    (
+        "business validity ending on the inclusive last day",
+        "historisation.sql",
+        "coalesce({{ valid_to_inclusive }} + 1, date '9999-12-31')",
+        "coalesce({{ valid_to_inclusive }}, date '9999-12-31')",
+        "assert_business_validity_backdated",
+    ),
 ]
 # A floor stated as a number, never read from the folder: the macro tests that exist.
-MACRO_TEST_FLOOR = 2
+MACRO_TEST_FLOOR = 6
 
 
 def macro_project(work: Path, mutation: tuple[str, str, str] | None = None) -> Path:
