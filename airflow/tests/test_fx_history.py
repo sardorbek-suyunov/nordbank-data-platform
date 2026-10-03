@@ -215,13 +215,23 @@ HISTORY = {"history": {"from": "2024-01-23", "to": "2026-07-19"}}
 
 
 def test_the_history_opens_one_batch_and_never_twice(warehouse) -> None:
+    """Its interval is the requested range; its ingest date is the run's logical date."""
     (unit,) = phases.fx_open(_context(dt.date(2026, 7, 19), HISTORY))
     assert unit["range"] == ["2024-01-23", "2026-07-19"]
     (batch,) = unit["batches"]
-    assert batch["batch_id"] == "fx_rates-20260719T000000-01"
+    assert batch["batch_id"] == "fx_rates-20240123T000000-01"
 
     connection = duckdb.connect(str(warehouse))
     try:
+        row = connection.execute(
+            "select ingest_date, interval_start, interval_end, contract_version"
+            " from ops.batch_registry where batch_id = ?",
+            [batch["batch_id"]],
+        ).fetchone()
+        assert row[0] == dt.date(2026, 7, 19)
+        assert row[1] == dt.datetime(2024, 1, 23, tzinfo=dt.UTC)
+        assert row[2] == dt.datetime(2026, 7, 20, tzinfo=dt.UTC)
+        assert row[3] == 1
         connection.execute(
             "update ops.batch_registry set status = ? where batch_id = ?",
             [registry.REGISTERED, batch["batch_id"]],

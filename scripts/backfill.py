@@ -84,8 +84,9 @@ path. The range starts the day before the earliest business instant in the sourc
 of `core.transactions.booked_at` and `core.payments.initiated_at`, read from the source and never
 written down here; Frankfurter snaps a start that was not a publication back to the one before
 it, so the first fact has a rate published before it. It ends the day before the anchor, the
-first day the daily runs request. The run's logical date is that last day, and a history already
-registered there is a no-op, so every later invocation passes over it.
+first day the daily runs request. The run's logical date is that last day, the batch's registry
+interval is the range, and a history already registered from the same first day is a no-op, so
+every later invocation passes over it.
 
 **Bronze is built once, at the end.** `transform_bronze` is scheduled on every registration,
 and during a backfill that is about four builds a day, each holding the warehouse file.
@@ -663,7 +664,7 @@ def history_range(earliest: dt.date, anchor: dt.date) -> tuple[dt.date, dt.date]
 
 
 def history_registered(day: dt.date) -> bool:
-    """Whether the registry holds a registered FX history batch keyed on a day."""
+    """Whether the registry holds a registered FX history batch whose interval starts on a day."""
     payload = in_container("ingest_state.py", "--interval", day.isoformat(), "--system", "ecb")
     state = json.loads(payload.strip().splitlines()[-1])
     return any(b["entity"] == "fx_rates" and b["status"] == "registered" for b in state["batches"])
@@ -677,8 +678,8 @@ def load_fx_history(anchor: dt.date) -> int:
         print("backfill: no business instant before the anchor; no FX history to load")
         return 0
     first, last = span
-    if history_registered(last):
-        print(f"backfill: the FX history to {last} is registered; nothing to load", flush=True)
+    if history_registered(first):
+        print(f"backfill: the FX history from {first} is registered; nothing to load", flush=True)
         return 0
     print(f"backfill: loading the FX history, {first} to {last}, in one request", flush=True)
     run_id = start_run(
