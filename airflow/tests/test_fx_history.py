@@ -151,15 +151,20 @@ def _fetcher(status: int, body: bytes = b""):
     return fetch, calls
 
 
-def test_the_history_is_one_request_to_the_time_series_endpoint() -> None:
+def test_the_history_is_one_request_and_logs_every_unpublished_date() -> None:
     fetch, calls = _fetcher(200, _body(WEEK, "2026-07-16", "2026-07-20"))
     fetched = fx.fetch_range(dt.date(2026, 7, 16), dt.date(2026, 7, 20), base_url=BASE, fetch=fetch)
     assert calls == [(f"{BASE}/2026-07-16..2026-07-20", {"base": "EUR"})]
     assert fetched.failure is None
     assert len(fetched.parsed.records) >= 9
-    (outcome,) = fetched.outcomes
-    assert outcome.outcome == fx.LANDED and outcome.rows == len(fetched.parsed.records)
-    assert outcome.detail == "3 publication date(s), 2026-07-16 to 2026-07-20"
+    landed, *absent = fetched.outcomes
+    assert landed.key == "2026-07-16..2026-07-20"
+    assert landed.outcome == fx.LANDED and landed.rows == len(fetched.parsed.records)
+    assert landed.detail == "3 publication date(s), 2026-07-16 to 2026-07-20"
+    # Saturday and Sunday: logged as a single-date weekend request is, one row a date.
+    assert [o.key for o in absent] == ["2026-07-18", "2026-07-19"]
+    assert {o.outcome for o in absent} == {fx.ABSENT}
+    assert {o.rows for o in absent} == {0} and {o.status for o in absent} == {200}
     assert fx.range_requested_as(BASE, dt.date(2026, 7, 16), dt.date(2026, 7, 20)) == (
         f"{BASE}/2026-07-16..2026-07-20?base=EUR"
     )
