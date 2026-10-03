@@ -83,7 +83,7 @@ Built at M4 by specification 007. The section below is generated from the contra
 | `br_corebank__transaction_statuses` | `transaction_status_id`, `_batch_id` | `bronze/corebank/transaction_statuses/` | 1 | Active account rule, Q1; Attributes of `fct_transactions`; `sl_transaction_statuses` |
 | `br_corebank__transaction_types` | `transaction_type_id`, `_batch_id` | `bronze/corebank/transaction_types/` | 1 | Attributes of `fct_transactions`, and the source of `is_customer_initiated`; Customer-initiated rule, Q1, Q6; `sl_transaction_types`; fct_transactions |
 | `br_corebank__transactions` | `transaction_id`, `_batch_id` | `bronze/corebank/transactions/` | 1 | Active account rule, Q1; Customer-initiated rule, Q1, Q6, Q11; Q15, Q16; Q19; Structuring, Q11; `sl_transactions`; fct_transactions, Q10, Q19; fct_transactions, Q4, Q6, Q11; structuring, Q11 |
-| `br_ecb__fx_rates` | `rate_date`, `quote_currency`, `_batch_id` | `bronze/ecb/fx_rates/` | 1 | `sl_fx_rates` |
+| `br_ecb__fx_rates` | `rate_date`, `quote_currency`, `_batch_id` | `bronze/ecb/fx_rates/` | 1 | `sl_fx_rates`; `sl_payments`; `sl_transactions` |
 | `br_fred__series` | `series_id`, `observation_date`, `realtime_start`, `_batch_id` | `bronze/fred/series/` | 1 | `sl_macro_indicators` |
 | `br_opensanctions__entities` | `entity_id`, `_batch_id` | `bronze/opensanctions/entities/` | 1 | `sl_sanctions_entities` |
 
@@ -102,8 +102,8 @@ One model per source entity, at entity grain, built at M5 unless noted.
 | `sl_account_holders` | One row per account and holder version (SCD2) | `br_corebank__account_holders` | Q3, Q6, Q11 |
 | `sl_cards` | One row per card version (SCD2) | `br_corebank__cards` | Q4, Q10 |
 | `sl_merchants` | One row per merchant version (SCD2) | `br_corebank__merchants` | Q4 |
-| `sl_transactions` | One row per transaction | `br_corebank__transactions` | Q1, Q4, Q6, Q10, Q11, Q12, Q15, Q19 |
-| `sl_payments` | One row per payment instruction version | `br_corebank__payments` | Q12, Q13 |
+| `sl_transactions` | One row per transaction | `br_corebank__transactions`, `br_ecb__fx_rates` | Q1, Q4, Q6, Q10, Q11, Q12, Q15, Q19 |
+| `sl_payments` | One row per payment instruction version | `br_corebank__payments`, `br_ecb__fx_rates` | Q12, Q13 |
 | `sl_loans` | One row per loan version (SCD2) | `br_corebank__loans` | Q5, Q7, Q8, Q9 |
 | `sl_loan_applications` | One row per application version | `br_corebank__loan_applications` | Q8, Q9 |
 | `sl_loan_installments` | One row per loan and installment version | `br_corebank__loan_installments` | Q7, Q8, Q9 |
@@ -111,7 +111,7 @@ One model per source entity, at entity grain, built at M5 unless noted.
 | `sl_gl_entries` | One row per ledger line | `br_corebank__gl_entries` | Q15, Q16 |
 | `sl_fraud_alerts` | One row per alert version | `br_corebank__fraud_alerts` | Q10 |
 | `sl_login_sessions` | One row per session | `br_corebank__login_sessions` | Q19 |
-| `sl_fx_rates` | One row per currency per calendar date | `br_ecb__fx_rates`, gap-filled | Every EUR conversion, Q14 |
+| `sl_fx_rates` | One row per currency per calendar date: the conversion rule at 23:59:59 UTC, gap-filled, carried and provisional flags | `br_ecb__fx_rates`; the last fact date from `sl_transactions`, `sl_payments` | Every EUR conversion, Q14 |
 | `sl_sanctions_entities` | One row per sanctioned entity per list version | `br_opensanctions__entities` | Q12 |
 | `sl_card_settlements` | One row per settlement file line | `br_cardnet__settlements` | Q15 |
 | `sl_card_settlement_totals` | One row per clearing file trailer: settlement date, sequence, revision, network and currency | `br_cardnet__settlement_totals` | Q15, the processor's own totals `mart_control_settlement_reconciliation` compares with the ledger |

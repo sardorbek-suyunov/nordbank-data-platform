@@ -122,10 +122,18 @@ case
 end as {{ prefix }}_amount_eur,
 case when {{ currency }} = 'EUR' then cast(1 as decimal(18,8)) else {{ rate }}.rate end as fx_rate,
 case when {{ currency }} = 'EUR' then null else {{ rate }}.rate_date end as fx_rate_date,
-coalesce({{ currency }} <> 'EUR'
-         and {{ rate }}.rate_date <> {{ utc_date(instant) }}, false) as fx_is_carried,
+coalesce({{ currency }} <> 'EUR' and {{ fx_is_carried(rate, utc_date(instant)) }}, false)
+    as fx_is_carried,
 ({{ currency }} <> 'EUR' and {{ rate }}.rate is null) as fx_is_missing,
-coalesce({{ currency }} <> 'EUR'
-         and {{ rate }}.is_latest_landed
-         and {{ instant }} > {{ rate }}.next_published_at, false) as fx_is_provisional
+coalesce({{ currency }} <> 'EUR' and {{ fx_is_provisional(rate, instant) }}, false)
+    as fx_is_provisional
+{%- endmacro %}
+
+{#- The two flags, shared by every converted fact and by `sl_fx_rates`; null without a rate. -#}
+{% macro fx_is_carried(rate, on_date) -%}
+({{ rate }}.rate_date <> {{ on_date }})
+{%- endmacro %}
+
+{% macro fx_is_provisional(rate, instant) -%}
+({{ rate }}.is_latest_landed and {{ instant }} > {{ rate }}.next_published_at)
 {%- endmacro %}
