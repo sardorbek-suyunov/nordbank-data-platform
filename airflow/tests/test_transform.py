@@ -1,6 +1,7 @@
 """dbt's child process gets the lake credentials as the profile reads them, and nothing else."""
 
 import pytest
+from nordbank_ops import transform
 from nordbank_ops.transform import BRONZE, PROJECT_DIR, SILVER, command, lake_settings
 
 
@@ -46,3 +47,14 @@ def test_silver_is_selected_with_the_seed_it_reads():
         "path:seeds",
         "path:models/silver",
     ]
+
+
+def test_bronze_builds_only_the_tests_that_read_bronze_alone(monkeypatch):
+    """A silver test reading bronze would fail before silver exists; it runs with silver."""
+    seen = []
+    monkeypatch.setattr(transform, "run", lambda arguments: seen.append(arguments) or 0)
+    transform.build_bronze()
+    transform.build_silver()
+    bronze, silver = seen
+    assert bronze[bronze.index("--indirect-selection") + 1] == "cautious"
+    assert "--indirect-selection" not in silver
