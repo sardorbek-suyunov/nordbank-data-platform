@@ -27,6 +27,11 @@ extended_capitalisation_policy = lower
 # batch registry at compile time which entities have landed rows, and the lint job has neither.
 # The generated bronze models and the macros are not linted; scripts/lint_sql.py says what
 # checks them instead.
+# Hand-written dbt SQL calls the project's macros, so the templater renders them from the
+# project; the macros themselves are still not linted.
+[sqlfluff:templater:jinja]
+load_macros_from_path = dbt/macros
+
 [sqlfluff:templater:jinja:macros]
 ref = {% macro ref(model_name) %}{{ model_name }}{% endmacro %}
 source = {% macro source(source_name, table_name) %}{{ source_name }}_{{ table_name }}{% endmacro %}

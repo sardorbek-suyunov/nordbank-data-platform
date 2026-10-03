@@ -10,7 +10,10 @@ fixture entity plants one violation, and the run requires:
   of a registered file under a new key;
 - an entity with no registered rows to build as an empty relation of the declared types;
 - `bronze_guard` to fail the build on a bronze model that reads the lake itself, on a model
-  outside bronze that does, and on a test that stores its failures.
+  outside bronze that does, and on a test that stores its failures;
+- every macro test under `dbt/tests/macros` to pass on the repository's macros, and to fail on a
+  copy of the macros with one planted defect (specification 008), each defect named in
+  `MUTATIONS` with the test that must catch it.
 
 It needs dbt and DuckDB and nothing else: no stack, no network. It runs from a temporary
 directory because dbt 1.12 loads the first `.env` it finds above its working directory, and the
@@ -309,6 +312,8 @@ def main() -> int:
             else:
                 failures.append(f"bronze_guard did not fail the build on {label}")
 
+        failures += prove_macro_tests(work)
+
     if failures:
         print("\ndbt-prove: FAILED")
         for line in failures:
@@ -316,6 +321,115 @@ def main() -> int:
         return 1
     print("\ndbt-prove: every test and rule failed where it was planted, and passed where not")
     return 0
+
+
+# --- macro tests (specification 008) ---------------------------------------------------------
+
+MACRO_TESTS = ROOT / "dbt" / "tests" / "macros"
+
+# Each planted defect: what it is, the macro file, the text replaced, its replacement, and the
+# test that must then fail. A text that does not occur exactly once fails the proof, so a
+# refactored macro cannot quietly turn a defect into a no-op.
+MUTATIONS: list[tuple[str, str, str, str, str]] = [
+    (
+        "the conversion by decimal division",
+        "fx.sql",
+        "{{ fx_units_to_eur(fx_quotient_units(amount, rate)) }}",
+        "round(cast({{ amount }} as decimal(18,4)) / cast({{ rate }} as decimal(18,8)), 4)",
+        "assert_fx_conversion_is_exact",
+    ),
+    (
+        "the scaling back by division",
+        "fx.sql",
+        "(cast({{ units }} as decimal(38,0)) * cast(0.0001 as decimal(38,4)))",
+        "(cast({{ units }} as decimal(38,0)) / 10000)",
+        "assert_fx_conversion_is_exact",
+    ),
+    (
+        "the rate scaled without widening",
+        "fx.sql",
+        "cast(cast({{ rate }} as decimal(38,8)) * 100000000 as hugeint)",
+        "cast(cast({{ rate }} as decimal(18,8)) * 100000000 as hugeint)",
+        "assert_fx_conversion_is_exact",
+    ),
+    (
+        "the quotient truncated rather than rounded",
+        "fx.sql",
+        "cast(100000000 as hugeint) + {{ fx_rate_units(rate) }})",
+        "cast(100000000 as hugeint))",
+        "assert_fx_conversion_is_exact",
+    ),
+    (
+        "the publication instant in UTC",
+        "fx.sql",
+        "timezone('Europe/Berlin',",
+        "timezone('UTC',",
+        "assert_fx_publication_instant",
+    ),
+]
+# A floor stated as a number, never read from the folder: the macro tests that exist.
+MACRO_TEST_FLOOR = 2
+
+
+def macro_project(work: Path, mutation: tuple[str, str, str] | None = None) -> Path:
+    """A project of the repository's macros and macro tests, with at most one planted defect."""
+    home = work / "macro-project"
+    if home.exists():
+        shutil.rmtree(home)
+    shutil.copytree(ROOT / "dbt" / "macros", home / "macros")
+    shutil.copytree(MACRO_TESTS, home / "tests" / "macros")
+    if mutation is not None:
+        file, old, new = mutation
+        path = home / "macros" / file
+        text = path.read_text(encoding="utf-8")
+        if text.count(old) != 1:
+            raise SystemExit(
+                f"dbt-prove: a planted defect's text occurs {text.count(old)} time(s) in {file}, "
+                "not once; update MUTATIONS"
+            )
+        path.write_text(text.replace(old, new), encoding="utf-8")
+    (home / "dbt_project.yml").write_text(
+        "name: prove_macros\nversion: '1.0'\nconfig-version: 2\nprofile: prove\n"
+        "flags:\n  send_anonymous_usage_stats: false\n",
+        encoding="utf-8",
+    )
+    database = work / "macros.duckdb"
+    (home / "profiles.yml").write_text(
+        f"prove:\n  target: prove\n  outputs:\n    prove:\n      type: duckdb\n"
+        f"      path: '{database.as_posix()}'\n      schema: main\n      threads: 1\n",
+        encoding="utf-8",
+    )
+    return home
+
+
+def test_statuses(work: Path) -> dict[str, str]:
+    """Singular test name -> status, from the last run's results."""
+    results = json.loads((work / "target" / "run_results.json").read_text(encoding="utf-8"))
+    return {r["unique_id"].split(".")[2]: r["status"] for r in results["results"]}
+
+
+def prove_macro_tests(work: Path) -> list[str]:
+    """Every macro test passes on the macros, and fails on each planted defect."""
+    names = sorted(p.stem for p in MACRO_TESTS.glob("*.sql"))
+    if len(names) < MACRO_TEST_FLOOR:
+        return [f"only {len(names)} macro test(s) under dbt/tests/macros"]
+    failures = []
+    dbt(macro_project(work), work, work / "lake", "test")
+    statuses = test_statuses(work)
+    for name in names:
+        if statuses.get(name) != "pass":
+            failures.append(f"{name} was {statuses.get(name)} on the repository's macros")
+    if not failures:
+        print(f"dbt-prove: {len(names)} macro tests pass on the repository's macros")
+    for label, file, old, new, test in MUTATIONS:
+        dbt(macro_project(work, (file, old, new)), work, work / "lake", "test", "--select", test)
+        status = test_statuses(work).get(test)
+        if status in ("fail", "error"):
+            note = " (an error)" if status == "error" else ""
+            print(f"dbt-prove: {test} fails on {label}{note}")
+        else:
+            failures.append(f"{test} was {status} on {label}, expected it to fail")
+    return failures
 
 
 if __name__ == "__main__":
