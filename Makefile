@@ -2,7 +2,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe fault-demo parking-demo up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance feeds-acceptance ingest-integrity asset-events-check seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list requirements dbt-generate dbt-prove dbt-build dbt-docs docs-scan bronze-plant dq clean
+.PHONY: help install init-env lint format test test-dags test-offline test-integration feeds-probe fault-demo parking-demo up down nuke health logs verify-dag schema-apply schema-dump schema-check warehouse-apply contracts-bootstrap contracts-diff extract backfill bronze-stats bronze-pii-scan bronze-acceptance feeds-acceptance ingest-integrity asset-events-check seed seed-verify seed-manifest tick tick-to tick-status tick-acceptance generate-settlement-files publish-sanctions-list requirements silver-generate dbt-generate dbt-prove dbt-build dbt-docs docs-scan bronze-plant dq clean
 
 help: ## List the available targets
 	@echo "nordbank-data-platform targets:"
@@ -174,6 +174,13 @@ else
 	uv run python scripts/requirements_export.py
 endif
 
+silver-generate: ## Generate the silver models that mirror an entity, their properties and the inventory's silver section (CHECK=1 fails on a difference); run before dbt-generate
+ifeq ($(CHECK),1)
+	uv run python scripts/silver_generate.py --check
+else
+	uv run python scripts/silver_generate.py
+endif
+
 dbt-generate: ## Generate the bronze models and the inventory's bronze section from the contracts (CHECK=1 fails on a difference)
 ifeq ($(CHECK),1)
 	uv run python scripts/dbt_generate.py --check
@@ -181,11 +188,11 @@ else
 	uv run python scripts/dbt_generate.py
 endif
 
-dbt-prove: ## Show every bronze test and rule failing on planted fixtures (no stack, no network)
+dbt-prove: ## Show every bronze and silver test, macro test and rule failing on planted fixtures (no stack, no network)
 	uv run --group dbt python scripts/dbt_prove.py
 
-dbt-build: ## Build and test the bronze models inside the stack (dbt build --warn-error)
-	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/dbt_run.py build --select path:models/bronze --warn-error
+dbt-build: ## Build and test everything dbt holds inside the stack: bronze, the seed, silver and every test (dbt build --warn-error)
+	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/dbt_run.py build --warn-error
 
 docs-scan: ## Scan data/dbt-docs for every environment secret and vault value (PLANT=1 proves it can fail)
 	@# docker cp creates root-owned files, which the airflow user cannot delete from the sticky

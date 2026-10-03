@@ -1,0 +1,70 @@
+version: 2
+models:
+  - name: sl_fx_rates
+    description: "One rate per currency per calendar date: the conversion rule evaluated at 23:59:59 UTC of the date, which is the latest rate published at or before that instant. Gap-filled forward from each currency's first landed rate to the later of its last rate date and the last fact date, with whether the rate was carried to the date and whether it is still provisional. Rates are currency per euro. Grain: `currency_code`, `calendar_date`."
+    config:
+      meta:
+        history: calendar
+        upstream: br_ecb__fx_rates
+        grain: [currency_code, calendar_date]
+    data_tests:
+      - silver_unique_key:
+          arguments:
+            columns: [currency_code, calendar_date]
+          config:
+            severity: error
+      - silver_not_null:
+          arguments:
+            columns: [currency_code, calendar_date, fx_rate, fx_rate_date, fx_published_at, fx_is_carried, fx_is_provisional]
+          config:
+            severity: error
+      # The `ci` book's history: 29 currencies over the 908 days from 2024-01-23 to the first day
+      # of the backfill, before any daily rate lands.
+      - silver_min_rows:
+          arguments:
+            minimum: 25000
+          config:
+            severity: error
+    columns:
+      - name: currency_code
+        data_type: VARCHAR
+        description: "The quoted currency, ISO 4217. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: calendar_date
+        data_type: DATE
+        description: "The calendar date the row describes, every date from the currency's first landed rate on. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: fx_rate
+        data_type: DECIMAL(18,8)
+        description: "The rate in force at 23:59:59 UTC of the date, in currency per euro. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: fx_rate_date
+        data_type: DATE
+        description: "The date of the rate in force: the calendar date itself when that day's rate was published, an earlier one when it was carried. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: fx_published_at
+        data_type: TIMESTAMP WITH TIME ZONE
+        description: "The nominal publication instant of the rate in force: 16:00 Europe/Berlin on its date. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: fx_is_carried
+        data_type: BOOLEAN
+        description: "The rate in force is not the date's own: carried across a weekend, a TARGET holiday or a day whose rate has not landed. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: fx_is_provisional
+        data_type: BOOLEAN
+        description: "The rate in force is the latest landed for the currency and the end of the date is after the publication instant of the next weekday after the rate's date, so a newer rate may still land and change this row. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal

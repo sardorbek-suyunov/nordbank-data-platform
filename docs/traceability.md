@@ -8,9 +8,13 @@ The point of the exercise is that an unsupplied reference is a defect in this mi
 than a note for later. Eleven references could not be supplied from the schema as specified;
 each is resolved below and in the amendments those documents carry.
 
-`_sk` columns are surrogate keys hashed from a business key in gold (conventions.md) and never
-come from the source. `_eur` columns are converted in silver from the transaction amount and
-the FX rate, which is an external feed rather than a core banking entity.
+`_sk` columns are surrogate keys hashed in gold from the entity's pseudonymous key, its `_id`,
+plus `_valid_from` where the entity is SCD2 (conventions.md), and never come from the source.
+Never from an identifier such as `customer_reference`: an identifier holds a token after
+ingestion and is erasable through the vault, so a key hashed from it would change meaning when
+its subject is erased (corrected at specification 008). `_eur` columns are converted in silver
+from the amount and the FX rate, which is an external feed rather than a core banking entity,
+by the rule in architecture.md.
 
 ## Growth and activity
 
@@ -24,10 +28,10 @@ the FX rate, which is an external feed rather than a core banking entity.
 | `fct_transactions.transaction_type` | `core.transactions.transaction_type_code` | |
 | `fct_transactions.channel` | `core.transactions.channel_code` | |
 | `fct_transactions.is_customer_initiated` | Derived, silver | From `ref.transaction_types.is_customer_initiated` through the type foreign key, and from `ref.payment_types.is_customer_initiated` for payments |
-| `fct_transactions.transaction_amount_eur` | Derived, silver | `core.transactions.transaction_amount` converted as-of against `sl_fx_rates` |
+| `fct_transactions.transaction_amount_eur` | Derived, silver | `core.transactions.transaction_amount` converted at the latest rate published before `booked_at` (`sl_transactions.transaction_amount_eur`) |
 | `fct_payments.account_sk` | Derived, gold | Hashed from `core.payments.account_id` |
 | `fct_payments.booked_at` | `core.payments.booked_at` | **Gap 3, resolved.** Spec 002 v1 gave payments only `initiated_at` and `settled_at`. An outbound SEPA payment debits the account when it books and settles later, so the two are different instants and the active account rule reads the first. Column added |
-| `dim_customer.customer_sk` | Derived, gold | Hashed from `core.customers.customer_reference` |
+| `dim_customer.customer_sk` | Derived, gold | Hashed from `core.customers.customer_id`, the pseudonymous key, with `_valid_from`. Said `customer_reference` until specification 008, which is an identifier and holds a token |
 | `dim_date.month_start_date` | Derived, gold | Generated date dimension |
 | `dim_date.days_in_month` | Derived, gold | Generated date dimension |
 
@@ -68,7 +72,7 @@ the FX rate, which is an external feed rather than a core banking entity.
 | `sl_loan_installments.due_date` | `core.loan_installments.due_date` | |
 | `sl_loan_installments.due_amount` | `core.loan_installments.due_amount` | |
 | `sl_loan_installments.paid_amount` | `core.loan_installments.paid_amount` | |
-| `dim_loan_product.rate` | `ref.loan_products.nominal_annual_rate` | **Gap 6, resolved.** Was `sl_products`, which no longer exists. A disbursed loan carries its own `core.loans.nominal_annual_rate`, copied at disbursement, and the net interest income proxy uses the rate in force during the month |
+| `dim_loan_product.rate` | `ref.loan_products.nominal_annual_rate` | **Gap 6, resolved.** Was `sl_products`, which no longer exists. A disbursed loan carries its own `core.loans.nominal_annual_rate`, copied at disbursement, and the net interest income proxy uses the loan's own rate, `sl_loans.nominal_annual_rate`, not the product's (corrected at specification 008; no numeric effect at `ci`) |
 | `fct_loan_balance_daily.outstanding_principal` | Derived, gold | From `core.loans.principal_amount` less `core.loan_installments.paid_amount` |
 
 ## Fraud and digital
@@ -105,15 +109,17 @@ the FX rate, which is an external feed rather than a core banking entity.
 | `fct_gl_entries.amount` | `core.gl_entries.amount` | Signed: debit positive, credit negative |
 | `fct_gl_entries.currency_code` | `core.gl_entries.entry_currency_code` | Balance is enforced per currency, so Q16 groups by it |
 | Posting batch for Q16 | `core.gl_transactions` | **Gap 9, resolved.** The header is new. `model_inventory.md` gains `br_corebank__gl_transactions` and `sl_gl_transactions` |
-| `sl_card_settlements.file_total_amount` | Not a core banking column | **Gap 10.** The card network settlement file is a separate source with its own contract at M4. `model_inventory.md` said its columns would arrive with spec 002; spec 002's scope is the core banking system, so that commitment moves to M4 |
-| `sl_card_settlements.settlement_currency` | Not a core banking column | As above |
-| `sl_card_settlements.settlement_date` | Not a core banking column | As above |
-| `sl_card_settlements.network` | Not a core banking column | As above. `ref.card_products.network` is the issuing side and is not the same column |
+| `sl_card_settlements.file_total_amount` | `cardnet` settlement totals contract: `settlement_totals.amount_total` | **Gap 10, resolved at M4.** The card network's clearing file is a separate source with its own contracts, `contracts/cardnet/`, and the file's total arrives in its trailer, landed as `br_cardnet__settlement_totals` |
+| `sl_card_settlements.settlement_currency` | `cardnet` settlements contract: `settlements.settlement_currency` | As above |
+| `sl_card_settlements.settlement_date` | `cardnet` settlements contract: `settlements.settlement_date` | As above |
+| `sl_card_settlements.network` | `cardnet` settlements contract: `settlements.network` | As above. `ref.card_products.network` is the issuing side and is not the same column |
 
 ## Platform tables
 
 Written by the orchestration and quality layers, not extracted from the source. Listed so the
-coverage check is complete in both directions.
+coverage check is complete in both directions. Checked against `infra/warehouse/schema/` at
+specification 008: every row marked M4 names a column the DDL defines, with that name; the rows
+marked M7 and later name tables that do not exist yet.
 
 | Reference | Supplied by | Note |
 |---|---|---|
@@ -143,4 +149,4 @@ coverage check is complete in both directions.
 | Gap | Resolution |
 |---|---|
 | `dim_detection_rule` read `sl_fraud_alerts` | A dimension built from alerts cannot see a rule that never fired. It reads `sl_fraud_rules`, which is added to `model_inventory.md` |
-| The coverage rule and 28 reference tables | No `ref` table is exempt. Each either becomes a conformed dimension in its own right or is consumed as attributes of one, and each is named in `data_dictionary.md` with the dimension that consumes it. None needs a silver model of its own |
+| The coverage rule and 28 reference tables | No `ref` table is exempt. Each either becomes a conformed dimension in its own right or is consumed as attributes of one, and each is named in `data_dictionary.md` with the dimension that consumes it. Each has a silver model of its own, generated from its contract (specification 008 section 5), because gold reads silver only; this row said none needed one until then |

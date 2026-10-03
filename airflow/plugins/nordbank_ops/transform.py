@@ -3,8 +3,8 @@
 dbt is installed in `/opt/dbt`, a virtual environment of its own in the image, because its
 dependencies do not resolve under Airflow 3.3.2's constraints (measured: dbt-core 1.12.5 needs
 pathspec below 1.1, the constraints pin 1.1.1). So it runs as a subprocess, from
-`transform_bronze` inside the `warehouse_access` pool and from `make dbt-build` through
-`scripts/dbt_run.py`.
+`transform_bronze` and `transform_silver` inside the `warehouse_access` pool and from
+`make dbt-build` through `scripts/dbt_run.py`.
 
 **The lake credentials.** The profile reads them from `DBT_ENV_SECRET_` variables and hands
 them to DuckDB through its secrets block; this module sets those variables from the Airflow lake
@@ -26,6 +26,11 @@ DBT = "/opt/dbt/bin/dbt"
 PROJECT_DIR = "/opt/airflow/dbt"
 OUTPUT_DIR = "/tmp/dbt"
 BRONZE = "path:models/bronze"
+# Silver and the one seed it reads (specification 008); the tests attached to silver run with it.
+SILVER = ("path:seeds", "path:models/silver")
+# The asset `transform_bronze` emits when a build of bronze has succeeded, and `transform_silver`
+# is scheduled on.
+BRONZE_BUILT = "transform_bronze/built"
 
 
 def lake_settings(login: str, password: str, extra: Mapping) -> dict[str, str]:
@@ -83,8 +88,23 @@ def run(arguments: Sequence[str]) -> int:
     return process.wait()
 
 
+# A test is built with bronze only when every model it reads is bronze. dbt's default, eager,
+# selects a test when any of its parents is selected, which takes in the silver tests that read
+# bronze beside silver: on a warehouse whose silver is not built yet they fail, and they belong to
+# `transform_silver`'s build, which follows. Measured: 354 tests selected eagerly, 86 of them
+# silver's, and 268 cautiously, the bronze tests and one that reads bronze alone.
+BRONZE_TESTS = ("--indirect-selection", "cautious")
+
+
 def build_bronze() -> None:
     """`dbt build --warn-error` over the bronze models; raises when dbt fails."""
-    code = run(["build", "--select", BRONZE, "--warn-error"])
+    code = run(["build", "--select", BRONZE, *BRONZE_TESTS, "--warn-error"])
     if code != 0:
         raise RuntimeError(f"dbt build over bronze exited {code}; see the output above")
+
+
+def build_silver() -> None:
+    """`dbt build --warn-error` over the seed and the silver models; raises when dbt fails."""
+    code = run(["build", "--select", *SILVER, "--warn-error"])
+    if code != 0:
+        raise RuntimeError(f"dbt build over silver exited {code}; see the output above")

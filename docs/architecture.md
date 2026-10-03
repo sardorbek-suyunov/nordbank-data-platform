@@ -310,7 +310,9 @@ fails on any divergence and runs in CI.
 
 **Silver guarantees** one row per business entity per version. It applies deduplication on the
 business key, resolves late arrivals by `updated_at`, applies soft deletes, converts amounts
-to `DECIMAL(18,4)` with an EUR equivalent, and normalises timestamps to UTC.
+to `DECIMAL(18,4)` with an EUR equivalent, and normalises timestamps to UTC. Silver is a pure
+function of bronze: tables rebuilt in full, so two builds from the same bronze are identical.
+How it versions an entity is ADR 0020.
 
 *Business date, posting date and audit time are three different dates on a late-arriving item,
 and silver has to keep them apart.* An offline card transaction presented days after the
@@ -321,13 +323,22 @@ restate: posting into a closed period would change totals for a day that has alr
 reported, and yesterday's figure would stop being reproducible from yesterday's data. Silver
 orders by business time and the ledger by posting date, and the two are not interchangeable.
 
-A soft delete and a deactivated reference code are not the same thing and are not applied the
-same way. `is_deleted` on a `core` row means the entity is gone, and silver removes it.
-`is_active = false` on a `ref` row means the code is no longer offered, and silver **retains**
-the row: a dimension must still describe historical facts that reference a retired code, and a
-transaction booked under a channel the bank has since withdrawn still needs that channel to
-have a name. `ref` tables therefore carry `is_active` and never `is_deleted`, which is what
-makes the two cases impossible to confuse (spec 002 design rule 3).
+**The soft-delete rule.** This is the one statement of it; `conventions.md` points here. A
+soft delete and a deactivated reference code are not the same thing and are not applied the same
+way.
+
+- `is_deleted` on a `core` row means the entity is gone. In an SCD2 model the observation that
+  records the delete closes the final version at the instant it was recorded, and the key has no
+  current version; its history stays, so a fact from before the delete still resolves. In a
+  latest-state model the deleted row is absent.
+- `is_active = false` on a `ref` row means the code is no longer offered, and silver **retains**
+  the row as a version, current with `is_active` false: a dimension must still describe
+  historical facts that reference a retired code, and a transaction booked under a channel the
+  bank has since withdrawn still needs that channel to have a name. `ref` tables carry
+  `is_active` and never `is_deleted`, which is what makes the two cases impossible to confuse
+  (spec 002 design rule 3).
+- A soft delete is not erasure. The row and its history stay in silver; removing a person is
+  the vault's job, by crypto-shredding the identifiers (ADR 0005), at M8.
 
 Identifiers stay tokenised: silver never resolves a token, and a keyed hash could not be
 resolved without the vault in any case. The attributes reporting needs are derived instead by
@@ -350,30 +361,50 @@ in the `ops` domain.
 
 ## Currency conversion
 
-Every monetary fact carries its original amount and currency, and an EUR equivalent. The
-conversion is an as-of join: for a fact dated `transaction_date`, take the rate with the
-greatest `rate_date` where `rate_date <= transaction_date`.
+This is the one statement of the conversion rule; `conventions.md` and `metric_definitions.md`
+point here, and ADR 0019 records why.
 
-The rate is never restated. When the true same-day rate publishes later, facts already
-converted keep the rate they were converted with.
+Every monetary fact carries its original amount and currency, and an EUR equivalent. **A fact
+converts at the latest rate whose publication instant is at or before its business instant.**
+The business instant is `booked_at` for a transaction and `initiated_at` for a payment. A rate's
+publication instant is its date at 16:00 Europe/Berlin, the nominal time the ECB publishes, which
+is 14:00 UTC in summer and 15:00 UTC in winter. Rates are quoted as currency per euro, and the
+EUR amount is the amount divided by the rate.
 
-This is a choice about reproducibility rather than about precision. The ECB publishes
-reference rates in the mid-afternoon CET, so a transaction late in the European day has no
-same-day rate when it is ingested. Restating those facts the next morning would change
-totals in a report that was already read and circulated, and yesterday's figure would no
-longer be reproducible from yesterday's data. Converting as-of and leaving the result alone
-keeps every published number explainable.
+**A final conversion is never restated.** A conversion is **provisional** when the rate it chose
+is the latest landed for its currency and the business instant is after the publication instant
+of the next weekday after that rate's date: a newer rate may still land, and a rebuild after it
+does would choose it. Every other conversion is final, and no rebuild from the same or more data
+changes it. Only a provisional conversion may be restated, and every converted row says which it
+is. There is no holiday calendar: a TARGET holiday is a weekday whose expected rate never comes.
+
+This is a choice about reproducibility rather than about precision. Converting as of the rate's
+date, the rule this section stated until specification 008, restated a fact booked before its
+day's publication once the day's rate landed, so yesterday's figure was not reproducible from
+yesterday's data; freezing converted rows instead would make silver depend on when it was first
+built. The instant rule gives every fact a rate that existed when it happened, and says which
+answers can still move.
+
+**The arithmetic is exact**: integer division of HUGEINTs, rounded half away from zero to four
+decimal places as Regulation (EC) No 1103/97 rounds conversions to and from the euro, with no
+floating point in any intermediate expression. DuckDB returns DOUBLE from decimal division, and
+planning measured it wrong on 3,171 of 200,000 cases.
 
 Provenance is mandatory rather than optional: every converted fact carries `fx_rate`,
-`fx_rate_date` and `fx_is_carried`, so a reader can see which rate was used, when it was
-published, and whether it was carried forward across a weekend or a holiday.
+`fx_rate_date`, `fx_is_carried`, `fx_is_missing` and `fx_is_provisional`, so a reader can see
+which rate was used, when it was published, whether its date is not the fact's own, and whether
+the answer is final. EUR converts at 1, with a null rate date.
 
-When no rate exists at all for a currency with `rate_date <= transaction_date`, the conversion
-has no answer and does not invent one. `amount_eur` is null, `fx_is_missing` is set on the
-row, and a `dq` check of severity `error` fires for that currency and date. The converted
-amount is never zero and never silently the original amount in another currency: both are
-wrong numbers that add cleanly into a total and are invisible afterwards, whereas a null
-propagates visibly and an error blocks the gate.
+When no rate was published at or before the business instant, the conversion has no answer and
+does not invent one. `amount_eur` is null, `fx_is_missing` is set on the row, and a `dq` check of
+severity `error` fires for that currency and date (M7). The converted amount is never zero and
+never silently the original amount in another currency: both are wrong numbers that add cleanly
+into a total and are invisible afterwards, whereas a null propagates visibly and an error blocks
+the gate.
+
+`sl_fx_rates` holds one rate per currency per calendar date, the same rule evaluated at 23:59:59
+UTC of the date, gap-filled forward with the carried and provisional flags, and a test holds the
+two to agreement.
 
 ## Storage layout
 

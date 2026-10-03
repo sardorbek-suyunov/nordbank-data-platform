@@ -27,7 +27,19 @@ extended_capitalisation_policy = lower
 # batch registry at compile time which entities have landed rows, and the lint job has neither.
 # The generated bronze models and the macros are not linted; scripts/lint_sql.py says what
 # checks them instead.
+# Hand-written dbt SQL calls the project's macros, so the templater renders them from the
+# project; the macros themselves are still not linted.
+[sqlfluff:templater:jinja]
+load_macros_from_path = dbt/macros
+
 [sqlfluff:templater:jinja:macros]
 ref = {% macro ref(model_name) %}{{ model_name }}{% endmacro %}
 source = {% macro source(source_name, table_name) %}{{ source_name }}_{{ table_name }}{% endmacro %}
 config = {% macro config() %}{% set _ = kwargs %}{% endmacro %}
+# `scd2`, `latest_state` and `relation_columns` read a relation's columns through the adapter and
+# return lists with
+# dbt's `return`, which this templater cannot run; for linting, the first two render as a plain
+# select from their relation and the third as no columns. What they render is tested by dbt itself (dbt/tests/macros, make dbt-prove).
+scd2 = {% macro scd2(relation, key, excluded=[], deleted='is_deleted', columns=none) %}select * from {{ relation }}{% endmacro %}
+latest_state = {% macro latest_state(relation, key, deleted='is_deleted', columns=none) %}select * from {{ relation }}{% endmacro %}
+relation_columns = {% macro relation_columns(relation, skip=[]) %}{% endmacro %}

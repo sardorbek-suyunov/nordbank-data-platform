@@ -98,6 +98,11 @@ Variable before the pause, so a loop killed before it could restore leaves the r
 the next invocation restores the state the DAG had before either of them, not the pause the
 killed one left. A DAG that was paused before the loop stays paused, and bronze is not built.
 
+**Silver follows, once.** `transform_silver` is scheduled on the asset a successful bronze build
+emits (specification 008), so the one bronze build triggers one silver build, and the window is
+reported complete only when that has succeeded too. It needs no hold of its own: while bronze is
+paused nothing triggers it. A paused `transform_silver` is reported and the silver build skipped.
+
 **One day demonstrates the sensor waiting.** `--defer-demo DATE` triggers the settlement DAG on
 that day *before* the clearing file is delivered, watches its sensor task until Airflow reports
 it `deferred`, and only then delivers the file. A sensor that finds its file on the first look
@@ -541,6 +546,7 @@ def tick(day: dt.date) -> None:
 
 
 TRANSFORM_DAG = "transform_bronze"
+SILVER_DAG = "transform_silver"
 ACTIVE = {"queued", "running"}
 # How long transform_bronze must stay idle before the backfill calls bronze built. An
 # asset-triggered run is created a few seconds after the registration that triggers it.
@@ -605,20 +611,26 @@ def build_once() -> None:
     wait_for(TRANSFORM_DAG, run_id)
 
 
-def settle_transforms(since: dt.datetime) -> int:
-    """Wait for the bronze builds this backfill's registrations triggered, and report them.
+def settle_transforms(
+    since: dt.datetime, dag_id: str = TRANSFORM_DAG, *, require_run: bool = False
+) -> int:
+    """Wait for the builds of `dag_id` this backfill triggered, and report them.
 
     Every registration triggers `transform_bronze`, which holds the warehouse file for a whole
     `dbt build`. Measured in the stack job: the last day's build still held it when the next
     step opened the warehouse, and that step gave up. So the backfill is complete when bronze
     is built from what it landed: when the DAG has had no queued or running run for a while.
-    A failed last build is a bronze test failing on the data, and fails the backfill.
+    A failed last build is a test failing on the data, and fails the backfill.
+
+    `require_run`: the DAG is triggered by an asset rather than by the loop, so its run appears
+    a few seconds after the build that triggers it; until one has, the DAG is not idle but not
+    yet started.
     """
     idle_since = None
     deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
-        runs = [r for r in api().runs(TRANSFORM_DAG) if _after(r, since)]
-        if any(r["state"] in ACTIVE for r in runs):
+        runs = [r for r in api().runs(dag_id) if _after(r, since)]
+        if any(r["state"] in ACTIVE for r in runs) or (require_run and not runs):
             idle_since = None
         elif idle_since is None:
             idle_since = time.monotonic()
@@ -626,21 +638,29 @@ def settle_transforms(since: dt.datetime) -> int:
             states = [r["state"] for r in runs]
             last = f"is {states[-1]}" if states else "never ran"
             print(
-                f"backfill: {TRANSFORM_DAG}: {len(runs)} build(s) during the backfill, "
+                f"backfill: {dag_id}: {len(runs)} build(s) during the backfill, "
                 f"{states.count('success')} succeeded, {states.count('failed')} failed; "
                 f"the last {last}",
                 flush=True,
             )
             if states and states[-1] == "failed":
                 print(
-                    f"backfill: the last {TRANSFORM_DAG} build failed: a bronze test found the "
-                    "data wrong, and its log names the model and the test",
+                    f"backfill: the last {dag_id} build failed: a test found the data wrong, "
+                    "and its log names the model and the test",
                     flush=True,
                 )
                 return 1
             return 0
         time.sleep(POLL_SECONDS)
-    raise SystemExit(f"backfill: {TRANSFORM_DAG} did not settle within {RUN_TIMEOUT_SECONDS}s")
+    raise SystemExit(f"backfill: {dag_id} did not settle within {RUN_TIMEOUT_SECONDS}s")
+
+
+def settle_silver(since: dt.datetime) -> int:
+    """Wait for the silver build the one bronze build triggered; 0, or 1 when it failed."""
+    if api().is_paused(SILVER_DAG):
+        print(f"backfill: silver is not built: {SILVER_DAG} is paused", flush=True)
+        return 0
+    return settle_transforms(since, SILVER_DAG, require_run=True)
 
 
 EARLIEST_BUSINESS_INSTANT = (
@@ -743,7 +763,7 @@ def main(argv: list[str]) -> int:
         print(f"backfill: bronze is not built: {TRANSFORM_DAG} is paused", flush=True)
         return 0
     build_once()
-    return settle_transforms(started_at)
+    return settle_transforms(started_at) or settle_silver(started_at)
 
 
 def ingest_days(start: dt.date, end: dt.date, anchor: dt.date, demo: dt.date | None) -> int:

@@ -1,0 +1,58 @@
+version: 2
+models:
+  - name: sl_customer_age_bands
+    description: "The age band each customer is in, as half-open date intervals derived from `date_of_birth` in the customer's latest version and the edges in `seed_generalisation_bands`: one row per customer per band, contiguous, the last open. The generalisation of a quasi-identifier that may reach gold; the interval dates encode `date_of_birth` and are joined on, never selected into gold. Grain: `customer_id`, `_valid_from_date`."
+    config:
+      meta:
+        history: intervals
+        upstream: sl_customers
+        grain: [customer_id, _valid_from_date]
+    data_tests:
+      - silver_unique_key:
+          arguments:
+            columns: [customer_id, _valid_from_date]
+          config:
+            severity: error
+      - silver_not_null:
+          arguments:
+            columns: [customer_id, age_band, _valid_from_date, _valid_to_date]
+          config:
+            severity: error
+      - silver_intervals_contiguous:
+          arguments:
+            key: [customer_id]
+            valid_from: _valid_from_date
+            valid_to: _valid_to_date
+          config:
+            severity: error
+      # 7 bands for each of the 500 customers the `ci` book lands on its first day, floored at 400.
+      - silver_min_rows:
+          arguments:
+            minimum: 2800
+          config:
+            severity: error
+    columns:
+      - name: customer_id
+        data_type: BIGINT
+        description: "The customer. Classification: `pseudonymous_key` (a key to a person-bearing entity, retained unchanged)."
+        config:
+          meta:
+            classification: pseudonymous_key
+      - name: age_band
+        data_type: VARCHAR
+        description: "The band, as `seed_generalisation_bands` labels it: the generalised value that may reach gold. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+      - name: _valid_from_date
+        data_type: DATE
+        description: "First day the band applies: `date_of_birth` plus the band's lower edge in years. Encodes `date_of_birth`. Classification: `quasi-identifier` (retained in the clear, generalised before gold)."
+        config:
+          meta:
+            classification: quasi-identifier
+      - name: _valid_to_date
+        data_type: DATE
+        description: "The day the next band begins, exclusive, or 9999-12-31 for the last band. Encodes `date_of_birth`. Classification: `quasi-identifier` (retained in the clear, generalised before gold)."
+        config:
+          meta:
+            classification: quasi-identifier

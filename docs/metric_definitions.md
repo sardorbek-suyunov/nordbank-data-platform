@@ -8,9 +8,10 @@ Entries marked **undecided, resolve before M6** depend on a decision that cannot
 made yet. They are listed with what the decision depends on, and they block the marts that
 consume them, not the layers below.
 
-All dates are UTC calendar dates. All amounts are EUR equivalents converted as-of, per the
-currency conversion rule in [architecture.md](architecture.md), except where a rule states
-otherwise, as settlement reconciliation does. Every object named on this page has a row in
+All dates are UTC calendar dates. All amounts are EUR equivalents converted at the latest rate
+published before the fact's business instant, per the currency conversion rule in
+[architecture.md](architecture.md), except where a rule states otherwise, as settlement
+reconciliation does. Every object named on this page has a row in
 [model_inventory.md](model_inventory.md).
 
 ## Active account
@@ -188,8 +189,12 @@ named here because the alternatives, 30/360 and Actual/Actual, give different an
 same loan book, and a proxy that does not say which one it used cannot be checked.
 
 Outstanding principal is the month-end balance after scheduled repayments. The rate is the
-contractual nominal rate in force during M, taken from the SCD2 product dimension as of the
-month end. Fee income is excluded: it belongs to Q4 and Q6 and double counting it here would
+loan's own contractual nominal rate, `sl_loans.nominal_annual_rate`, copied from the product at
+disbursement: a loan keeps the terms it was written under, so a later change to the product's
+rate does not reach a disbursed loan. Corrected at specification 008, which found this rule
+reading the product dimension as of the month end; planning measured no numeric effect at `ci`,
+where no loan's rate differs from its product's and no product rate changes. Fee income is
+excluded: it belongs to Q4 and Q6 and double counting it here would
 overstate the loan book.
 
 The funding cost assumption is **undecided, resolve before M6**. The candidate basis is the
@@ -199,10 +204,10 @@ funding, neither of which the source system models today. Until it is decided, Q
 gross interest accrued and states that funding cost is excluded, rather than reporting a
 number that silently equals gross.
 
-**Source columns.** `fct_loan_balance_daily.outstanding_principal`, `dim_loan_product.rate`
-from `ref.loan_products.nominal_annual_rate`, `dim_date.days_in_month`,
-`sl_loans.disbursed_date`. A disbursed loan also carries its own `nominal_annual_rate`, copied
-from the product at disbursement, because a loan keeps the terms it was written under.
+**Source columns.** `fct_loan_balance_daily.outstanding_principal`,
+`sl_loans.nominal_annual_rate`, `dim_date.days_in_month`, `sl_loans.disbursed_date`.
+`dim_loan_product.rate`, from `ref.loan_products.nominal_annual_rate`, is the product's current
+offer and not what Q5 reads.
 
 **Used by.** Q5.
 

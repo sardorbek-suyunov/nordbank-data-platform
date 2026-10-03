@@ -17,15 +17,32 @@ clean-targets: [target, logs]
 flags:
   send_anonymous_usage_stats: false
 
-# Two structural rules checked before anything runs, so a violation fails the build rather
-# than a review (macros/bronze_guard.sql): a bronze model reads the lake only through the
-# registered-batch macro, and no test stores its failures. The hook renders no SQL and holds
-# no credential.
+# Structural rules checked before anything runs, so a violation fails the build rather than a
+# review: a bronze model reads the lake only through the registered-batch macro, and no test
+# stores its failures (macros/bronze_guard.sql); no gold model selects a column classified
+# quasi-identifier, and every gold model enforces its contract (macros/gold_guard.sql). The hooks
+# render no SQL and hold no credential.
 on-run-start:
   - "{{ bronze_guard() }}"
+  - "{{ gold_guard() }}"
 
 models:
   nordbank:
     bronze:
       +materialized: view
       +schema: bronze
+    # Silver is tables rebuilt in full (specification 008 section 10; incremental is M6's
+    # decision). Every model's contract is enforced: its properties declare every column and
+    # type, generated from the contracts where it mirrors an entity, and a model whose SQL
+    # returns anything else fails to build rather than drifting from its documentation.
+    silver:
+      +materialized: table
+      +schema: silver
+      +contract:
+        enforced: true
+
+# The one seed, the band edges silver generalises quasi-identifiers by (specification 008
+# section 8), lives beside the silver models it feeds.
+seeds:
+  nordbank:
+    +schema: silver

@@ -10,7 +10,15 @@ fixture entity plants one violation, and the run requires:
   of a registered file under a new key;
 - an entity with no registered rows to build as an empty relation of the declared types;
 - `bronze_guard` to fail the build on a bronze model that reads the lake itself, on a model
-  outside bronze that does, and on a test that stores its failures.
+  outside bronze that does, and on a test that stores its failures;
+- `gold_guard` to fail the build on a gold model selecting a column its parent classifies
+  quasi-identifier and on one that does not enforce its contract, and to pass one selecting only
+  the generalisation;
+- every macro test under `dbt/tests/macros` to pass on the repository's macros, and to fail on a
+  copy of the macros with one planted defect (specification 008), each defect named in
+  `MUTATIONS` with the test that must catch it;
+- every generic silver test to pass on a clean fixture model and to fail on the fixture planted
+  for it (`SILVER_FIXTURES`).
 
 It needs dbt and DuckDB and nothing else: no stack, no network. It runs from a temporary
 directory because dbt 1.12 loads the first `.env` it finds above its working directory, and the
@@ -145,7 +153,7 @@ def project(work: Path, database: Path, extra_models: dict[str, str] | None = No
     (home / "dbt_project.yml").write_text(
         "name: prove\nversion: '1.0'\nconfig-version: 2\nprofile: prove\n"
         "flags:\n  send_anonymous_usage_stats: false\n"
-        'on-run-start:\n  - "{{ bronze_guard() }}"\n'
+        'on-run-start:\n  - "{{ bronze_guard() }}"\n  - "{{ gold_guard() }}"\n'
         "models:\n  prove:\n    bronze:\n      +materialized: view\n      +schema: bronze\n",
         encoding="utf-8",
     )
@@ -309,6 +317,22 @@ def main() -> int:
             else:
                 failures.append(f"bronze_guard did not fail the build on {label}")
 
+        for label, (gold_sql, gold_columns, enforced, refuse) in GOLD_CASES.items():
+            extra = gold_fixture(gold_sql, gold_columns, enforced)
+            home = project(work, database, extra)
+            run = dbt(home, work, lake, "build", "--select", "path:models/silver path:models/gold")
+            refused = "gold_guard" in run.stdout
+            if not refuse and run.returncode != 0:
+                failures.append(f"the build of {label} exited {run.returncode}")
+            elif refused == refuse:
+                verdict = "fails the build on" if refuse else "passes"
+                print(f"dbt-prove: gold_guard {verdict} {label}")
+            else:
+                failures.append(f"gold_guard was {'refusing' if refused else 'silent'} on {label}")
+
+        failures += prove_macro_tests(work)
+        failures += prove_silver_tests(work)
+
     if failures:
         print("\ndbt-prove: FAILED")
         for line in failures:
@@ -316,6 +340,436 @@ def main() -> int:
         return 1
     print("\ndbt-prove: every test and rule failed where it was planted, and passed where not")
     return 0
+
+
+# --- the gold column guard (specification 008 section 8) -----------------------------------
+
+# A silver model whose properties classify its columns, as the generated ones do, and gold models
+# over it: (gold SQL, the columns its properties declare, whether its contract is enforced, and
+# whether the guard must refuse it).
+GOLD_CASES: dict[str, tuple[str, list[str], bool, bool]] = {
+    "a gold model selecting only the band": (
+        "select customer_id, age_band from {{ ref('sl_people') }}",
+        ["customer_id", "age_band"], True, False,
+    ),
+    "a gold model selecting a date of birth": (
+        "select customer_id, date_of_birth from {{ ref('sl_people') }}",
+        ["customer_id", "date_of_birth"], True, True,
+    ),
+    "a gold model that does not enforce its contract": (
+        "select customer_id, age_band from {{ ref('sl_people') }}",
+        ["customer_id", "age_band"], False, True,
+    ),
+}  # fmt: skip
+PEOPLE = {
+    "customer_id": ("BIGINT", "pseudonymous_key"),
+    "date_of_birth": ("DATE", "quasi-identifier"),
+    "age_band": ("VARCHAR", "non-personal"),
+}
+
+
+def gold_fixture(gold_sql: str, gold_columns: list[str], enforced: bool) -> dict[str, str]:
+    silver = ["version: 2", "models:", "  - name: sl_people", "    columns:"]
+    for name, (data_type, classification) in PEOPLE.items():
+        silver += [
+            f"      - name: {name}",
+            f"        data_type: {data_type}",
+            f"        config: {{meta: {{classification: {classification}}}}}",
+        ]
+    gold = ["version: 2", "models:", "  - name: dim_people"]
+    gold += ["    config:", f"      contract: {{enforced: {'true' if enforced else 'false'}}}"]
+    gold += ["    columns:"]
+    for name in gold_columns:
+        gold += [f"      - name: {name}", f"        data_type: {PEOPLE[name][0]}"]
+    return {
+        "models/silver/sl_people.sql": (
+            "select cast(1 as bigint) as customer_id, date '1990-05-01' as date_of_birth, "
+            "'25-34' as age_band\n"
+        ),
+        "models/silver/sl_people.yml": "\n".join(silver) + "\n",
+        "models/gold/dim_people.sql": gold_sql + "\n",
+        "models/gold/dim_people.yml": "\n".join(gold) + "\n",
+    }
+
+
+# --- macro tests (specification 008) ---------------------------------------------------------
+
+MACRO_TESTS = ROOT / "dbt" / "tests" / "macros"
+
+# Each planted defect: what it is, the macro file, the text replaced, its replacement, and the
+# test that must then fail. A text that does not occur exactly once fails the proof, so a
+# refactored macro cannot quietly turn a defect into a no-op.
+MUTATIONS: list[tuple[str, str, str, str, str]] = [
+    (
+        "the conversion by decimal division",
+        "fx.sql",
+        "{{ fx_units_to_eur(fx_quotient_units(amount, rate)) }}",
+        "round(cast({{ amount }} as decimal(18,4)) / cast({{ rate }} as decimal(18,8)), 4)",
+        "assert_fx_conversion_is_exact",
+    ),
+    (
+        "the scaling back by division",
+        "fx.sql",
+        "(cast({{ units }} as decimal(38,0)) * cast(0.0001 as decimal(38,4)))",
+        "(cast({{ units }} as decimal(38,0)) / 10000)",
+        "assert_fx_conversion_is_exact",
+    ),
+    (
+        "the rate scaled without widening",
+        "fx.sql",
+        "cast(cast({{ rate }} as decimal(38,8)) * 100000000 as hugeint)",
+        "cast(cast({{ rate }} as decimal(18,8)) * 100000000 as hugeint)",
+        "assert_fx_conversion_is_exact",
+    ),
+    (
+        "the quotient truncated rather than rounded",
+        "fx.sql",
+        "cast(100000000 as hugeint) + {{ fx_rate_units(rate) }})",
+        "cast(100000000 as hugeint))",
+        "assert_fx_conversion_is_exact",
+    ),
+    (
+        "the publication instant in UTC",
+        "fx.sql",
+        "timezone('Europe/Berlin',",
+        "timezone('UTC',",
+        "assert_fx_publication_instant",
+    ),
+    (
+        "a projection compared with <> rather than is distinct from",
+        "historisation.sql",
+        '({%- for column in projection %}\n            "{{ column }}" is distinct from lag(',
+        '({%- for column in projection %}\n            "{{ column }}" <> lag(',
+        "assert_scd2_version_rule",
+    ),
+    (
+        "a change the contract does not describe opening no version",
+        "historisation.sql",
+        "or (not _deleted and (_projection_changed or not _excluded_changed))",
+        "or (not _deleted and _projection_changed)",
+        "assert_scd2_version_rule",
+    ),
+    (
+        "the latest batch of a re-read winning",
+        "historisation.sql",
+        "order by {{ key | join(', ') }}, updated_at, _batch_id",
+        "order by {{ key | join(', ') }}, updated_at, _batch_id desc",
+        "assert_scd2_version_rule",
+    ),
+    (
+        "the first version opening at its updated_at",
+        "historisation.sql",
+        "then {{ scd2_epoch() }} else updated_at end",
+        "then updated_at else updated_at end",
+        "assert_scd2_version_rule",
+    ),
+    (
+        "a deletion that does not close the version before it",
+        "historisation.sql",
+        "or _deleted is distinct from _previous_deleted",
+        "or (not _deleted and _previous_deleted)",
+        "assert_scd2_version_rule",
+    ),
+    (
+        "is_active treated as an audit column",
+        "historisation.sql",
+        "'_object_ingest_date', '_raw_payload']",
+        "'_object_ingest_date', '_raw_payload', 'is_active']",
+        "assert_scd2_inactive_ref_is_current",
+    ),
+    (
+        "latest state keeping the oldest observation",
+        "historisation.sql",
+        "order by {{ key | join(', ') }}, updated_at desc",
+        "order by {{ key | join(', ') }}, updated_at",
+        "assert_latest_state",
+    ),
+    (
+        "business validity ending on the inclusive last day",
+        "historisation.sql",
+        "coalesce({{ valid_to_inclusive }} + 1, date '9999-12-31')",
+        "coalesce({{ valid_to_inclusive }}, date '9999-12-31')",
+        "assert_business_validity_backdated",
+    ),
+]
+# A floor stated as a number, never read from the folder: the macro tests that exist.
+MACRO_TEST_FLOOR = 6
+
+# Fixture models for the generic silver tests: each model's rows, and the one test planted to
+# fail on it. `clean` carries every test and must pass them all. A row is
+# (key, _valid_from, _valid_to, _is_current), with E for the epoch and Z for the end of time.
+E, Z = "{{ scd2_epoch() }}", "{{ scd2_end() }}"
+T1, T2 = "timestamptz '2026-07-21 09:00:00+00'", "timestamptz '2026-07-22 09:00:00+00'"
+CLEAN_VERSIONS = [(1, E, T1, "false"), (1, T1, Z, "true"), (2, E, Z, "true"), (3, E, T2, "false")]
+SILVER_FIXTURES: dict[str, tuple[list, str | None]] = {
+    "clean": (CLEAN_VERSIONS, None),
+    "duplicate": ([(1, E, Z, "true"), (1, E, Z, "true")], "silver_unique_key"),
+    "null_key": ([(None, E, Z, "true")], "silver_not_null"),
+    "short": (CLEAN_VERSIONS, "silver_min_rows"),
+    "gap": ([(1, E, T1, "false"), (1, T2, Z, "true")], "silver_scd2_intervals"),
+    "overlap": ([(1, E, T2, "false"), (1, T1, Z, "true")], "silver_scd2_intervals"),
+    "late_first": ([(1, T1, Z, "true")], "silver_scd2_intervals"),
+    "early_current": ([(1, E, T1, "true"), (1, T1, Z, "true")], "silver_scd2_intervals"),
+    "open_closed": ([(1, E, Z, "false")], "silver_scd2_intervals"),
+    "disagree": (CLEAN_VERSIONS, "silver_rereads_agree"),
+    "unversioned": ([(1, E, Z, "true")], "silver_observations_versioned"),
+}
+# The upstream each fixture's re-read test reads: two batches of one version, which agree for
+# every fixture but `disagree`.
+UPSTREAM_AGREE = [(1, "a", "b-01"), (1, "a", "b-02"), (2, "b", "b-01")]
+UPSTREAM_DISAGREE = [(1, "a", "b-01"), (1, "z", "b-02"), (2, "b", "b-01")]
+
+
+def _values(rows: list, width: int) -> str:
+    def cell(value):
+        return "null::bigint" if value is None else str(value)
+
+    if not rows:
+        return "select " + ", ".join(["null"] * width) + " where false"
+    return "values " + ", ".join("(" + ", ".join(cell(v) for v in row) + ")" for row in rows)
+
+
+# Facts against a dimension's versions, for `silver_resolves_one_version`: key 1 has two versions
+# split at T1, key 2 one version closed at T2 by a soft delete. A fact row is (fact_id, k, at).
+T0 = "timestamptz '2026-07-20 12:00:00+00'"
+T3 = "timestamptz '2026-07-23 09:00:00+00'"
+DIMENSION = [(1, E, T1), (1, T1, Z), (2, E, T2)]
+OVERLAPPING = [(1, E, T2), (1, T1, Z), (2, E, T2)]
+RESOLVE_FIXTURES: dict[str, tuple[list, list, bool]] = {
+    # Two facts with one key at one instant are two facts, each resolving to one version.
+    "resolves": ([(1, 1, T0), (2, 1, T0), (3, 1, T1), (4, 2, T0)], DIMENSION, False),
+    "after_delete": ([(1, 2, T3)], DIMENSION, True),
+    "before_first": ([(1, 3, T0)], DIMENSION + [(3, T2, Z)], True),
+    "overlapping": ([(1, 1, T1)], OVERLAPPING, True),
+}
+# Converted rows for `silver_fx_provenance`: (id, amount, currency, amount_eur, fx_rate,
+# fx_rate_date, carried, missing, provisional).
+D = "date '2026-07-20'"
+CONVERTED = [
+    (1, "100.00", "'EUR'", "100.00", "1", "null", "false", "false", "false"),
+    (2, "100.00", "'USD'", "87.5197", "1.1426", D, "false", "false", "true"),
+    (3, "100.00", "'USD'", "null", "null", "null", "false", "true", "false"),
+]
+PROVENANCE_FIXTURES: dict[str, tuple[list, bool]] = {
+    "converted": (CONVERTED, False),
+    "missing_as_zero": (CONVERTED[:2] + [(3, "100.00", "'USD'", "0", "null", "null",
+                                          "false", "true", "false")], True),
+    "missing_as_original": (CONVERTED[:2] + [(3, "100.00", "'USD'", "100.00", "null", "null",
+                                              "false", "true", "false")], True),
+    "eur_with_a_date": ([(1, "100.00", "'EUR'", "100.00", "1", D, "false", "false", "false")],
+                        True),
+    "missing_provisional": ([(3, "100.00", "'USD'", "null", "null", "null", "false", "true",
+                              "true")], True),
+}  # fmt: skip
+
+
+# Band intervals for `silver_intervals_contiguous`: (k, valid_from, valid_to) as dates.
+J1, J2, J3, OPEN = (
+    "date '2000-01-01'",
+    "date '2018-01-01'",
+    "date '2025-01-01'",
+    "date '9999-12-31'",
+)
+INTERVAL_FIXTURES: dict[str, tuple[list, bool]] = {
+    "contiguous": ([(1, J1, J2), (1, J2, J3), (1, J3, OPEN), (2, J2, OPEN)], False),
+    "interval_gap": ([(1, J1, J2), (1, J3, OPEN)], True),
+    "interval_overlap": ([(1, J1, J3), (1, J2, OPEN)], True),
+    "closed_last": ([(1, J1, J2), (1, J2, J3)], True),
+    "inverted": ([(1, J2, J1), (1, J1, OPEN)], True),
+}
+
+
+def fact_fixture_files() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
+    """Fixture facts for the resolution and provenance tests, and the status each must reach."""
+    files, expected = {}, {}
+    properties = ["version: 2", "models:"]
+    for name, (facts, versions, fails) in RESOLVE_FIXTURES.items():
+        files[f"models/dimension_{name}.sql"] = (
+            f"select * from ({_values(versions, 3)}) as t (k, _valid_from, _valid_to)\n"
+        )
+        files[f"models/facts_{name}.sql"] = (
+            f"select * from ({_values(facts, 3)}) as t (fact_id, k, event_at)\n"
+        )
+        properties += [
+            f"  - name: facts_{name}",
+            "    columns:",
+            "      - name: k",
+            "        data_tests:",
+            "          - silver_resolves_one_version:",
+            f"              arguments: {{to: \"ref('dimension_{name}')\", to_column: k, "
+            "at: event_at}",
+        ]
+        expected[(f"facts_{name}", "silver_resolves_one_version")] = "fail" if fails else "pass"
+    columns = "(id, amount, currency, amount_eur, fx_rate, fx_rate_date, fx_is_carried, " \
+        "fx_is_missing, fx_is_provisional)"  # fmt: skip
+    for name, (rows, fails) in PROVENANCE_FIXTURES.items():
+        typed = [
+            (i, f"cast({a} as decimal(18,4))", c, f"cast({e} as decimal(18,4))",
+             f"cast({r} as decimal(18,8))", f"cast({d} as date)", ca, m, pr)
+            for i, a, c, e, r, d, ca, m, pr in rows
+        ]  # fmt: skip
+        files[f"models/converted_{name}.sql"] = (
+            f"select * from ({_values(typed, 9)}) as t {columns}\n"
+        )
+        properties += [
+            f"  - name: converted_{name}",
+            "    data_tests:",
+            "      - silver_fx_provenance: {arguments: {key: id, amount: amount, "
+            "currency: currency}}",
+        ]
+        expected[(f"converted_{name}", "silver_fx_provenance")] = "fail" if fails else "pass"
+    for name, (rows, fails) in INTERVAL_FIXTURES.items():
+        files[f"models/bands_{name}.sql"] = (
+            f"select * from ({_values(rows, 3)}) as t (k, valid_from, valid_to)\n"
+        )
+        properties += [
+            f"  - name: bands_{name}",
+            "    data_tests:",
+            "      - silver_intervals_contiguous: {arguments: {key: [k], valid_from: valid_from, "
+            "valid_to: valid_to}}",
+        ]
+        expected[(f"bands_{name}", "silver_intervals_contiguous")] = "fail" if fails else "pass"
+    files["models/facts.yml"] = "\n".join(properties) + "\n"
+    return files, expected
+
+
+def silver_fixture_files() -> dict[str, str]:
+    """The fixture models and their properties, as files of the macro project."""
+    files = {}
+    properties = ["version: 2", "models:"]
+    for name, (rows, planted) in SILVER_FIXTURES.items():
+        upstream = UPSTREAM_DISAGREE if name == "disagree" else UPSTREAM_AGREE
+        files[f"models/upstream_{name}.sql"] = (
+            "select k, timestamptz '2026-07-20 00:00:00+00' as updated_at, v, _batch_id\n"
+            f"from ({_values([(k, repr(v), repr(b)) for k, v, b in upstream], 3)}) "
+            "as t (k, v, _batch_id)\n"
+        )
+        files[f"models/silver_{name}.sql"] = (
+            f"select * from ({_values(rows, 4)}) as t (k, _valid_from, _valid_to, _is_current)\n"
+        )
+        tests = {
+            "silver_unique_key": "{arguments: {columns: [k, _valid_from]}}",
+            "silver_not_null": "{arguments: {columns: [k, _valid_from]}}",
+            "silver_min_rows": "{arguments: {minimum: " + ("5" if name == "short" else "1") + "}}",
+            "silver_scd2_intervals": "{arguments: {key: [k]}}",
+            "silver_rereads_agree": (
+                "{arguments: {upstream: \"ref('upstream_" + name + "')\", key: [k]}}"
+            ),
+            "silver_observations_versioned": (
+                "{arguments: {upstream: \"ref('upstream_" + name + "')\", key: [k], "
+                "deleted: 'false'}}"
+            ),
+        }
+        chosen = tests if planted is None else {planted: tests[planted]}
+        properties += [f"  - name: silver_{name}", "    data_tests:"]
+        properties += [f"      - {test}: {arguments}" for test, arguments in chosen.items()]
+    files["models/fixtures.yml"] = "\n".join(properties) + "\n"
+    return files
+
+
+def prove_silver_tests(work: Path) -> list[str]:
+    """Every generic silver test passes on the clean fixture and fails where it was planted."""
+    home = macro_project(work)
+    facts, expected_facts = fact_fixture_files()
+    for relative, text in {**silver_fixture_files(), **facts}.items():
+        path = home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    dbt(home, work, work / "lake", "build", "--select", "path:models")
+    manifest = json.loads((work / "target" / "manifest.json").read_text(encoding="utf-8"))
+    results = json.loads((work / "target" / "run_results.json").read_text(encoding="utf-8"))
+    seen: dict[tuple[str, str], str] = {}
+    failures: list[str] = []
+    for result in results["results"]:
+        node = manifest["nodes"].get(result["unique_id"], {})
+        if node.get("resource_type") == "test" and node.get("test_metadata"):
+            model = node["attached_node"].split(".")[-1]
+            key = (model, node["test_metadata"]["name"])
+            if key in expected_facts:
+                want = expected_facts.pop(key)
+                if result["status"] != want:
+                    failures.append(f"fixture {model}: {key[1]} was {result['status']}, "
+                                    f"expected {want}")  # fmt: skip
+                elif want == "fail":
+                    print(f"dbt-prove: {key[1]} fails on the planted {model} fixture")
+                continue
+            seen[(model.removeprefix("silver_"), key[1])] = result["status"]
+    for model, test in expected_facts:
+        failures.append(f"fixture {model}: {test} did not run")
+    clean = [k for k in seen if k[0] == "clean"]
+    if len(clean) < 6:
+        return failures + [f"the clean silver fixture ran {len(clean)} test(s), expected 6"]
+    for (model, test), status in sorted(seen.items()):
+        planted = SILVER_FIXTURES[model][1]
+        expected = "fail" if test == planted else "pass"
+        if status != expected:
+            failures.append(f"silver fixture {model}: {test} was {status}, expected {expected}")
+        elif expected == "fail":
+            print(f"dbt-prove: {test} fails on the planted {model} fixture")
+    if not failures:
+        print("dbt-prove: every generic silver test passes on the clean fixture")
+    return failures
+
+
+def macro_project(work: Path, mutation: tuple[str, str, str] | None = None) -> Path:
+    """A project of the repository's macros and macro tests, with at most one planted defect."""
+    home = work / "macro-project"
+    if home.exists():
+        shutil.rmtree(home)
+    shutil.copytree(ROOT / "dbt" / "macros", home / "macros")
+    shutil.copytree(MACRO_TESTS, home / "tests" / "macros")
+    if mutation is not None:
+        file, old, new = mutation
+        path = home / "macros" / file
+        text = path.read_text(encoding="utf-8")
+        if text.count(old) != 1:
+            raise SystemExit(
+                f"dbt-prove: a planted defect's text occurs {text.count(old)} time(s) in {file}, "
+                "not once; update MUTATIONS"
+            )
+        path.write_text(text.replace(old, new), encoding="utf-8")
+    (home / "dbt_project.yml").write_text(
+        "name: prove_macros\nversion: '1.0'\nconfig-version: 2\nprofile: prove\n"
+        "flags:\n  send_anonymous_usage_stats: false\n",
+        encoding="utf-8",
+    )
+    database = work / "macros.duckdb"
+    (home / "profiles.yml").write_text(
+        f"prove:\n  target: prove\n  outputs:\n    prove:\n      type: duckdb\n"
+        f"      path: '{database.as_posix()}'\n      schema: main\n      threads: 1\n",
+        encoding="utf-8",
+    )
+    return home
+
+
+def test_statuses(work: Path) -> dict[str, str]:
+    """Singular test name -> status, from the last run's results."""
+    results = json.loads((work / "target" / "run_results.json").read_text(encoding="utf-8"))
+    return {r["unique_id"].split(".")[2]: r["status"] for r in results["results"]}
+
+
+def prove_macro_tests(work: Path) -> list[str]:
+    """Every macro test passes on the macros, and fails on each planted defect."""
+    names = sorted(p.stem for p in MACRO_TESTS.glob("*.sql"))
+    if len(names) < MACRO_TEST_FLOOR:
+        return [f"only {len(names)} macro test(s) under dbt/tests/macros"]
+    failures = []
+    dbt(macro_project(work), work, work / "lake", "test")
+    statuses = test_statuses(work)
+    for name in names:
+        if statuses.get(name) != "pass":
+            failures.append(f"{name} was {statuses.get(name)} on the repository's macros")
+    if not failures:
+        print(f"dbt-prove: {len(names)} macro tests pass on the repository's macros")
+    for label, file, old, new, test in MUTATIONS:
+        dbt(macro_project(work, (file, old, new)), work, work / "lake", "test", "--select", test)
+        status = test_statuses(work).get(test)
+        if status in ("fail", "error"):
+            note = " (an error)" if status == "error" else ""
+            print(f"dbt-prove: {test} fails on {label}{note}")
+        else:
+            failures.append(f"{test} was {status} on {label}, expected it to fail")
+    return failures
 
 
 if __name__ == "__main__":

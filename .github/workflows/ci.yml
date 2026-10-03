@@ -89,3 +89,8 @@ jobs:
       # from the contracts and committed; a hand edit or an unregenerated contract fails here.
       - name: Check the generated bronze models against the contracts
         run: make dbt-generate CHECK=1
+
+      # The silver models that mirror an entity: the generated ref and agent location models,
+      # every such model's properties and the inventory's silver section (specification 008).
+      - name: Check the generated silver models against the contracts
+        run: make silver-generate CHECK=1
