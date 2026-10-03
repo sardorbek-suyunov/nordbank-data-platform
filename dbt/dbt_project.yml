@@ -29,3 +29,12 @@ models:
     bronze:
       +materialized: view
       +schema: bronze
+    # Silver is tables rebuilt in full (specification 008 section 10; incremental is M6's
+    # decision). Every model's contract is enforced: its properties declare every column and
+    # type, generated from the contracts where it mirrors an entity, and a model whose SQL
+    # returns anything else fails to build rather than drifting from its documentation.
+    silver:
+      +materialized: table
+      +schema: silver
+      +contract:
+        enforced: true
