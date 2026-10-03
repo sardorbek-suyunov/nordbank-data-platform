@@ -414,16 +414,17 @@ writer holds it:
 - `make feeds-probe` — the live APIs against the recorded fixtures; needs the network, and is
   how an upstream change is noticed.
 
-## dbt and the bronze models
+## dbt, bronze and silver
 
-Specification 007. dbt runs in its own environment inside the image (`/opt/dbt`), against the
+Specifications 007 and 008. dbt runs in its own environment inside the image (`/opt/dbt`), against the
 warehouse file on the named volume, so every dbt command runs inside the scheduler container.
 Nothing here needs dbt on the host except `make dbt-prove`.
 
 | Command | What it does | Where |
 |---|---|---|
 | `make dbt-generate` | Writes the 50 bronze models, their properties, the registry source and the inventory's bronze section from `contracts/`. `CHECK=1` fails on any difference and runs in CI | Host, no stack |
-| `make dbt-build` | `dbt build --select path:models/bronze --warn-error`: creates the views and runs every test | Stack |
+| `make silver-generate` | Writes the thirty generated silver models (every `ref` table and `agent_locations`), the properties of every silver model that mirrors an entity, and the inventory's silver section. Run it before `make dbt-generate`, whose bronze consumer lists read that section. `CHECK=1` fails on any difference and runs in CI | Host, no stack |
+| `make dbt-build` | `dbt build --warn-error`: creates the bronze views, loads the seed, builds the silver tables and runs every test, the macro tests included | Stack |
 | `make dbt-prove` | Builds a scratch project on planted fixtures and requires every test and rule to fail where planted. Runs dbt on the host, from a temporary directory | Host, no stack; `uv run --group dbt` installs dbt |
 | `make dbt-docs` | `dbt docs generate --static`, copied to `data/dbt-docs/index.html` | Stack |
 | `make bronze-plant ACTION=plant\|verify\|remove` | Plants a copy of a registered object under a new key and an object under an unregistered batch id, and after a build shows neither in the model | Stack |
@@ -437,6 +438,14 @@ run by hand. A view reads new batches without a rebuild; the rebuild is what tur
 typed empty view into a real one once its first rows land, and what tests each landing. If
 `transform_bronze` fails, a test found the data wrong: its log names the model and the test, and
 the failing test's compiled SQL is under `/tmp/dbt/target/compiled` in the scheduler.
+
+**Silver follows bronze.** `transform_silver` runs `dbt build` over the seed and the silver
+models whenever a `transform_bronze` build succeeds: that build's task emits the asset
+`transform_bronze/built`, which silver is scheduled on. Silver is tables rebuilt in full, so a
+rebuild from the same bronze gives the same tables; a fact converted at a rate that is still
+provisional (`fx_is_provisional`) is the one thing a later rebuild may change. A backfill builds
+bronze once at the end and waits for the one silver build after it. If `transform_silver` fails,
+a silver test found the data wrong, and its log names the model and the test as bronze's does.
 
 **Querying a bronze view outside dbt** needs `httpfs` and the lake's credentials in the
 connection, not only the warehouse file: `load httpfs` from `DUCKDB_EXTENSION_DIRECTORY`, and a

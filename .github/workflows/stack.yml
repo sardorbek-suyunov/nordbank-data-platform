@@ -143,8 +143,10 @@ jobs:
       - name: Plant objects the registry never registered
         run: make bronze-plant ACTION=plant
 
-      # 5. Every bronze model and test, with nothing silenced.
-      - name: Build and test the bronze models
+      # 5. Every model, the seed and every test, bronze and silver, with nothing silenced
+      # (specification 008 criterion 19). The backfill above already built bronze once and silver
+      # once after it; this builds both again over the planted objects.
+      - name: Build and test the bronze and silver models
         run: |
           start=$(date +%s)
           make dbt-build

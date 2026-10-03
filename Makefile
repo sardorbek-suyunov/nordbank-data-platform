@@ -191,8 +191,8 @@ endif
 dbt-prove: ## Show every bronze and silver test, macro test and rule failing on planted fixtures (no stack, no network)
 	uv run --group dbt python scripts/dbt_prove.py
 
-dbt-build: ## Build and test the bronze models inside the stack (dbt build --warn-error)
-	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/dbt_run.py build --select path:models/bronze --warn-error
+dbt-build: ## Build and test everything dbt holds inside the stack: bronze, the seed, silver and every test (dbt build --warn-error)
+	docker compose exec -T airflow-scheduler python /opt/airflow/scripts/dbt_run.py build --warn-error
 
 docs-scan: ## Scan data/dbt-docs for every environment secret and vault value (PLANT=1 proves it can fail)
 	@# docker cp creates root-owned files, which the airflow user cannot delete from the sticky

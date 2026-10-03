@@ -19,6 +19,10 @@ typed empty relation until then. An asset-triggered run carries no logical date 
 
 `max_active_runs=1`: registrations that arrive while a build runs coalesce into the next run.
 `retries=0`: a failing test is a verdict on the data, not a mishap, and would fail again.
+
+**It announces a successful build.** The task declares the asset `transform_bronze/built` as an
+outlet, which Airflow emits whenever the task succeeds and only then: here that is exactly
+"bronze is built and tested", and `transform_silver` is scheduled on it (specification 008).
 """
 
 from __future__ import annotations
@@ -27,8 +31,8 @@ import datetime as dt
 from functools import reduce
 from operator import or_
 
-from airflow.sdk import DAG, AssetAlias, dag, task
-from nordbank_ops import assets, warehouse
+from airflow.sdk import DAG, Asset, AssetAlias, dag, task
+from nordbank_ops import assets, transform, warehouse
 
 # Every ingestion DAG. A DAG test holds this to the `ingest_*` files in this folder, so a new
 # ingestion DAG that is not listed here fails CI rather than going untransformed.
@@ -56,7 +60,7 @@ ANY_REGISTRATION = reduce(or_, (AssetAlias(name=assets.alias_name(d)) for d in I
     doc_md=__doc__,
 )
 def _transform_bronze() -> None:
-    @task(pool=warehouse.POOL_NAME)
+    @task(pool=warehouse.POOL_NAME, outlets=[Asset(name=transform.BRONZE_BUILT)])
     def dbt_build() -> None:
         from nordbank_ops.transform import build_bronze
 
