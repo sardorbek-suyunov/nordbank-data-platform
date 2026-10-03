@@ -76,6 +76,7 @@ def _allocate(
     run_id: str,
     selected_on: dt.date | None = None,
     reusable: set[int] | None = None,
+    interval_end: dt.datetime | None = None,
 ) -> dict:
     """Allocate one batch under the contract in force when the sender produced the delivery.
 
@@ -99,7 +100,7 @@ def _allocate(
         key,
         source_schema=contract.source_schema,
         ingest_date=ingest_date,
-        interval_end=interval_start + dt.timedelta(days=1),
+        interval_end=interval_end or interval_start + dt.timedelta(days=1),
         contract_version=contract.contract_version,
         watermark_from=watermark_from,
         opened_at=opened_at,
@@ -283,9 +284,10 @@ def fx_open(context: dict) -> list[dict]:
     """Open the day's FX batch, or, with `history` in the run's conf, the one history batch.
 
     `history` is `{"from": date, "to": date}`, set by `make backfill` before its first day. The
-    history batch is keyed on the run's logical date like any other, and a history whose
-    interval already has a registered batch opens nothing, so a cleared or repeated history run
-    lands nothing twice.
+    history batch's interval is the requested range and its ingest date the run's logical date,
+    and its contract is the one in force on that logical date, as for any API feed (ADR 0016).
+    A history whose interval already has a registered batch opens nothing, so a cleared or
+    repeated history run lands nothing twice.
     """
     from nordbank_ops.feeds.fx import dates_to_fetch
 
@@ -297,10 +299,12 @@ def fx_open(context: dict) -> list[dict]:
     def allocate(connection, chains):
         held = registry.watermark(connection, FX, "fx_rates")
         if history:
+            first = _midnight(dt.date.fromisoformat(history["from"]))
+            last = _midnight(dt.date.fromisoformat(history["to"]))
             registered = connection.execute(
                 "select batch_id from ops.batch_registry where source_system = ? and entity = ? "
                 "and interval_start = ? and status = 'registered'",
-                [FX, "fx_rates", start],
+                [FX, "fx_rates", first],
             ).fetchone()
             if registered:
                 print(f"open: the FX history is registered as {registered[0]}; nothing to do")
@@ -309,11 +313,13 @@ def fx_open(context: dict) -> list[dict]:
                 connection,
                 chains,
                 "fx_rates",
-                interval_start=start,
+                interval_start=first,
+                interval_end=last + dt.timedelta(days=1),
                 ingest_date=day,
                 watermark_from=held,
                 opened_at=opened_at,
                 run_id=run_id,
+                selected_on=day,
             )
             return [{"batches": [batch], "range": [history["from"], history["to"]]}]
         dates = dates_to_fetch(held.date() if held else None, day)
