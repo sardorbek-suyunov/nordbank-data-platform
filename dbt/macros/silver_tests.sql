@@ -178,3 +178,25 @@ select {{ key }}, {{ currency }}, fx_is_missing, fx_is_provisional
     or ({{ currency }} <> 'EUR' and not fx_is_missing
         and ({{ eur }} is null or fx_rate is null or fx_rate_date is null))
 {% endtest %}
+
+{#
+  Intervals contiguous per key (criterion 15): each key's intervals, ordered, start where the one
+  before ended, are non-empty, and the last is open to 9999-12-31. Returns each offending key and
+  interval start.
+#}
+{% test silver_intervals_contiguous(model, key, valid_from, valid_to) %}
+{%- set k = key | join(', ') -%}
+with ordered as (
+    select {{ k }}, {{ valid_from }} as starts, {{ valid_to }} as ends,
+           lag({{ valid_to }}) over w as previous_end,
+           lead({{ valid_from }}) over w as next_start
+      from {{ model }}
+    window w as (partition by {{ k }} order by {{ valid_from }})
+)
+
+select {{ k }}, starts
+  from ordered
+ where starts >= ends
+    or (previous_end is not null and starts <> previous_end)
+    or (next_start is null and ends <> date '9999-12-31')
+{% endtest %}

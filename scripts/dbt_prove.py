@@ -497,6 +497,22 @@ PROVENANCE_FIXTURES: dict[str, tuple[list, bool]] = {
 }  # fmt: skip
 
 
+# Band intervals for `silver_intervals_contiguous`: (k, valid_from, valid_to) as dates.
+J1, J2, J3, OPEN = (
+    "date '2000-01-01'",
+    "date '2018-01-01'",
+    "date '2025-01-01'",
+    "date '9999-12-31'",
+)
+INTERVAL_FIXTURES: dict[str, tuple[list, bool]] = {
+    "contiguous": ([(1, J1, J2), (1, J2, J3), (1, J3, OPEN), (2, J2, OPEN)], False),
+    "interval_gap": ([(1, J1, J2), (1, J3, OPEN)], True),
+    "interval_overlap": ([(1, J1, J3), (1, J2, OPEN)], True),
+    "closed_last": ([(1, J1, J2), (1, J2, J3)], True),
+    "inverted": ([(1, J2, J1), (1, J1, OPEN)], True),
+}
+
+
 def fact_fixture_files() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
     """Fixture facts for the resolution and provenance tests, and the status each must reach."""
     files, expected = {}, {}
@@ -536,6 +552,17 @@ def fact_fixture_files() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
             "currency: currency}}",
         ]
         expected[(f"converted_{name}", "silver_fx_provenance")] = "fail" if fails else "pass"
+    for name, (rows, fails) in INTERVAL_FIXTURES.items():
+        files[f"models/bands_{name}.sql"] = (
+            f"select * from ({_values(rows, 3)}) as t (k, valid_from, valid_to)\n"
+        )
+        properties += [
+            f"  - name: bands_{name}",
+            "    data_tests:",
+            "      - silver_intervals_contiguous: {arguments: {key: [k], valid_from: valid_from, "
+            "valid_to: valid_to}}",
+        ]
+        expected[(f"bands_{name}", "silver_intervals_contiguous")] = "fail" if fails else "pass"
     files["models/facts.yml"] = "\n".join(properties) + "\n"
     return files, expected
 

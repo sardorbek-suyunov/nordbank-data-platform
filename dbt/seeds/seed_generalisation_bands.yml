@@ -1,0 +1,30 @@
+version: 2
+seeds:
+  - name: seed_generalisation_bands
+    description: "The band edges quasi-identifiers are generalised by before gold (specification 008 section 8): age bands from the date of birth and tenure bands from the signup date, each from `lower_years` inclusive to `upper_years` exclusive, the last open. The platform's one seed: the edges are a modelling decision that exists nowhere else, not a copy of reference data, which lives in the source's `ref` schema. Coarse on purpose (pii_classification.md): ten-year age bands, so that surviving quasi-identifiers do not re-identify a subject after erasure."
+    config:
+      column_types:
+        band_kind: varchar
+        band: varchar
+        lower_years: integer
+        upper_years: integer
+    data_tests:
+      - silver_unique_key:
+          arguments:
+            columns: [band_kind, band]
+          config:
+            severity: error
+      - silver_not_null:
+          arguments:
+            columns: [band_kind, band, lower_years]
+          config:
+            severity: error
+    columns:
+      - name: band_kind
+        description: "`age` or `tenure`."
+      - name: band
+        description: "The band's label, the value gold carries."
+      - name: lower_years
+        description: "Years from the date of birth or signup at which the band begins, inclusive."
+      - name: upper_years
+        description: "Years at which the band ends, exclusive; empty for the last, open band."

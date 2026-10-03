@@ -16,14 +16,14 @@ Naming follows [conventions.md](conventions.md).
 
 ## Seeds
 
-There are none. The four seeds this table carried at M0 were dropped at M2: `seed_mcc_codes`,
-`seed_interchange_rates`, `seed_country_currency` and `seed_risk_bands` all duplicated data
-that now lives in the source database's `ref` schema, and two homes for one rate table is two
-numbers that can disagree. The reference tables are ingested like any other source entity.
-
-Reference data is version controlled either way; the difference is that it is now version
-controlled in one place, `infra/docker/postgres-source/seed/`, and reaches the warehouse
-through the same extraction path as everything else.
+One: `seed_generalisation_bands`, the band edges silver generalises quasi-identifiers by
+(specification 008 section 8), seven age bands from the date of birth and four tenure bands from
+the signup date. It duplicates nothing: the edges are a modelling decision that exists nowhere
+else, unlike the four seeds this table carried at M0, which M2 dropped because each duplicated
+data that lives in the source database's `ref` schema (`seed_mcc_codes`, `seed_interchange_rates`,
+`seed_country_currency`, `seed_risk_bands`). Two homes for one rate table is two numbers that can
+disagree; reference data reaches the warehouse through the same extraction path as everything
+else, and is version controlled in one place, `infra/docker/postgres-source/seed/`.
 
 ## Bronze
 
@@ -96,6 +96,8 @@ One model per source entity, at entity grain, built at M5 unless noted.
 | Object | Grain | Upstream | Serves |
 |---|---|---|---|
 | `sl_customers` | One row per customer version (SCD2) | `br_corebank__customers` | Q1, Q2, Q6, Q8, Q11, Q12, Q19 |
+| `sl_customer_age_bands` | One row per customer per age band: half-open date intervals, contiguous | `sl_customers`, `seed_generalisation_bands` | The age band `dim_customer` carries in place of the date of birth; Q2, Q8 |
+| `sl_customer_tenure_bands` | One row per customer per tenure band: half-open date intervals, contiguous | `sl_customers`, `seed_generalisation_bands` | The tenure band `dim_customer` carries in place of the signup date; Q2, Q6 |
 | `sl_customer_addresses` | One row per customer address version (SCD2) | `br_corebank__customer_addresses` | Q1, Q13 |
 | `sl_accounts` | One row per account version (SCD2) | `br_corebank__accounts` | Q1, Q3, Q13 |
 | `sl_account_balance_observations` | One row per account per observed balance | `br_corebank__accounts` | The balance `sl_accounts` excludes from its projection; M7 reconciles it against derived balances |
