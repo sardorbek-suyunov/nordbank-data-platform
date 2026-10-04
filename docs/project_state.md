@@ -163,6 +163,7 @@ its area.
 | [006](specs/006-external-feeds.md) | Approved version 2, implemented, amended | The four external feeds: snapshot, file-arrival and interval modes, file identity by checksum, contract selection, payload fidelity, the simulated processor and publisher, and recorded fixtures |
 | [007](specs/007-dbt-bronze-models.md) | Approved version 2, implemented, amended | The dbt project and bronze models: registry-filtered views over the lake, generated from the contracts, a `ci` ingestion and dbt build in CI, and the documentation on GitHub Pages |
 | [008](specs/008-silver-core-conformance.md) | Approved version 2, in progress on `feat/M5-silver-core` | Silver for the core banking and reference entities and for FX rates: deduplication, SCD2 by a projection-based version rule, soft deletes, exact EUR conversion at the publication instant with provenance, and the quasi-identifier bands |
+| [009](specs/009-silver-external-feeds.md) | Approved version 2, in progress on `feat/M5-silver-feeds` | Silver for the card settlement file, the sanctions list and FRED: the winning revision applied once, resolution to cards and transactions, list entities and names per version, macro observations by observed interval, and the Q15 ledger path |
 
 | Record | Status | Decision |
 |---|---|---|
