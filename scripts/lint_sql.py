@@ -21,6 +21,7 @@ the read macro asks the batch registry at compile time which entities have lande
 this job has neither. Hand-written dbt SQL, which starts with silver, is linted.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -47,7 +48,12 @@ def main() -> int:
 
     if not targets:
         return 0
-    return subprocess.call(["sqlfluff", "lint", *targets])
+    # sqlfluff ends a run on a terminal with an emoji, and on Windows `isatty()` is true for the
+    # null device, so `make lint >/dev/null` takes that path while Python encodes the output in the
+    # ANSI code page, which has no emoji: a clean lint then crashed on its own summary and exited 1.
+    # UTF-8 output makes the summary writable wherever it goes; nothing else about the run changes.
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    return subprocess.call(["sqlfluff", "lint", *targets], env=env)
 
 
 if __name__ == "__main__":
