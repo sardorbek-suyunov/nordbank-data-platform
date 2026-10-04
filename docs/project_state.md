@@ -16,9 +16,11 @@ and bronze landing) and 006 (the external feeds), merged, and 007 (the dbt proje
 models), delivered on `feat/M4-dbt-bronze`. The M4 checkpoint is
 [checkpoints/M4-summary.md](checkpoints/M4-summary.md).
 
-**M5 has begun.** Specification 008, silver for the core banking and reference entities and for
-FX rates, approved at version 2, is implemented on `feat/M5-silver-core` and awaits review. M5
-continues with 009 (settlement, sanctions and FRED silver) and 010 (entity resolution).
+**M5 is in progress.** Specification 008, silver for the core banking and reference entities and
+for FX rates, is merged. Specification 009, silver for the card settlement file, the sanctions
+list and FRED, approved at version 2, is implemented on `feat/M5-silver-feeds` and awaits review.
+M5 closes with 010: entity resolution, and sanctions screening as a governance job with vault
+access (ADR 0010), the two sharing one matching function.
 
 What exists and runs today:
 
@@ -62,6 +64,13 @@ What exists and runs today:
   are generalised into contiguous band intervals. Every silver contract is enforced, every
   mirroring model's properties are generated, and a guard refuses any gold model that selects a
   quasi-identifier. `transform_silver` builds silver after every successful bronze build.
+- Silver for the external feeds (specification 009): five tables. `sl_card_settlements` and
+  `sl_card_settlement_totals` hold each settlement date and sender sequence's winning revision,
+  chosen once from lines and trailers together, the lines resolved to card, transaction and
+  merchant; `sl_sanctions_entities` and `sl_sanctions_names` hold every landed list version, the
+  names normalised by the one macro merchants use; `sl_macro_indicators` keeps FRED's values by
+  the interval the platform observed each, and builds typed and empty without a key. The
+  settlement lag is stated once, in the settlements contract.
 - Ten DAGs. `ops_stack_healthcheck` exercises every connection; `ops_source_tick` advances
   the simulated source to its run's logical date, unscheduled and paused by default, with the
   profile the source recorded when it was seeded. `ingest_reference_data` and
@@ -74,19 +83,18 @@ What exists and runs today:
   kept in `_raw_payload` with its identifiers tokenised, quarantine per record with its reason,
   and a PII scan that searches every bronze and quarantine object, bytes and decoded values,
   for every vault value.
-- 668 unit tests, 44 DAG integrity tests and 84 integration tests; the unit
+- 669 unit tests, 44 DAG integrity tests and 84 integration tests; the unit
   and DAG suites also run with networking disabled (`make test-offline`); two CI workflows, the
   `stack` job seeding at the acceptance anchor, ingesting a week through the real DAGs with no
   live external call and building bronze.
 - The documentation set: architecture, conventions, business questions, metric definitions,
-  data dictionary, model inventory, PII classification, runbook, nine specifications and
+  data dictionary, model inventory, PII classification, runbook, ten specifications and
   twenty decision records.
 
-What does not exist yet: silver for the settlement file, the sanctions list and FRED (009),
-entity resolution (010), gold, the quality framework and its gates,
-the reconciliation mart, freshness monitoring, retention and compaction, the governance work
-(lineage, the erasure DAG, access roles), Power BI, Streamlit, Terraform and the BigQuery
-target.
+What does not exist yet: entity resolution and sanctions screening (010), gold, the quality
+framework and its gates, the reconciliation mart, freshness monitoring, retention and
+compaction, the governance work (lineage, the erasure DAG, access roles), Power BI, Streamlit,
+Terraform and the BigQuery target.
 
 ## Environment facts
 
@@ -162,7 +170,7 @@ its area.
 | [005](specs/005-extraction-and-bronze-landing.md) | Approved, implemented, amended | Extraction and bronze landing: watermark extraction, the batch registry, contracts bootstrapped from the dictionary, quarantine, tokenisation at extraction, schema drift and the interleaved backfill |
 | [006](specs/006-external-feeds.md) | Approved version 2, implemented, amended | The four external feeds: snapshot, file-arrival and interval modes, file identity by checksum, contract selection, payload fidelity, the simulated processor and publisher, and recorded fixtures |
 | [007](specs/007-dbt-bronze-models.md) | Approved version 2, implemented, amended | The dbt project and bronze models: registry-filtered views over the lake, generated from the contracts, a `ci` ingestion and dbt build in CI, and the documentation on GitHub Pages |
-| [008](specs/008-silver-core-conformance.md) | Approved version 2, in progress on `feat/M5-silver-core` | Silver for the core banking and reference entities and for FX rates: deduplication, SCD2 by a projection-based version rule, soft deletes, exact EUR conversion at the publication instant with provenance, and the quasi-identifier bands |
+| [008](specs/008-silver-core-conformance.md) | Approved version 2, implemented, amended | Silver for the core banking and reference entities and for FX rates: deduplication, SCD2 by a projection-based version rule, soft deletes, exact EUR conversion at the publication instant with provenance, and the quasi-identifier bands |
 | [009](specs/009-silver-external-feeds.md) | Approved version 2, in progress on `feat/M5-silver-feeds` | Silver for the card settlement file, the sanctions list and FRED: the winning revision applied once, resolution to cards and transactions, list entities and names per version, macro observations by observed interval, and the Q15 ledger path |
 
 | Record | Status | Decision |
@@ -242,20 +250,20 @@ Expected timings and results:
 | `make health` | Five components, all `pass`, exit 0 |
 | `make verify-dag` | Four tasks succeed; both warehouse tasks report pool `warehouse_access` |
 | `make schema-apply` | 14 schema files, 5 seed files, 463 classifications; running it twice changes nothing |
-| `make test` | 668 passed, 2 skipped (they run in the image) |
+| `make test` | 669 passed, 2 skipped (they run in the image) |
 | `make test-dags` | 44 passed, with the execution path printed |
 | `make seed` | 166,381 rows at `ci` in 11 s |
 | `make seed-verify` | 14 invariants, all pass, before and after any number of ticks; invariant 9's statistical band is not asserted at `ci` and says so |
 | `make tick` | One business day in about 450 ms at `ci`; refuses an out-of-order or skipped date by naming the one it expected |
 | `make tick-acceptance` | Sixty ticks and the evidence for specification 004; `REPLAY=1` proves replay determinism |
 | `make test-integration` | 84 tests, `schema-check` reports 463 columns agreeing, then `seed-verify`; refuses a loaded warehouse unless `FORCE=1`, because it reseeds the source; runs in CI's `stack` job |
-| `make test-offline` | 685 passed with `--network none`, about two minutes; httpfs loads from the build-time install |
+| `make test-offline` | 715 passed with `--network none`, about two minutes; httpfs loads from the build-time install |
 | `make backfill FROM=2026-07-20 TO=2026-09-18` | About an hour at `ci` after a fresh seed at the acceptance anchor, 59 seconds a day, then one bronze build of the whole history in about 30 seconds. Specification 007's runs ended with 2,971 batches, 4 explicitly failed (the scripted cut-off transmission and its reattempt), none open. The fourth acceptance run, before the registry fix below, had 3,000. Re-invoked over a finished range it ticks and triggers nothing, about 4 seconds a day. Before the first day it lands the FX history once: one request, 634 publication dates and 18,882 rates at `ci`, and a no-op once registered |
 | `make ingest-integrity` | `clean`, seven checks, across every batch: every identifier token resolves in the vault, and no entity has more physical schemas than contract versions |
-| `make dbt-build` | 50 views, the seed, 49 silver tables and 583 tests: 685 nodes passing with `--warn-error`, 15 to 26 seconds of dbt time and 21 to 34 of wall time over the sixty-one-day `ci` history. `transform_bronze` alone runs 268 of the tests, those that read bronze alone, and `transform_silver` the rest in about 21 seconds |
-| `make silver-generate` | 45 silver models' properties and 30 generated models agree with the contracts; run before `make dbt-generate` |
-| `make dbt-prove` | 100 to 160 seconds; every bronze and silver generic test against its planted fixtures (7 bronze, 25 silver), every macro test against 13 planted defects, and both guards (3 bronze-guard cases, 7 gold-guard cases) fail where planted and pass elsewhere |
-| `make docs-scan` | No secret and no vault value; the site shows 811 of 811 classifications. `PLANT=1` catches a planted secret and vault value |
+| `make dbt-build` | 50 views, the seed, 54 silver tables and 608 tests: 715 nodes passing with `--warn-error`, 16 to 26 seconds of dbt time and 25 to 34 of wall time over the sixty-one-day `ci` history. `transform_bronze` alone runs 268 of the tests, those that read bronze alone, and `transform_silver` the rest in about 18 seconds. On the history: 9,801 settlement lines and 644 totals, 2,943 list entities over 9 versions and 4,022 names, and no FRED observation |
+| `make silver-generate` | 50 silver models' properties and 30 generated models agree with the contracts; run before `make dbt-generate` |
+| `make dbt-prove` | 100 to 160 seconds; every bronze and silver generic test against its planted fixtures (7 bronze, 31 silver), each of the 11 macro tests against its planted defects, 25 in all, and both guards (3 bronze-guard cases, 7 gold-guard cases) fail where planted and pass elsewhere |
+| `make docs-scan` | No secret and no vault value among 20,015; the site shows 1,507 classifications, every one of the 811 the bronze properties declare among them. A test's SQL is published too, so a fixture must not carry a value the vault holds, such as a screening fixture's counterparty name. `PLANT=1` catches a planted secret and vault value |
 | `make feeds-acceptance RUN=name` | One section per criterion and for the review's rulings; the dump searched for vault values finds none |
 | `make bronze-pii-scan` | About 40 seconds; 3,023 objects, no cleartext identifier in either reading; ten fixture names reported as list content. `PLANT=1` catches a card reference in a clearing file, a list name in a core banking object and a card reference in a snapshot |
 | `make asset-events-check` | Every run's asset events are exactly its registered batches: 2,996 against 2,996 in the fourth run |
@@ -280,6 +288,28 @@ Deferred work, with the milestone that owns it:
 | Power BI, Streamlit, the `exports/` snapshot task | M9 |
 | BigQuery target, Terraform | M10 |
 | Replace the frozen MinIO mirror with a maintained S3-compatible server (ADR 0017) | M10 |
+
+Found at specification 009 and not fixed there:
+
+- **Card settlement account 1200 claims to be reconciled in Q15, and nothing posts to it.**
+  Owner: the source, decided at M6. The chart of accounts describes 1200, card settlement
+  receivable, as "the internal side of card network settlement, reconciled in Q15", and neither it
+  nor 2100, card settlement payable, carries a single entry: a card item posts its customer's
+  deposit line against the shared cash line, 1000. Q15 is computable all the same, through each
+  entry's transaction and card product (`metric_definitions.md`), and measured on the history the
+  two sides hold the same 644 cells. The real fix is to post card items through a settlement
+  payable, which moves the ledger the generator writes and so the seed manifest; M6 decides it
+  with the reconciliation mart.
+- **A correction with no record at all is invisible in bronze.** Silver chooses a settlement
+  file's winning revision from its lines and trailers together, so a correction whose every line
+  was quarantined still wins by its trailers; a correction with neither a line nor a trailer, a
+  file the processor sent to cancel a date, lands no row, and the revision before it survives.
+  Only the registry and `ops.ingested_file` know it landed. Silver stays a function of bronze and
+  does not read them (specification 009 section 1); the processor the platform simulates never
+  sends one.
+- **Name normalisation leaves a letter with no decomposed form as it is.** `normalise_name`
+  removes combining marks, so `É` becomes `E`, but `Ł`, `Ø` and `ß` are letters of their own;
+  transliterating them is a matching rule, and specification 010's.
 
 Found at specification 008 and not fixed there:
 
@@ -432,6 +462,17 @@ These block only the marts that consume them:
 - **The funding cost assumption** behind the net interest income proxy. It requires deciding a
   funding mix that the source system does not model yet. Until then question 5 reports gross
   interest accrued and says that funding cost is excluded. Resolve before M6.
+- **FRED's full real-time history**, decided with the funding cost assumption, the decision that
+  gives the macro series a consumer. The feed requests the current vintage only, so silver keeps
+  each period's values by the interval the platform observed them (specification 009), not by
+  FRED's real-time vintage. Requesting the real-time period from the start of the series would
+  land the vintages FRED itself records; it is an ingestion change, and worth making only once a
+  mart reads the series.
+- **The settlement generator should emit a second file sequence on some days.** It hard-codes
+  sequence 01, so files of different sequences adding up, the half of the batch arithmetic that
+  is not replacement, is never exercised end to end: specification 009 proves it on a fixture,
+  and its live test has a floor of zero for that reason. A generator change moves the manifest,
+  so it is decided with the next change that does.
 
 Other known gaps:
 
@@ -466,19 +507,16 @@ Other known gaps:
   inside a container.
 - `ops.stack_health_probe` grows by one row per health-check run and nothing prunes it.
 - Compose limits memory but not CPU.
-- Two silver models named in the model inventory, `sl_card_settlements` and
-  `sl_macro_indicators`, read from sources whose entities are not in the M0 entity inventory.
-  Their bronze columns are now defined by the `cardnet` and `fred` contracts; the silver models
-  are M5's.
 - The architecture diagram is a link to a directory rather than a diagram. The source schema
   now has one, in [diagrams/erd.md](diagrams/erd.md); the platform-level diagram does not.
 
 ## Next milestone
 
-**M5 continues: specification 009, silver for the card settlement file, the sanctions list and
-FRED**, then 010, entity resolution. What 008 leaves them: the historisation and conversion
-macros, the silver generator, the generic silver tests and `transform_silver`, which builds every
-silver model after a successful bronze build. M5's checkpoint follows 010.
+**M5 closes with specification 010: entity resolution, and sanctions screening as a governance
+job with vault access (ADR 0010)**, sharing one matching function. What 009 leaves it:
+`sl_sanctions_names`, every list name and alias per version beside its normalised form, and
+`normalise_name`, the one representation every silver name is given, merchants included. M5's
+checkpoint follows 010.
 
 The notes below were written when M4 began, and are kept as the record of what it had to
 resolve; each says how it was.
