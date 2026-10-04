@@ -74,7 +74,7 @@ What exists and runs today:
   kept in `_raw_payload` with its identifiers tokenised, quarantine per record with its reason,
   and a PII scan that searches every bronze and quarantine object, bytes and decoded values,
   for every vault value.
-- 662 unit tests, 44 DAG integrity tests and 84 integration tests; the unit
+- 668 unit tests, 44 DAG integrity tests and 84 integration tests; the unit
   and DAG suites also run with networking disabled (`make test-offline`); two CI workflows, the
   `stack` job seeding at the acceptance anchor, ingesting a week through the real DAGs with no
   live external call and building bronze.
@@ -241,7 +241,7 @@ Expected timings and results:
 | `make health` | Five components, all `pass`, exit 0 |
 | `make verify-dag` | Four tasks succeed; both warehouse tasks report pool `warehouse_access` |
 | `make schema-apply` | 14 schema files, 5 seed files, 463 classifications; running it twice changes nothing |
-| `make test` | 662 passed, 2 skipped (they run in the image) |
+| `make test` | 668 passed, 2 skipped (they run in the image) |
 | `make test-dags` | 44 passed, with the execution path printed |
 | `make seed` | 166,381 rows at `ci` in 11 s |
 | `make seed-verify` | 14 invariants, all pass, before and after any number of ticks; invariant 9's statistical band is not asserted at `ci` and says so |
@@ -251,9 +251,9 @@ Expected timings and results:
 | `make test-offline` | 685 passed with `--network none`, about two minutes; httpfs loads from the build-time install |
 | `make backfill FROM=2026-07-20 TO=2026-09-18` | About an hour at `ci` after a fresh seed at the acceptance anchor, 59 seconds a day, then one bronze build of the whole history in about 30 seconds. Specification 007's runs ended with 2,971 batches, 4 explicitly failed (the scripted cut-off transmission and its reattempt), none open. The fourth acceptance run, before the registry fix below, had 3,000. Re-invoked over a finished range it ticks and triggers nothing, about 4 seconds a day. Before the first day it lands the FX history once: one request, 634 publication dates and 18,882 rates at `ci`, and a no-op once registered |
 | `make ingest-integrity` | `clean`, seven checks, across every batch: every identifier token resolves in the vault, and no entity has more physical schemas than contract versions |
-| `make dbt-build` | 50 views, the seed, 49 silver tables and 581 tests: 683 nodes passing with `--warn-error`, 25.6 seconds of dbt and 34 of wall time over the sixty-one-day `ci` history. `transform_bronze` alone runs 268 of the tests, those that read bronze alone, and `transform_silver` the rest in about 21 seconds |
+| `make dbt-build` | 50 views, the seed, 49 silver tables and 583 tests: 685 nodes passing with `--warn-error`, 15 to 26 seconds of dbt time and 21 to 34 of wall time over the sixty-one-day `ci` history. `transform_bronze` alone runs 268 of the tests, those that read bronze alone, and `transform_silver` the rest in about 21 seconds |
 | `make silver-generate` | 45 silver models' properties and 30 generated models agree with the contracts; run before `make dbt-generate` |
-| `make dbt-prove` | About 160 seconds; every bronze and silver test, every macro test against its planted defects, and both guards fail where planted and pass elsewhere |
+| `make dbt-prove` | 100 to 160 seconds; every bronze and silver generic test against its planted fixtures (7 bronze, 25 silver), every macro test against 13 planted defects, and both guards (3 bronze-guard cases, 7 gold-guard cases) fail where planted and pass elsewhere |
 | `make docs-scan` | No secret and no vault value; the site shows 811 of 811 classifications. `PLANT=1` catches a planted secret and vault value |
 | `make feeds-acceptance RUN=name` | One section per criterion and for the review's rulings; the dump searched for vault values finds none |
 | `make bronze-pii-scan` | About 40 seconds; 3,023 objects, no cleartext identifier in either reading; ten fixture names reported as list content. `PLANT=1` catches a card reference in a clearing file, a list name in a core banking object and a card reference in a snapshot |
