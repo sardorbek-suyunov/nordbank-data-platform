@@ -593,7 +593,10 @@ FEEDS: tuple[Feed, ...] = (
                     (
                         "birth_dates",
                         "In silver, a list of text, never dates: FollowTheMoney dates are "
-                        "partial, a year or a year and month as often as a day.",
+                        "partial, a year or a year and month as often as a day. The name keeps "
+                        "no `_date` suffix on purpose: it is a list of partial dates stored as "
+                        "text, and the suffix would claim a date type it does not have "
+                        "(traceability.md). Do not rename it.",
                     ),
                 )
             ),
