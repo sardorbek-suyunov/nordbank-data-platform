@@ -224,10 +224,11 @@ def fx_columns(prefix: str) -> tuple[Added, ...]:
         Added(
             "fx_is_provisional",
             "BOOLEAN",
-            "The rate is the latest landed for its currency and the business instant is after "
-            "the publication instant of the next weekday after the rate's date: a newer rate may "
-            "still land, and a rebuild may restate this row. Every other conversion is final and "
-            "never restated. Never true for EUR or a missing rate.",
+            "The rate's date is the feed's latest publication date, across every currency, and "
+            "the business instant is after the publication instant of the next weekday after it: "
+            "the next publication has not landed, and a rebuild may restate this row. Once a later "
+            "publication has landed the conversion is final, whether or not it carries the "
+            "currency. Never true for EUR or a missing rate.",
         ),
     )
 

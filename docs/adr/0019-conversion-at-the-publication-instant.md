@@ -2,6 +2,9 @@
 
 Status: Accepted
 Date: 2026-10-03
+Revised: 2026-10-04, before its milestone closed and on review of specification 008: a conversion
+is provisional only against the feed's latest publication, not its currency's, so a currency the
+ECB stops quoting becomes final; and `fx_is_carried` is stated exactly.
 
 ## Context
 
@@ -39,14 +42,21 @@ business instant**:
 - EUR converts at 1; a currency with no rate published before the instant has a null EUR
   amount and `fx_is_missing`, never zero and never the original amount.
 
-**A conversion is provisional** when the rate chosen is the latest landed for its currency and
-the business instant is after the publication instant of the next weekday after the rate's date:
-a newer rate may still land, and a rebuild after it does would choose it. Every other conversion
-is **final**: no rebuild from the same or from more bronze changes it, because every rate that
-could precede its instant has either landed or, on a TARGET holiday, does not exist. Only a
-provisional conversion may be restated. There is no holiday calendar: a holiday is a weekday on
-which the expected publication never comes, and the rows it leaves provisional become final when
-the next rate lands.
+**A conversion is provisional** when the chosen rate's date is the latest publication date
+landed for the feed, the greatest rate date across every currency, and the business instant is
+after the publication instant of the next weekday after that date: the next publication has not
+landed, and a rebuild after it does may choose a newer rate. Every other conversion is **final**:
+no rebuild from the same or from more bronze changes it. Once any later publication has landed,
+a currency missing from it is final, whether the gap is a TARGET holiday or a currency the ECB has
+stopped quoting, because a publication that does not carry a currency will not carry it later.
+Only a provisional conversion may be restated. There is no holiday calendar: a holiday is a
+weekday on which no publication comes, and the rows it leaves provisional become final when the
+next publication lands.
+
+**A conversion is carried**, `fx_is_carried`, exactly when the chosen rate's date differs from the
+UTC calendar date of the business instant. EUR and a missing rate are never carried. On a row of
+`sl_fx_rates` it is the same test against the row's calendar date, so a fact at 23:59:59 UTC and
+the day's row agree.
 
 **The arithmetic is exact.** The amount in units of 0.0001 and the rate in units of 10^-8 are
 HUGEINTs, each widened to DECIMAL(38, s) before it is scaled; the quotient is rounded half away
@@ -78,10 +88,17 @@ restating the rule independently checks every row.
   business date, so a fact before the day's publication converts at the day before's rate and is
   carried: 3,968 of 6,163 non-EUR transactions on the history. It is a statement about the rate's
   date, not a defect.
-- **A currency the ECB stops quoting stays provisional.** The rule cannot tell a currency that
-  will never be quoted again from one whose rate is late: BGN, whose last rate is 2025-12-31 since
-  Bulgaria adopted the euro, is the latest landed rate for its currency on every later date, so
-  its rows in `sl_fx_rates` are provisional for good. No fact is in BGN.
+- **A currency the ECB stops quoting is final, and carried forward.** BGN's last rate is
+  2025-12-31, Bulgaria having adopted the euro; once the next publication landed without it, a
+  BGN conversion at that rate is final, and `sl_fx_rates` carries it to the last fact date with
+  `fx_is_carried`. The rule as first written measured the latest rate per currency and left 261
+  BGN rows provisional for good; measured against the feed, none is. A fact in a discontinued
+  currency would convert at its last rate, which is right for a currency whose conversion was
+  fixed on adoption and would need a decision for one that simply stopped being quoted. No fact
+  is in BGN.
+- **A currency missing from one publication becomes final immediately.** A rate the ECB omitted
+  by error from a single publication, then published late, would not restate a conversion
+  already final. The ECB does not republish reference rates, so the case is theoretical.
 - **Exact integer arithmetic is more SQL than `round(amount / rate, 4)`**, and every model that
   converts must use the macro. The conversion lives in one macro so nothing else writes it.
 

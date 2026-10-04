@@ -313,3 +313,19 @@ tests that read bronze beside a silver model, which error while silver does not 
 throwaway stack hid it, its silver having been built already. The bronze build now passes
 `--indirect-selection cautious`; silver's build keeps the default and runs them. Reproduced on a
 copy of the throwaway warehouse with silver dropped: 40 errors before, 320 nodes passing after.
+
+### 2026-10-04 — provisional against the feed's latest publication
+
+Section 6's provisional rule read "the latest landed for its currency", and on the history it left
+261 BGN rows of `sl_fx_rates` provisional for good: BGN's last rate is 2025-12-31, Bulgaria having
+adopted the euro, so no later BGN rate will ever land. Ruled on review: a conversion is
+provisional when the chosen rate's date is the latest publication date landed for the feed,
+across every currency, and the instant is after the next weekday's publication; once any later
+publication has landed, a currency missing from it is final, a holiday gap or a discontinued
+currency alike. ADR 0019 is revised in place, its milestone being open, and states
+`fx_is_carried` exactly. Re-measured on the throwaway stack: BGN provisional rows 0, and none in
+`sl_fx_rates`; the rule restated in `assert_fx_rates_agree_with_the_conversion_rule` agrees on
+every row, and the per-currency rule fails it on exactly the 261 BGN rows. Criterion 14 again:
+with 2026-09-18's batch held back, 20 transactions and 4 payments provisional and 29
+`sl_fx_rates` rows; landed and rebuilt, exactly those moved, and none of the 58,501 final facts
+or 29,071 final rate rows.
