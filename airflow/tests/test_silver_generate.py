@@ -159,3 +159,13 @@ def test_customer_initiated_is_derived_on_both_converted_facts_with_stated_floor
         column, minimum_true, minimum_false = model.spec.splits[0]
         assert column == "is_customer_initiated" and minimum_true > 0 and minimum_false > 0
         assert "silver_flag_split" in silver_generate.render_yml(model)
+
+
+def test_the_interval_test_reads_deletes_from_the_model_bronze():
+    for model in silver_generate.build():
+        if model.spec.history != silver_generate.SCD2:
+            continue
+        text = silver_generate.render_yml(model)
+        block = text.split("silver_scd2_intervals:", 1)[1].split("config:", 1)[0]
+        assert f"upstream: ref('{model.bronze.name}')" in block, model.name
+        assert ('deleted: "false"' in block) == (model.spec.deleted == "false"), model.name

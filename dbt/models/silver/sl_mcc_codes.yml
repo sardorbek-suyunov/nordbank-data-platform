@@ -36,6 +36,8 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [mcc_code_id]
+            upstream: ref('br_corebank__mcc_codes')
+            deleted: "false"
           config:
             severity: error
       - silver_observations_versioned:

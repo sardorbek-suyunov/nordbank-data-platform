@@ -36,6 +36,8 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [interchange_rate_id]
+            upstream: ref('br_corebank__interchange_rates')
+            deleted: "false"
           config:
             severity: error
       - silver_observations_versioned:

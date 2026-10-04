@@ -36,6 +36,8 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [card_product_class_id]
+            upstream: ref('br_corebank__card_product_classes')
+            deleted: "false"
           config:
             severity: error
       - silver_observations_versioned:

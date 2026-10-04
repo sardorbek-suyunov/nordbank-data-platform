@@ -36,6 +36,8 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [holder_role_id]
+            upstream: ref('br_corebank__holder_roles')
+            deleted: "false"
           config:
             severity: error
       - silver_observations_versioned:

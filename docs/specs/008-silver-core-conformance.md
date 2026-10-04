@@ -353,3 +353,15 @@ Reproduced on a clean worktree of the branch, three runs of three, and confirmed
 file, 25 runs of 25. `scripts/lint_sql.py` now runs sqlfluff with UTF-8 output; with it, three
 runs to `/dev/null` exit 0, and the worktree without it still exits 2. CI on Linux never took the
 path. A unit test holds the environment.
+
+### 2026-10-04 — a restored key opens a new version, and its gap is allowed
+
+`silver_scd2_intervals` failed on any gap, so a key soft-deleted and later restored would have
+failed it. Ruled on review: a restore opens a new version, and the interval test allows a gap
+only directly after a deleted version. The test now reads the model's bronze: a gap passes only
+when it starts at the `updated_at` of an observation of the same key whose deleted flag is true;
+a `ref` model, with `deleted='false'`, is allowed none. `scd2` already opened a version on
+restore (key 5 of `assert_scd2_version_rule`). `make dbt-prove` passes a fixture deleted at one
+instant and restored at a later one, and fails the same gap when the upstream's delete is at
+another instant, as well as a gap with no delete. ADR 0020 is revised in place. On the history,
+361 silver nodes pass; no restoration exists in the data.
