@@ -9,7 +9,8 @@ Generic tests are declared in the model schema files and defined in `macros/`.
   reference row, latest state, a backdated address joined by business validity, and name
   normalisation on diacritics, case and runs of spaces, the clearing file's winning revision
   (a lower revision arriving late, an all-quarantined correction, two sequences) and a line's
-  resolution (a card with three versions, a line that resolves to nothing).
+  resolution (a card with three versions, a line that resolves to nothing), and the sanctions
+  list's names (several names and aliases, accented, one stated twice).
 - `silver/`: tests over the built silver models and the bronze they read, such as the version
   rule on accounts re-derived from bronze and `sl_fx_rates` against the conversion rule restated
   without the macros.

@@ -528,6 +528,99 @@ FEEDS: tuple[Feed, ...] = (
             _batch("the batch the trailer landed in, of its winning revision."),
         ),
     ),
+    # One batch is one whole list version (ADR 0015), so silver keeps every landed version, each
+    # entity once in it. Floors below the stack job's week, the 2026-07-20 version alone: 315
+    # entities and 431 names.
+    Feed(
+        "sl_sanctions_entities",
+        "br_opensanctions__entities",
+        ("entity_id", "publisher_version"),
+        300,
+        "Silver sanctions list entities, from `br_opensanctions__entities` "
+        "(contracts/opensanctions/entities.yml). One row per entity per landed list version, "
+        "keyed by the publisher's entity id and version string. The list is synthetic, in the "
+        "real feed's shape (ADR 0015). Multi-valued properties stay lists. The entity's names "
+        "and aliases are `sl_sanctions_names`; matching them is specification 010's governance "
+        "job (ADR 0010).",
+        (
+            Carried("entity_id"),
+            Carried("publisher_version"),
+            Carried("published_at"),
+            Carried("entity_schema"),
+            Carried(
+                "caption",
+                note="The publisher's display label: the entity's first name, and not a name of "
+                "its own in `sl_sanctions_names`.",
+            ),
+            *(
+                Carried(c, data_type="VARCHAR[]", note=note)
+                for c, note in (
+                    ("datasets", "In silver, a list of text."),
+                    ("referents", "In silver, a list of text."),
+                    (
+                        "topics",
+                        "In silver, a list of text: why the entity is listed, such as "
+                        "`sanction` or `role.pep`.",
+                    ),
+                    (
+                        "countries",
+                        "In silver, a list of text, null where the entity states none: an "
+                        "organisation's countries. A person states nationalities instead.",
+                    ),
+                    (
+                        "nationalities",
+                        "In silver, a list of text, null where the entity states none: a "
+                        "person's nationalities.",
+                    ),
+                    (
+                        "birth_dates",
+                        "In silver, a list of text, never dates: FollowTheMoney dates are "
+                        "partial, a year or a year and month as often as a day.",
+                    ),
+                )
+            ),
+            Carried("first_seen"),
+            Carried("last_change"),
+            _batch("the batch the list version landed as."),
+        ),
+    ),
+    Feed(
+        "sl_sanctions_names",
+        "br_opensanctions__entities",
+        ("entity_id", "publisher_version", "name"),
+        400,
+        "Silver sanctions list names, from `br_opensanctions__entities` "
+        "(contracts/opensanctions/entities.yml). One row per entity, landed list version and "
+        "name: every value of the entity's `names` and `aliases`, with `name_type` saying which, "
+        "and the name in the one representation `normalise_name` gives every silver name beside "
+        "the raw one. A value stated twice, or as both a name and an alias, is one row, typed "
+        "`name`. The caption is not added: it equals the first name.",
+        (
+            Carried("entity_id"),
+            Carried("publisher_version"),
+            Added(
+                "name_type",
+                "VARCHAR",
+                "Which of the entity's properties the name was stated in: `name` or `alias`.",
+            ),
+            Carried(
+                "names",
+                name="name",
+                data_type="VARCHAR",
+                note="In silver, one value of the entity's `names` or `aliases` per row, as the "
+                "publisher stated it.",
+            ),
+            Added(
+                "name_normalised",
+                "VARCHAR",
+                "`name` in one representation, by `normalise_name`, the macro merchants use: upper "
+                "case, accents removed, whitespace collapsed and trimmed. Representation only; "
+                "matching is specification 010's.",
+                "sensitive",
+            ),
+            _batch("the batch the list version landed as."),
+        ),
+    ),
 )
 
 
