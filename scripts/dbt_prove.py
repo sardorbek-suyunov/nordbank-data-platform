@@ -564,9 +564,30 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
         "inner join (select distinct card_reference, card_id",
         "assert_settlement_resolution",
     ),
+    (
+        "an alias typed as a name",
+        "sanctions.sql",
+        "'alias' as name_type",
+        "'name' as name_type",
+        "assert_sanctions_names",
+    ),
+    (
+        "a list name kept unnormalised",
+        "sanctions.sql",
+        "{{ normalise_name('name') }} as name_normalised",
+        "name as name_normalised",
+        "assert_sanctions_names",
+    ),
+    (
+        "a name stated twice kept twice",
+        "sanctions.sql",
+        ") = 1\n{%- endmacro %}",
+        ") >= 1\n{%- endmacro %}",
+        "assert_sanctions_names",
+    ),
 ]
 # A floor stated as a number, never read from the folder: the macro tests that exist.
-MACRO_TEST_FLOOR = 9
+MACRO_TEST_FLOOR = 10
 
 # Fixture models for the generic silver tests: each model's rows, and the one test planted to
 # fail on it. `clean` carries every test and must pass them all. A row is

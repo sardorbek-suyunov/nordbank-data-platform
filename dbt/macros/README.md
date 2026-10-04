@@ -12,6 +12,8 @@ it is not a macro.
 - `generalisation.sql`: the age and tenure band intervals.
 - `settlement.sql`: the clearing file's winning revision, chosen once from lines and trailers
   together, and a line's resolution to its card and transaction (specification 009).
+- `sanctions.sql`: the sanctions list's names and aliases, one row per entity, version and name
+  (specification 009).
 - `names.sql`: `normalise_name`, the one representation every silver name is given: merchants and
   the sanctions list's names (specification 009).
 - `silver_tests.sql`: the generic tests silver models carry.
