@@ -118,6 +118,7 @@ models:
         config:
           meta:
             classification: quasi-identifier
+            gold_generalisation: "identity: the published granularity"
       - name: created_at
         data_type: TIMESTAMP WITH TIME ZONE
         description: "When the row was inserted. An audit column: no business timestamp may take this name. Classification: `non-personal` (no restriction). In silver, the value of the latest observation."

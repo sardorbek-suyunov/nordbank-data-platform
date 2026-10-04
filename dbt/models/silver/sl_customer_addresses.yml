@@ -94,6 +94,7 @@ models:
         config:
           meta:
             classification: quasi-identifier
+            gold_generalisation: "identity: the published granularity"
       - name: valid_from_date
         data_type: DATE
         description: "First date this address version applies. Classification: `quasi-identifier` (retained in the clear, generalised before gold)."

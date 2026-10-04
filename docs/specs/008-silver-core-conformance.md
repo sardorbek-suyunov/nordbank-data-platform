@@ -365,3 +365,28 @@ restore (key 5 of `assert_scd2_version_rule`). `make dbt-prove` passes a fixture
 instant and restored at a later one, and fails the same gap when the upstream's delete is at
 another instant, as well as a gap with no delete. ADR 0020 is revised in place. On the history,
 361 silver nodes pass; no restoration exists in the data.
+
+### 2026-10-04 — quasi-identifiers permitted in gold, declared once
+
+The guard refused every column its parents classify quasi-identifier, which would refuse the
+residence, address and IP country that reporting is built from, though `pii_classification.md`
+names country as a generalisation. Ruled on review: one declaration file of quasi-identifier
+columns permitted in gold, each with its generalisation; country is "identity: the published
+granularity" for all three. It is `dbt/quasi_identifiers_in_gold.yml`, beside the project file:
+`make silver-generate` refuses an entry whose model it does not generate or whose column is not a
+quasi-identifier, and writes each into the column's properties as `meta.gold_generalisation`,
+which `CHECK=1` holds to the file and the guard reads; M8's check reads the file itself.
+`pii_classification.md` states that a quasi-identifier reaches gold only through a declared
+generalisation. `make dbt-prove` passes a gold model selecting a declared quasi-identifier and
+refuses one selecting an undeclared one; on the throwaway stack a temporary gold model over
+`sl_customers` built with `residence_country_code` and was refused with `date_of_birth`.
+
+### 2026-10-04 — the guard refuses an unclassified gold column
+
+The guard compared names only, so a quasi-identifier renamed on the way passed. Ruled on review:
+it also fails any gold column with no declared classification, and so a renamed column has to say
+what it is; one classified quasi-identifier that no parent declares is refused under any name.
+`make dbt-prove` refuses a gold column with no classification, a renamed date of birth classified
+quasi-identifier, and the date of birth declared non-personal. What remains, a renamed
+quasi-identifier classified as something else, needs column-level lineage, recorded as a known
+gap owned by M8.

@@ -15,3 +15,8 @@ its target and logs under `/tmp/dbt` in the container.
 
 Primary target is DuckDB; BigQuery is kept as a secondary target to prove portability
 (ADR 0002), and M10 decides how bronze is expressed there.
+
+`quasi_identifiers_in_gold.yml`, beside the project file and not parsed by dbt, declares the
+quasi-identifier columns permitted in gold and the generalisation each reaches gold as.
+`make silver-generate` writes each into the column's properties, where the gold column guard reads
+it; M8's governance check reads the file itself.
