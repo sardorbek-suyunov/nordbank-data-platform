@@ -13,6 +13,10 @@ default, because the default would silently be the least protective one.
 | `pseudonymous_key` | A key that identifies a person only by reference within the platform: `customers.customer_id` and every foreign key that points at a person-bearing entity | Retained unchanged in every layer, because it is the join path. Never tokenised, because it is the pseudonym rather than the identifier. Its personal character is neutralised not by transforming it but by destroying the vault mappings of the identifiers it links to, which is what makes crypto-shredding sufficient rather than merely convenient |
 | `non-personal` | Everything else: amounts, currencies, product codes, MCC, timestamps of system events, merchant identity | No restriction |
 
+A quasi-identifier reaches gold only through a declared generalisation: `dbt/quasi_identifiers_in_gold.yml`
+names each one permitted and the generalisation it reaches gold as, and the gold column guard
+refuses every other.
+
 ## Why date of birth is the case that proves the distinction
 
 Date of birth is the obvious candidate for tokenisation, and tokenising it would be a mistake.

@@ -1,0 +1,29 @@
+# The quasi-identifier columns permitted in gold, each with the generalisation it reaches gold as.
+#
+# Specification 008, ruled on review 2026-10-04. A quasi-identifier stays in the clear in silver,
+# because generalising needs the underlying value, and reaches gold only through a declared
+# generalisation (pii_classification.md). This file is the one declaration:
+#
+# - `make silver-generate` refuses an entry whose model it does not generate or whose column is not
+#   classified quasi-identifier there, and writes each entry into that column's properties as
+#   `meta.gold_generalisation`, which `CHECK=1` holds to this file;
+# - the gold column guard (dbt/macros/gold_guard.sql) admits a gold column that a parent declares
+#   here, and refuses every other quasi-identifier;
+# - M8's governance check reads this file to judge whether the surviving combinations are coarse
+#   enough not to re-identify a subject.
+#
+# A generalisation of `identity: the published granularity` means the column reaches gold
+# unchanged: its value is already published at the coarsest grain reporting uses. A generalisation
+# that transforms the value, an age band from a date of birth, is a silver model of its own, and
+# the raw column is never listed here.
+version: 1
+permitted:
+  - model: sl_customers
+    column: residence_country_code
+    generalisation: "identity: the published granularity"
+  - model: sl_customer_addresses
+    column: country_code
+    generalisation: "identity: the published granularity"
+  - model: sl_login_sessions
+    column: ip_country_code
+    generalisation: "identity: the published granularity"

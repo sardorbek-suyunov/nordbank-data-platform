@@ -287,9 +287,12 @@ Found at specification 008 and not fixed there:
   simulated instant before the book. Silver works around it by opening every first version at the
   epoch (ADR 0020), so a reference row's `_valid_from` says nothing about when it came to exist.
   The source owns the fix: seeding with a simulated stamp before the history start.
-- **The gold column guard cannot see a rename.** It compares a gold model's declared columns with
-  its parents' quasi-identifier columns; `date_of_birth as born` passes. Column-level lineage,
-  M8's, would close it.
+- **The gold column guard cannot see a renamed quasi-identifier classified as something else.**
+  Owner: M8. It refuses a gold column with no classification, one classified quasi-identifier that
+  no parent declares in `dbt/quasi_identifiers_in_gold.yml`, and one carrying an undeclared
+  quasi-identifier's name; `date_of_birth as born` declared `non-personal` still passes. The full
+  fix is column-level lineage, which traces every gold column to the silver columns it is computed
+  from.
 
 Found at specification 007 and not fixed there:
 

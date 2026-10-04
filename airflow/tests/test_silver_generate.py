@@ -169,3 +169,34 @@ def test_the_interval_test_reads_deletes_from_the_model_bronze():
         block = text.split("silver_scd2_intervals:", 1)[1].split("config:", 1)[0]
         assert f"upstream: ref('{model.bronze.name}')" in block, model.name
         assert ('deleted: "false"' in block) == (model.spec.deleted == "false"), model.name
+
+
+def test_the_declared_quasi_identifiers_carry_their_generalisation():
+    permitted = silver_generate.gold_permitted()
+    # Residence, address and IP country, as ruled. Stated, not read.
+    assert len(permitted) == 3
+    models = {m.name: m for m in silver_generate.build()}
+    for (model, column), generalisation in permitted.items():
+        text = silver_generate.render_yml(models[model])
+        block = text.split(f"- name: {column}\n", 1)[1].split("- name:", 1)[0]
+        assert "classification: quasi-identifier" in block
+        assert f'gold_generalisation: "{generalisation}"' in block
+    everywhere = "".join(silver_generate.render_yml(m) for m in models.values())
+    assert everywhere.count("gold_generalisation:") == 3
+
+
+@pytest.mark.parametrize(
+    ("model", "column"),
+    [("sl_customers", "customer_id"), ("sl_nowhere", "country_code")],
+    ids=["a column that is not a quasi-identifier", "a model that is not generated"],
+)
+def test_a_declaration_the_generator_cannot_honour_fails(tmp_path, monkeypatch, model, column):
+    declaration = tmp_path / "quasi_identifiers_in_gold.yml"
+    declaration.write_text(
+        f"version: 1\npermitted:\n  - model: {model}\n    column: {column}\n"
+        '    generalisation: "identity: the published granularity"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(silver_generate, "GOLD_PERMITTED", declaration)
+    with pytest.raises(SystemExit):
+        silver_generate.build()

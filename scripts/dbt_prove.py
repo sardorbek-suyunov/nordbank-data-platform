@@ -11,9 +11,9 @@ fixture entity plants one violation, and the run requires:
 - an entity with no registered rows to build as an empty relation of the declared types;
 - `bronze_guard` to fail the build on a bronze model that reads the lake itself, on a model
   outside bronze that does, and on a test that stores its failures;
-- `gold_guard` to fail the build on a gold model selecting a column its parent classifies
-  quasi-identifier and on one that does not enforce its contract, and to pass one selecting only
-  the generalisation;
+- `gold_guard` to fail the build on a gold model selecting an undeclared quasi-identifier, under
+  its own name or a new one, on a gold column with no classification and on a model that does not
+  enforce its contract, and to pass one selecting a declared quasi-identifier or a generalisation;
 - every macro test under `dbt/tests/macros` to pass on the repository's macros, and to fail on a
   copy of the macros with one planted defect (specification 008), each defect named in
   `MUTATIONS` with the test that must catch it;
@@ -344,47 +344,71 @@ def main() -> int:
 
 # --- the gold column guard (specification 008 section 8) -----------------------------------
 
-# A silver model whose properties classify its columns, as the generated ones do, and gold models
-# over it: (gold SQL, the columns its properties declare, whether its contract is enforced, and
+# A silver model whose properties classify its columns, as the generated ones do, one of them a
+# quasi-identifier the declaration file permits, and gold models over it: (gold SQL, the columns
+# its properties declare as (name, classification or None), whether its contract is enforced, and
 # whether the guard must refuse it).
-GOLD_CASES: dict[str, tuple[str, list[str], bool, bool]] = {
+GOLD_CASES: dict[str, tuple[str, list, bool, bool]] = {
     "a gold model selecting only the band": (
         "select customer_id, age_band from {{ ref('sl_people') }}",
-        ["customer_id", "age_band"], True, False,
+        [("customer_id", "pseudonymous_key"), ("age_band", "non-personal")], True, False,
     ),
-    "a gold model selecting a date of birth": (
+    "a gold model selecting a declared quasi-identifier": (
+        "select customer_id, country_code from {{ ref('sl_people') }}",
+        [("customer_id", "pseudonymous_key"), ("country_code", "quasi-identifier")], True, False,
+    ),
+    "a gold model selecting an undeclared quasi-identifier": (
         "select customer_id, date_of_birth from {{ ref('sl_people') }}",
-        ["customer_id", "date_of_birth"], True, True,
+        [("customer_id", "pseudonymous_key"), ("date_of_birth", "quasi-identifier")], True, True,
+    ),
+    "a gold model selecting it as non-personal": (
+        "select customer_id, date_of_birth from {{ ref('sl_people') }}",
+        [("customer_id", "pseudonymous_key"), ("date_of_birth", "non-personal")], True, True,
+    ),
+    "a gold model renaming it, classified as what it is": (
+        "select customer_id, date_of_birth as born from {{ ref('sl_people') }}",
+        [("customer_id", "pseudonymous_key"), ("born", "quasi-identifier")], True, True,
+    ),
+    "a gold column with no classification": (
+        "select customer_id, age_band from {{ ref('sl_people') }}",
+        [("customer_id", "pseudonymous_key"), ("age_band", None)], True, True,
     ),
     "a gold model that does not enforce its contract": (
         "select customer_id, age_band from {{ ref('sl_people') }}",
-        ["customer_id", "age_band"], False, True,
+        [("customer_id", "pseudonymous_key"), ("age_band", "non-personal")], False, True,
     ),
 }  # fmt: skip
 PEOPLE = {
-    "customer_id": ("BIGINT", "pseudonymous_key"),
-    "date_of_birth": ("DATE", "quasi-identifier"),
-    "age_band": ("VARCHAR", "non-personal"),
+    "customer_id": ("BIGINT", "pseudonymous_key", None),
+    "date_of_birth": ("DATE", "quasi-identifier", None),
+    "country_code": ("VARCHAR", "quasi-identifier", "identity: the published granularity"),
+    "age_band": ("VARCHAR", "non-personal", None),
 }
+TYPES = {"born": "DATE", **{name: spec[0] for name, spec in PEOPLE.items()}}
 
 
-def gold_fixture(gold_sql: str, gold_columns: list[str], enforced: bool) -> dict[str, str]:
+def gold_fixture(gold_sql: str, gold_columns: list, enforced: bool) -> dict[str, str]:
     silver = ["version: 2", "models:", "  - name: sl_people", "    columns:"]
-    for name, (data_type, classification) in PEOPLE.items():
+    for name, (data_type, classification, generalisation) in PEOPLE.items():
+        meta = f"classification: {classification}"
+        if generalisation:
+            meta += f', gold_generalisation: "{generalisation}"'
         silver += [
             f"      - name: {name}",
             f"        data_type: {data_type}",
-            f"        config: {{meta: {{classification: {classification}}}}}",
+            f"        config: {{meta: {{{meta}}}}}",
         ]
     gold = ["version: 2", "models:", "  - name: dim_people"]
     gold += ["    config:", f"      contract: {{enforced: {'true' if enforced else 'false'}}}"]
     gold += ["    columns:"]
-    for name in gold_columns:
-        gold += [f"      - name: {name}", f"        data_type: {PEOPLE[name][0]}"]
+    for name, classification in gold_columns:
+        gold += [f"      - name: {name}", f"        data_type: {TYPES[name]}"]
+        if classification:
+            gold.append(f"        config: {{meta: {{classification: {classification}}}}}")
     return {
         "models/silver/sl_people.sql": (
             "select cast(1 as bigint) as customer_id, date '1990-05-01' as date_of_birth, "
-            "'25-34' as age_band\n"
+            "'FR' as country_code, '25-34' as age_band\n"
         ),
         "models/silver/sl_people.yml": "\n".join(silver) + "\n",
         "models/gold/dim_people.sql": gold_sql + "\n",
