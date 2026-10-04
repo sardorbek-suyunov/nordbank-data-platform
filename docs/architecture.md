@@ -147,9 +147,16 @@ put real special-category personal data into a lake that feeds a publicly deploy
 at M9, with no lawful basis and no retention story.
 
 **Macro indicators.** Series are requested monthly, every observation of a series each time.
-Revisions to already published periods are expected: a revised observation arrives under a
-later `realtime_start` and lands as a new row in a new batch, because bronze is append-only, and
-silver keeps the history and reads the latest vintage of each period.
+Revisions to already published periods are expected, and bronze is append-only, so every run
+lands every period as a new row in a new batch, revised or not. The request asks for the current
+vintage only, so FRED returns `realtime_start` and `realtime_end` both equal to the day of the
+request: they record when the platform asked, not when FRED published. Silver therefore keeps
+every period's values by **observed interval**, a run of identical values across consecutive
+requests collapsed into one, from `observed_from`, the request day the value was first seen, to
+`observed_to`, the request day a different one was, and flags each period's latest
+(specification 009). It does not keep only the latest, and the interval is named so it cannot be
+mistaken for FRED's real-time vintage, which a request for the full real-time history would give:
+an open item, decided with the funding cost assumption.
 
 ### Batch arithmetic, per ingestion mode
 
@@ -168,12 +175,16 @@ business day combine differs by mode, and summing them is right for one mode onl
   different content fails loudly. The registry's `batch_sequence` is the platform's allocation
   and plays no part: a late file is batch 02 behind the empty batch of the day it did not
   arrive on, and still the sender's sequence 01. An empty `no_arrival_within_window` batch
-  contributes nothing.
-- **Snapshot.** One batch is the whole list. A later export replaces an earlier one, and two
-  exports are never added.
+  contributes nothing. Silver applies this once, in one macro both settlement models use
+  (specification 009): the winner is the highest revision declared across a sequence's lines
+  and trailers together, so a correction whose every line was quarantined still replaces the
+  revision before it.
+- **Snapshot.** One batch is the whole list. A later export replaces an earlier one as the list
+  in force, and two exports are never added; silver keeps every landed version, keyed by its
+  version string, because a screening match names the version it was made against.
 - **API, interval.** Each requested date or series lands once, in the batch of the run that
-  answered it. FX dates do not overlap; a FRED series re-sent with revisions lands again, and
-  silver keeps each period's latest vintage.
+  answered it. FX dates do not overlap; a FRED series lands whole on every run, and silver keeps
+  each period's values by observed interval, the latest flagged (above).
 
 ### The simulation is not part of the platform
 
