@@ -585,9 +585,23 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
         ") >= 1\n{%- endmacro %}",
         "assert_sanctions_names",
     ),
+    (
+        "a missing observation compared with <>",
+        "observation.sql",
+        'or "value" is distinct from _previous_value as integer',
+        'or "value" <> _previous_value as integer',
+        "assert_observed_intervals",
+    ),
+    (
+        "every observation its own interval",
+        "observation.sql",
+        "cast(_position = 1 or",
+        "cast(true or",
+        "assert_observed_intervals",
+    ),
 ]
 # A floor stated as a number, never read from the folder: the macro tests that exist.
-MACRO_TEST_FLOOR = 10
+MACRO_TEST_FLOOR = 11
 
 # Fixture models for the generic silver tests: each model's rows, and the one test planted to
 # fail on it. `clean` carries every test and must pass them all. A row is
@@ -709,6 +723,32 @@ SPLIT_FIXTURES: dict[str, tuple[list, bool]] = {
 }
 
 
+# A series' observed intervals for `silver_observed_intervals` (specification 009 section 5):
+# (k, observed_from, observed_to, value, is_latest). The clean fixture holds a revision, 1.0 to
+# 1.2 on key 1, and a missing value followed by a number on key 2; FRED has never landed, so
+# these are the only intervals the test has run against.
+O1, O2, O3 = "date '2026-07-15'", "date '2026-08-15'", "date '2026-09-15'"
+NO_VALUE = "null::decimal(18,8)"
+REVISED = [(1, O1, O3, "1.0", "false"), (1, O3, OPEN, "1.2", "true")]
+OBSERVED_FIXTURES: dict[str, tuple[list, bool]] = {
+    "revised": (REVISED + [(2, O1, O2, NO_VALUE, "false"), (2, O2, OPEN, "2.0", "true")], False),
+    "split_run": ([(1, O1, O2, "1.0", "false"), (1, O2, OPEN, "1.0", "true")], True),
+    "split_missing": ([(1, O1, O2, NO_VALUE, "false"), (1, O2, OPEN, NO_VALUE, "true")], True),
+    "observed_gap": ([(1, O1, O2, "1.0", "false"), (1, O3, OPEN, "1.2", "true")], True),
+    "observed_closed": ([(1, O1, O3, "1.0", "false"), (1, O3, "date '2026-10-15'", "1.2", "true")],
+                        True),
+    "two_latest": ([(1, O1, O3, "1.0", "true"), (1, O3, OPEN, "1.2", "true")], True),
+}  # fmt: skip
+
+# The floor that applies once a feed has landed, minimum 1: (rows held, the registry's batches
+# of the entity as statuses). Unlanded, an empty model passes; landed, it must hold rows.
+FLOOR_FIXTURES: dict[str, tuple[int, list[str], bool]] = {
+    "unlanded": (0, ["failed"], False),
+    "landed_empty": (0, ["failed", "registered"], True),
+    "landed": (2, ["registered"], False),
+}
+
+
 def fact_fixture_files() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
     """Fixture facts for the resolution and provenance tests, and the status each must reach."""
     files, expected = {}, {}
@@ -771,6 +811,33 @@ def fact_fixture_files() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
             "          - silver_flag_split: {arguments: {minimum_true: 2, minimum_false: 1}}",
         ]
         expected[(f"flags_{name}", "silver_flag_split")] = "fail" if fails else "pass"
+    for name, (rows, fails) in OBSERVED_FIXTURES.items():
+        typed = [(k, f, t, f"cast({v} as decimal(18,8))", latest) for k, f, t, v, latest in rows]
+        files[f"models/observed_{name}.sql"] = (
+            f"select * from ({_values(typed, 5)}) "
+            "as t (k, observed_from, observed_to, value, is_latest)\n"
+        )
+        properties += [
+            f"  - name: observed_{name}",
+            "    data_tests:",
+            "      - silver_observed_intervals: {arguments: {key: [k]}}",
+        ]
+        expected[(f"observed_{name}", "silver_observed_intervals")] = "fail" if fails else "pass"
+    for name, (held, statuses, fails) in FLOOR_FIXTURES.items():
+        files[f"models/indicators_{name}.sql"] = f"select * from range({held}) as t (k)\n"
+        batches = [(repr("fred"), repr("series"), repr(s)) for s in statuses]
+        files[f"models/registry_{name}.sql"] = (
+            f"select * from ({_values(batches, 3)}) as t (source_system, entity, status)\n"
+        )
+        properties += [
+            f"  - name: indicators_{name}",
+            "    data_tests:",
+            "      - silver_min_rows_once_registered: {arguments: {minimum: 1, "
+            f"registry: \"ref('registry_{name}')\", source_system: fred, entity: series}}}}",
+        ]
+        expected[(f"indicators_{name}", "silver_min_rows_once_registered")] = (
+            "fail" if fails else "pass"
+        )
     files["models/facts.yml"] = "\n".join(properties) + "\n"
     return files, expected
 

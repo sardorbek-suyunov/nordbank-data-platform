@@ -229,3 +229,62 @@ having count(*) filter (where "{{ column_name }}" is null) > 0
     or count(*) filter (where "{{ column_name }}") < {{ minimum_true }}
     or count(*) filter (where not "{{ column_name }}") < {{ minimum_false }}
 {% endtest %}
+
+{#
+  A minimum cardinality that applies once the feed has landed (specification 009 section 5): the
+  model must hold `minimum` rows when the registry holds a registered batch of the entity, and
+  may be empty until then. FRED needs a key this deployment does not hold, so its silver builds
+  typed and empty, and an unconditional floor would fail on every build without one; with a
+  floor of zero, a keyed run whose observations silver dropped would pass. `registry` is the
+  batch registry, passed in so a fixture can stand in for it.
+#}
+{% test silver_min_rows_once_registered(model, minimum, registry, source_system, entity) %}
+select count(*) as held, {{ minimum }} as minimum
+  from {{ model }}
+having count(*) < {{ minimum }}
+   and exists (
+       select 1
+         from {{ registry }}
+        where source_system = '{{ source_system }}'
+          and entity = '{{ entity }}'
+          and status = 'registered'
+   )
+{% endtest %}
+
+{#
+  A series' values by observed interval (specification 009 section 5): per key, the intervals,
+  ordered, are non-empty, each starts where the one before ended, the last is open to
+  9999-12-31 and is the only one flagged latest, and no two neighbours hold the same value, which
+  would be one run split in two. Values compare with `is distinct from`, so a null is a value.
+  Returns each offending key and interval start, with the problem, never the value.
+#}
+{% test silver_observed_intervals(model, key, value='value') %}
+{%- set k = key | join(', ') -%}
+with ordered as (
+    select {{ k }}, observed_from, observed_to, is_latest, "{{ value }}" as observed_value,
+           lag(observed_to) over w as previous_to,
+           lag("{{ value }}") over w as previous_value,
+           lead(observed_from) over w as next_from,
+           row_number() over w as position
+      from {{ model }}
+    window w as (partition by {{ k }} order by observed_from)
+),
+
+judged as (
+    select {{ k }}, observed_from,
+           case
+               when observed_from >= observed_to then 'an empty or inverted interval'
+               when position > 1 and observed_from <> previous_to
+                   then 'a gap or an overlap with the interval before'
+               when next_from is null and observed_to <> date '9999-12-31'
+                   then 'the last interval is closed'
+               when is_latest is distinct from (next_from is null)
+                   then 'the latest flag is not on the last interval alone'
+               when position > 1 and observed_value is not distinct from previous_value
+                   then 'one value split into two intervals'
+           end as problem
+      from ordered
+)
+
+select * from judged where problem is not null
+{% endtest %}
