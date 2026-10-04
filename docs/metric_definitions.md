@@ -415,10 +415,36 @@ therefore the ones the processor's data put there, and a timing difference is no
 a feed that presented on the business date would reintroduce it, and this paragraph says what
 it would look like.
 
-**Source columns.** `sl_card_settlements.file_total_amount`,
-`sl_card_settlements.settlement_currency`, `sl_card_settlements.settlement_date`,
-`sl_card_settlements.network`, `fct_gl_entries.amount`, `fct_gl_entries.currency_code`,
-`fct_gl_entries.posting_date`.
+**Grain.** Settlement date, network and settlement currency: a file carries one trailer per
+network and currency, and the comparison is per trailer cell, summed over the sender's file
+sequences, which add. Measured on the sixty-one-day history (specification 009): one winning file
+per date, 6 to 14 cells each, 644 cells in all.
+
+**The file side.** `sl_card_settlement_totals.file_total_amount`, `.network`,
+`.settlement_currency` and `.settlement_date`: the processor's own totals over every detail
+record it wrote, of each date and sequence's winning revision, which silver has already chosen.
+Not the lines: a quarantined line is missing from them and still counts in its trailer.
+
+**The ledger side.** No ledger account attributes a card item to a network. The chart of accounts
+has a card settlement receivable, 1200, and payable, 2100, and nothing posts to either; a card
+item posts its customer's deposit line, 2000, against the cash line, 1000, which payments and
+other transactions share. A ledger entry reaches a network only through its transaction:
+
+- `fct_gl_entries.amount` on account 1000, negated, is what the bank owes the network, in
+  `fct_gl_entries.currency_code`, the settlement currency;
+- the entry's posting batch, `sl_gl_transactions`, names its source entity, `transaction`, and
+  `source_entity_id`, the `sl_transactions` row; a transaction with a `card_id` is a card item,
+  which is what separates card items from everything else on account 1000;
+- `sl_cards.card_product_code`, which no card has ever changed, gives `sl_card_products.network`;
+- the entry's settlement date is `fct_gl_entries.posting_date` plus the processor's settlement
+  lag, which the settlements contract states once and the reconciliation reads through the
+  `settlement_lag_days` macro, never as a number in its SQL.
+
+Measured on the sixty-one-day history: every one of the 9,902 card-item entries on account 1000
+is attributed, which is the 9,801 winning lines plus the 101 quarantined ones; both sides hold
+the same 644 cells, none on one side only; counts agree in all 644, and amounts in 620, the 24
+others being exactly the 24 broken lines. The network the file reports equals the card
+product's on all 11,260 landed lines.
 
 **Used by.** Q15.
 
