@@ -12,7 +12,7 @@ with cases (raw, expected) as (
     ('ZZ-Synthétique Ñandú 0042 sanctions-fixture', 'ZZ-SYNTHETIQUE NANDU 0042 SANCTIONS-FIXTURE'),
     ('Łódź Trading', 'ŁODZ TRADING'),
     (chr(9) || 'Acme  Retail' || chr(10), 'ACME RETAIL'),
-    ('ZZ-TESTCASE ALPHA SANCTIONS-FIXTURE', 'ZZ-TESTCASE ALPHA SANCTIONS-FIXTURE'),
+    ('ZZ-SYNTHETIC ALPHA 0042 SANCTIONS-FIXTURE', 'ZZ-SYNTHETIC ALPHA 0042 SANCTIONS-FIXTURE'),
     (null, null)
 )
 
