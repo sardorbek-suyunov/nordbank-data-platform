@@ -185,3 +185,57 @@ generators.
 - **Screening is placed in 010 as a governance job,** per ADR 0010.
 
 ## Amendments
+
+**2026-10-04, `normalise_name` collapses whitespace before it trims.** The merchants expression
+extracted into the macro trimmed first, and `trim` removes spaces only, so a name that began with
+a tab or ended with a line feed kept a space at its edge once the tab became one. Extracted
+unchanged in one commit, corrected in the next, with a fixture case and a planted defect each
+way. No merchant name on the history has edge whitespace, 0 of 179, and `sl_merchants`' content
+hash is identical to the pre-009 build after both commits, as are all fifty silver tables.
+
+**2026-10-04, a letter with no decomposed form is kept.** `strip_accents` turns `É` into `E` but
+leaves `Ł`, `Ø` and `ß`, which are letters of their own. The fixture states it; transliteration
+is a matching rule and 010's. Recorded as a known gap in `project_state.md`.
+
+**2026-10-04, `sl_sanctions_names` keeps the grain entity, version and name.** A value an entity
+states twice, or as both a name and an alias, is one row, typed `name`. None does on the history;
+the fixture has both.
+
+**2026-10-04, the column choices the scope left open.** `sl_card_settlements` carries
+`record_type` too, every contract column being its rule. `sl_card_settlement_totals` carries the
+trailer's `amount_total` as `file_total_amount`, the name section 3 gives it, and keeps
+`record_count`. `sl_sanctions_entities` also carries the publisher's `caption`, `datasets` and
+`referents`, and not `names` or `aliases`, which are `sl_sanctions_names`'. Every multi-valued
+property is `VARCHAR[]`. `sl_macro_indicators` does not carry `realtime_start` or `realtime_end`,
+both the request day.
+
+**2026-10-04, where the settlement lag lives and how SQL reads it.** In the settlements
+contract's `source_of_truth`, as `settlement_lag_days: 1`, beside the document it restates. The
+fingerprint covers columns, keys and format, not `source_of_truth`, so the contract keeps its
+version and fingerprint, `sha256:b65fcabb18f53562` before and after, and no warehouse that
+recorded version 2 refuses it; the superseded version 1 is not edited. The silver generator
+copies it into `sl_card_settlements`' properties, the `settlement_lag_days` macro reads it from
+there, and M6's reconciliation calls the macro. A live test applies it to every line, 9,801 at
+one day, and a unit test holds it equal to the simulated processor's profile.
+
+**2026-10-04, the generator states the feed models.** `scripts/silver_generate.py` gains a feed
+family: for each of the five models, the bronze columns it carries, renamed or retyped where
+silver changes them, the columns it adds, its grain and its floor. Their properties are
+generated from that and the contracts, as the mirroring models' are, and their SQL is written by
+hand. Floors sit below the stack job's week: 700 lines of 926, 45 totals of 60, 300 entities of
+315, 400 names of 431.
+
+**2026-10-04, the FRED floor is a test of its own.** `silver_min_rows_once_registered` applies
+a floor of 1 only once the registry holds a registered batch of `fred.series`; the registry is
+an argument, so `make dbt-prove` proves it on three fixtures, unlanded and empty, landed and
+empty, landed with rows. The interval rules are `silver_observed_intervals`, proven on six.
+
+**2026-10-04, a vault value in a fixture.** The first name fixtures used a screening fixture
+name, which is also a payment counterparty the vault holds, and the documentation site
+publishes every test's SQL: `make docs-scan` found it. The fixtures use a list-only synthetic
+name, and the scan is clean.
+
+**2026-10-04, two tests say more than the scope asked.** The revision test also reports a
+winning declaration that two batches landed, which ingestion refuses and which would double
+its records. The additivity test is a singular test whose comment states its live floor of zero
+and why, since a singular test has no floor argument.
