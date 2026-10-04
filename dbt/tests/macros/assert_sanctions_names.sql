@@ -12,8 +12,8 @@ with entities (entity_id, publisher_version, names, aliases, _batch_id) as (
         '["ZZ-Øresund Trading", "ZZ-Société Générale Fixture", "ZZ-Øresund Trading"]'::json,
         'b-1'
     ),
-    ('NK-2', 'v1', '["ZZ-TESTCASE ALPHA SANCTIONS-FIXTURE"]'::json, null::json, 'b-1'),
-    ('NK-2', 'v2', '["ZZ-TESTCASE ALPHA SANCTIONS-FIXTURE"]'::json, null::json, 'b-2')
+    ('NK-2', 'v1', '["ZZ-SYNTHETIC ALPHA 0042 SANCTIONS-FIXTURE"]'::json, null::json, 'b-1'),
+    ('NK-2', 'v2', '["ZZ-SYNTHETIC ALPHA 0042 SANCTIONS-FIXTURE"]'::json, null::json, 'b-2')
 ),
 
 expected (entity_id, publisher_version, name_type, name, name_normalised, _batch_id) as (
@@ -22,12 +22,12 @@ expected (entity_id, publisher_version, name_type, name, name_normalised, _batch
     ('NK-1', 'v1', 'name', 'ZZ-Societe  Generale Fixture', 'ZZ-SOCIETE GENERALE FIXTURE', 'b-1'),
     ('NK-1', 'v1', 'alias', 'ZZ-Øresund Trading', 'ZZ-ØRESUND TRADING', 'b-1'),
     (
-        'NK-2', 'v1', 'name', 'ZZ-TESTCASE ALPHA SANCTIONS-FIXTURE',
-        'ZZ-TESTCASE ALPHA SANCTIONS-FIXTURE', 'b-1'
+        'NK-2', 'v1', 'name', 'ZZ-SYNTHETIC ALPHA 0042 SANCTIONS-FIXTURE',
+        'ZZ-SYNTHETIC ALPHA 0042 SANCTIONS-FIXTURE', 'b-1'
     ),
     (
-        'NK-2', 'v2', 'name', 'ZZ-TESTCASE ALPHA SANCTIONS-FIXTURE',
-        'ZZ-TESTCASE ALPHA SANCTIONS-FIXTURE', 'b-2'
+        'NK-2', 'v2', 'name', 'ZZ-SYNTHETIC ALPHA 0042 SANCTIONS-FIXTURE',
+        'ZZ-SYNTHETIC ALPHA 0042 SANCTIONS-FIXTURE', 'b-2'
     )
 ),
 
