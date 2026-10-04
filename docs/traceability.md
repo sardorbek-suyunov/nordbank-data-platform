@@ -110,13 +110,39 @@ by the rule in architecture.md.
 | `fct_gl_entries.currency_code` | `core.gl_entries.entry_currency_code` | Balance is enforced per currency, so Q16 groups by it |
 | Posting batch for Q16 | `core.gl_transactions` | **Gap 9, resolved.** The header is new. `model_inventory.md` gains `br_corebank__gl_transactions` and `sl_gl_transactions` |
 | `sl_card_settlement_totals.file_total_amount` | `cardnet` settlement totals contract: `settlement_totals.amount_total` | **Gap 10, resolved at M4.** The card network's clearing file is a separate source with its own contracts, `contracts/cardnet/`, and the file's total arrives in its trailer, landed as `br_cardnet__settlement_totals`. Specification 009 placed it on the totals model, where the trailer is, rather than on the lines, which a quarantined record leaves short |
-| `sl_card_settlement_totals.settlement_currency` | `cardnet` settlement totals contract: `settlement_totals.settlement_currency` | As above |
+| `sl_card_settlement_totals.settlement_currency_code` | `cardnet` settlement totals contract: `settlement_totals.settlement_currency` | As above. Renamed in silver: see the section below |
 | `sl_card_settlement_totals.settlement_date` | `cardnet` settlement totals contract: `settlement_totals.settlement_date`, from the file's header | As above |
 | `sl_card_settlement_totals.network` | `cardnet` settlement totals contract: `settlement_totals.network` | As above |
-| `sl_card_settlement_totals.settlement_currency`, `sl_card_settlements.settlement_currency` | The `cardnet` contracts' `settlement_currency` | **Does not follow the `_currency_code` convention, on purpose.** `conventions.md` pairs an `_amount` with a `_currency_code` column; this one keeps the processor's field name, as the contract names it, from the file through bronze to silver. Silver's feed models carry contract columns under their contract names, so a column has one name from delivery to silver and its properties are generated from the contract unchanged; the two renames silver does make, `file_total_amount` and `name`, are ones specification 009 decided. Gold conforms names to the convention, so `fct_card_settlements` and the Q15 mart carry it as `settlement_currency_code` (M6) |
 | `sl_card_settlements.network` | `cardnet` settlements contract: `settlements.network` | The network the processor reports for a line. `ref.card_products.network` is the issuing side and a different column; the ledger side of Q15 reaches a network only through it, and the two agree on every one of the 11,260 landed lines |
 | Q15 ledger network | `core.gl_transactions.source_entity_code` and `source_entity_id`, then `core.transactions.card_id`, `core.cards.card_product_code` and `ref.card_products.network` | Specification 009's feasibility probe: no account attributes a card item to a network, because nothing posts to the card settlement accounts 1200 and 2100 and card items post to the shared cash account 1000. The path is stated in `metric_definitions.md` |
 | Q15 settlement lag | `cardnet` settlements contract: `source_of_truth.settlement_lag_days` | The calendar days from clearing, the ledger's posting date, to settlement. One machine-readable copy, read through the `settlement_lag_days` macro; the simulated processor's profile states it too, and a unit test holds the two equal |
+
+## External feed columns renamed in silver
+
+**Silver conforms the names; bronze keeps the contract names.** A feed contract names a column as
+its sender does, and bronze carries that name, so a landed row reads like the file or response it
+came from. Silver applies the column conventions of [conventions.md](conventions.md) to the feed
+models' columns, as it does to every other column, and gold inherits silver's names with no
+rename of its own. Every rename is listed here, and nowhere else changes a feed column's name
+(specification 009, as ruled on review).
+
+| Silver column | Bronze column, the contract's name | The convention it follows |
+|---|---|---|
+| `sl_card_settlements.settlement_currency_code` | `br_cardnet__settlements.settlement_currency` | An `_amount` travels with a `_currency_code` column: `settlement_amount` |
+| `sl_card_settlement_totals.settlement_currency_code` | `br_cardnet__settlement_totals.settlement_currency` | The same, for `file_total_amount` |
+| `sl_card_settlement_totals.file_total_amount` | `br_cardnet__settlement_totals.amount_total` | A money column ends in `_amount`; named for the file side of the reconciliation (specification 009 section 3) |
+| `sl_sanctions_entities.first_seen_at` | `br_opensanctions__entities.first_seen` | A timestamp ends in `_at` |
+| `sl_sanctions_entities.last_changed_at` | `br_opensanctions__entities.last_change` | A timestamp ends in `_at`, named for its event |
+| `sl_macro_indicators.observed_from_date` | None: silver derives it from the first `realtime_start` of a run. Specification 009 named it `observed_from` | A date ends in `_date` |
+| `sl_macro_indicators.observed_to_date` | None: silver derives it. Specification 009 named it `observed_to` | A date ends in `_date` |
+| `sl_sanctions_names.name` | A value of `br_opensanctions__entities.names` or `.aliases` | One row per value of two list columns, with `name_type` saying which; not a rename of one column |
+
+Checked and kept: every other column of the five feed models already follows the conventions or
+is one they do not govern. Dates end in `_date` (`transaction_date`, `clearing_date`,
+`settlement_date`, `observation_date`), timestamps in `_at` (`file_created_at`, `published_at`),
+keys in `_id`, and the one boolean, `is_latest`, reads as a statement. `birth_dates` keeps its
+name: it is a list of text, partial dates that are not of the date type, and `_date` would claim a
+type it does not have.
 
 ## Platform tables
 

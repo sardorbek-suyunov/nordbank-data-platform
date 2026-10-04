@@ -152,8 +152,8 @@ lands every period as a new row in a new batch, revised or not. The request asks
 vintage only, so FRED returns `realtime_start` and `realtime_end` both equal to the day of the
 request: they record when the platform asked, not when FRED published. Silver therefore keeps
 every period's values by **observed interval**, a run of identical values across consecutive
-requests collapsed into one, from `observed_from`, the request day the value was first seen, to
-`observed_to`, the request day a different one was, and flags each period's latest
+requests collapsed into one, from `observed_from_date`, the request day the value was first
+seen, to `observed_to_date`, the request day a different one was, and flags each period's latest
 (specification 009). It does not keep only the latest, and the interval is named so it cannot be
 mistaken for FRED's real-time vintage, which a request for the full real-time history would give:
 an open item, decided with the funding cost assumption.

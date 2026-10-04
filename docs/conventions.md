@@ -66,7 +66,9 @@ timestamp where the entity is SCD2. Booleans read as a statement: `is_active`,
 `has_collateral`. Dates end in `_date`, timestamps in `_at`. Money columns end in the
 currency treatment they carry: `_amount` is in the transaction currency and travels with a
 `_currency_code` column, `_amount_eur` is the converted value. Platform-generated columns
-start with an underscore, so a column beginning with `_` is never sourced from the bank.
+start with an underscore, so a column beginning with `_` is never sourced from the bank. Silver
+applies these conventions to the external feeds' columns, which bronze keeps under the names
+their contracts give them, and every rename is recorded in [traceability.md](traceability.md).
 
 **`created_at` and `updated_at` are reserved.** No business timestamp on any table may take
 either name. Both are audit columns whose meaning must be uniform, because watermark
