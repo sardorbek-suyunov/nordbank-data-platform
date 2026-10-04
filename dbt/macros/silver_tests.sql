@@ -200,3 +200,18 @@ select {{ k }}, starts
     or (previous_end is not null and starts <> previous_end)
     or (next_start is null and ends <> date '9999-12-31')
 {% endtest %}
+
+{#
+  A boolean derived for every row splits both ways, each side above a stated floor: no null, at
+  least `minimum_true` rows true and `minimum_false` false. A flag that went all one way, or
+  null, because a join stopped matching would pass a not-null test or a type check alone.
+#}
+{% test silver_flag_split(model, column_name, minimum_true, minimum_false) %}
+select count(*) filter (where "{{ column_name }}") as true_rows,
+       count(*) filter (where not "{{ column_name }}") as false_rows,
+       count(*) filter (where "{{ column_name }}" is null) as null_rows
+  from {{ model }}
+having count(*) filter (where "{{ column_name }}" is null) > 0
+    or count(*) filter (where "{{ column_name }}") < {{ minimum_true }}
+    or count(*) filter (where not "{{ column_name }}") < {{ minimum_false }}
+{% endtest %}

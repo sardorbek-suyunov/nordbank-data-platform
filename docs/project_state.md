@@ -292,8 +292,6 @@ Found at specification 008 and not fixed there:
   M8's, would close it.
 - **A restoration after a soft delete would fail `silver_scd2_intervals`**, which refuses the gap
   between the delete and the restore. None exists in the data; the first is a decision.
-- **`is_customer_initiated` is not derived in silver**, although the inventory's derived flags
-  say `sl_transactions` and `sl_payments` derive it: specification 008 does not scope it. Raised.
 
 Found at specification 007 and not fixed there:
 

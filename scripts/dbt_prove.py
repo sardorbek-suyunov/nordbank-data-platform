@@ -579,6 +579,15 @@ INTERVAL_FIXTURES: dict[str, tuple[list, bool]] = {
 }
 
 
+# A derived flag for `silver_flag_split`, floors 2 true and 1 false: (id, flag).
+SPLIT_FIXTURES: dict[str, tuple[list, bool]] = {
+    "split": ([(1, "true"), (2, "true"), (3, "false")], False),
+    "all_one_way": ([(1, "true"), (2, "true"), (3, "true")], True),
+    "too_few_true": ([(1, "true"), (2, "false"), (3, "false")], True),
+    "null_flag": ([(1, "true"), (2, "true"), (3, "false"), (4, "null::boolean")], True),
+}
+
+
 def fact_fixture_files() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
     """Fixture facts for the resolution and provenance tests, and the status each must reach."""
     files, expected = {}, {}
@@ -629,6 +638,18 @@ def fact_fixture_files() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
             "valid_to: valid_to}}",
         ]
         expected[(f"bands_{name}", "silver_intervals_contiguous")] = "fail" if fails else "pass"
+    for name, (rows, fails) in SPLIT_FIXTURES.items():
+        files[f"models/flags_{name}.sql"] = (
+            f"select * from ({_values(rows, 2)}) as t (id, is_customer_initiated)\n"
+        )
+        properties += [
+            f"  - name: flags_{name}",
+            "    columns:",
+            "      - name: is_customer_initiated",
+            "        data_tests:",
+            "          - silver_flag_split: {arguments: {minimum_true: 2, minimum_false: 1}}",
+        ]
+        expected[(f"flags_{name}", "silver_flag_split")] = "fail" if fails else "pass"
     files["models/facts.yml"] = "\n".join(properties) + "\n"
     return files, expected
 
