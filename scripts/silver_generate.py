@@ -435,6 +435,9 @@ class Feed:
     floor_once_registered: tuple[str, str] | None = None
     # Further model-level tests, as the lines of their YAML under `data_tests`.
     extra_tests: tuple[str, ...] = ()
+    # Facts the contract's `source_of_truth` states that SQL must read, copied into the model's
+    # `meta` so the contract stays their one source.
+    contract_facts: tuple[str, ...] = ()
 
 
 def _batch(meaning: str) -> Carried:
@@ -503,6 +506,7 @@ FEEDS: tuple[Feed, ...] = (
                 "cash withdrawal, or when the transaction did not resolve.",
             ),
         ),
+        contract_facts=("settlement_lag_days",),
     ),
     Feed(
         "sl_card_settlement_totals",
@@ -692,6 +696,7 @@ def _added_column(column: Added) -> dbt_generate.Column:
 class FeedModel:
     feed: Feed
     columns: list[dbt_generate.Column] = field(default_factory=list)
+    facts: dict[str, object] = field(default_factory=dict)
 
 
 def build_feeds() -> list[FeedModel]:
@@ -702,6 +707,14 @@ def build_feeds() -> list[FeedModel]:
             raise SystemExit(f"silver-generate: {feed.name} reads {feed.upstream}, not a model")
         by_name = {c.name: c for c in bronze[feed.upstream].columns}
         model = FeedModel(feed)
+        truth = bronze[feed.upstream].current.source_of_truth or {}
+        for fact in feed.contract_facts:
+            if fact not in truth:
+                raise SystemExit(
+                    f"silver-generate: {feed.name} reads {fact}, which "
+                    f"{bronze[feed.upstream].contract_path} does not state"
+                )
+            model.facts[fact] = truth[fact]
         for column in feed.columns:
             if isinstance(column, Added):
                 model.columns.append(_added_column(column))
@@ -745,6 +758,7 @@ def render_feed_yml(model: FeedModel) -> str:
         f"        upstream: {feed.upstream}",
         f"        grain: [{grain}]",
         "        generated_sql: false",
+        *(f"        {fact}: {value}" for fact, value in model.facts.items()),
         "    data_tests:",
         "      - silver_unique_key:",
         "          arguments:",

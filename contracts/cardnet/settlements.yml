@@ -28,6 +28,13 @@ in_force_from: 2026-09-03
 source_of_truth:
   publisher: Nordbank card processor (simulated)
   document: Card processor clearing file, layout 1, contracts/cardnet/README.md
+  # The calendar days from an item's clearing date, the day the bank's ledger posts it, to the
+  # settlement date of the file that carries it, for both networks: the one machine-readable
+  # copy of the README's statement, which the settlement reconciliation (Q15) reads to put the
+  # ledger on the file's date (specification 009 section 6). Part of what the processor's
+  # document states, not of the delivery's shape, so it is outside the contract's fingerprint.
+  # The simulated processor's profile states it too, and a unit test asserts the two agree.
+  settlement_lag_days: 1
 primary_key: [transaction_reference]
 format:
   delimiter: ","
