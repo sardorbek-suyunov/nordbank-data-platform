@@ -103,6 +103,8 @@ class Spec:
     instant: str = ""
     resolves: tuple[tuple[str, str, str], ...] = ()
     converts: tuple[str, str] | None = None
+    # A derived boolean and the floors each side must clear: (column, minimum true, minimum false).
+    splits: tuple[tuple[str, int, int], ...] = ()
 
 
 SCD2_COLUMNS = (
@@ -233,6 +235,16 @@ def fx_columns(prefix: str) -> tuple[Added, ...]:
     )
 
 
+def customer_initiated(types: str, instant: str) -> Added:
+    """The type's customer-initiated flag, read as of the fact (traceability gap 1)."""
+    return Added(
+        "is_customer_initiated",
+        "BOOLEAN",
+        f"Whether the customer, rather than the bank, initiated it: the flag of the version of "
+        f"`{types}` in force at `{instant}`, the one source of the flag.",
+    )
+
+
 # A ledger row's instant: the start of its posting date, in UTC.
 POSTING_INSTANT = "timezone('UTC', cast(posting_date as timestamp))"
 
@@ -285,7 +297,8 @@ HAND_WRITTEN: tuple[Spec, ...] = (
         "transactions",
         LATEST,
         25000,
-        added=fx_columns("transaction"),
+        added=(customer_initiated("sl_transaction_types", "booked_at"),)
+        + fx_columns("transaction"),
         instant="booked_at",
         resolves=(
             ("account_id", "sl_accounts", "account_id"),
@@ -298,12 +311,14 @@ HAND_WRITTEN: tuple[Spec, ...] = (
             ("transaction_currency_code", "sl_currencies", "code"),
         ),
         converts=("transaction_amount", "transaction_currency_code"),
+        # The `ci` book's first day: 28,012 customer-initiated transactions and 3,408 not.
+        splits=(("is_customer_initiated", 22000, 2500),),
     ),
     Spec(
         "payments",
         LATEST,
         5000,
-        added=fx_columns("payment"),
+        added=(customer_initiated("sl_payment_types", "initiated_at"),) + fx_columns("payment"),
         instant="initiated_at",
         resolves=(
             ("account_id", "sl_accounts", "account_id"),
@@ -313,6 +328,8 @@ HAND_WRITTEN: tuple[Spec, ...] = (
             ("payment_currency_code", "sl_currencies", "code"),
         ),
         converts=("payment_amount", "payment_currency_code"),
+        # The `ci` book's first day: 5,720 customer-initiated payments and 61 not.
+        splits=(("is_customer_initiated", 4500, 40),),
     ),
     Spec(
         "loan_applications",
@@ -611,6 +628,7 @@ def render_yml(silver: Silver) -> str:
         ]
     lines.append("    columns:")
     resolves = {column: (to, to_column) for column, to, to_column in spec.resolves}
+    splits = {column: (yes, no) for column, yes, no in spec.splits}
     for column in silver.columns:
         lines += [
             f"      - name: {column.name}",
@@ -620,10 +638,10 @@ def render_yml(silver: Silver) -> str:
             "          meta:",
             f"            classification: {column.classification}",
         ]
+        tests = []
         if column.name in resolves:
             to, to_column = resolves.pop(column.name)
-            lines += [
-                "        data_tests:",
+            tests += [
                 "          - silver_resolves_one_version:",
                 "              arguments:",
                 f"                to: ref('{to}')",
@@ -632,8 +650,21 @@ def render_yml(silver: Silver) -> str:
                 "              config:",
                 "                severity: error",
             ]
-    if resolves:
-        raise SystemExit(f"silver-generate: {silver.name} resolves unknown {sorted(resolves)}")
+        if column.name in splits:
+            yes, no = splits.pop(column.name)
+            tests += [
+                "          - silver_flag_split:",
+                "              arguments:",
+                f"                minimum_true: {yes}",
+                f"                minimum_false: {no}",
+                "              config:",
+                "                severity: error",
+            ]
+        if tests:
+            lines += ["        data_tests:", *tests]
+    if resolves or splits:
+        unknown = sorted([*resolves, *splits])
+        raise SystemExit(f"silver-generate: {silver.name} tests unknown columns {unknown}")
     return "\n".join(lines) + "\n"
 
 

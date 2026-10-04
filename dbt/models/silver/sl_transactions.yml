@@ -225,6 +225,19 @@ models:
         config:
           meta:
             classification: non-personal
+      - name: is_customer_initiated
+        data_type: BOOLEAN
+        description: "Whether the customer, rather than the bank, initiated it: the flag of the version of `sl_transaction_types` in force at `booked_at`, the one source of the flag. Classification: `non-personal` (no restriction)."
+        config:
+          meta:
+            classification: non-personal
+        data_tests:
+          - silver_flag_split:
+              arguments:
+                minimum_true: 22000
+                minimum_false: 2500
+              config:
+                severity: error
       - name: transaction_amount_eur
         data_type: DECIMAL(18,4)
         description: "`transaction_amount` in EUR: divided by the latest rate published at or before the business instant, in exact integer arithmetic, rounded half away from zero to four places. The amount itself for EUR; null when no rate was published before the instant, never zero and never the original amount. Classification: `non-personal` (no restriction)."

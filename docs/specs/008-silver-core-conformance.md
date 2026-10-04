@@ -329,3 +329,14 @@ every row, and the per-currency rule fails it on exactly the 261 BGN rows. Crite
 with 2026-09-18's batch held back, 20 transactions and 4 payments provisional and 29
 `sl_fx_rates` rows; landed and rebuilt, exactly those moved, and none of the 58,501 final facts
 or 29,071 final rate rows.
+
+### 2026-10-04 — `is_customer_initiated` is derived in silver
+
+The inventory's derived flags said `sl_transactions` and `sl_payments` derive it, and the
+specification did not scope it. Ruled on review: both carry it, the flag of the type's version in
+force at the fact's business instant (`sl_transaction_types` at `booked_at`, `sl_payment_types` at
+`initiated_at`), tested by `silver_flag_split`, which refuses a null and requires each side above a
+stated floor: transactions at least 22,000 true and 2,500 false, payments 4,500 and 40, below the
+`ci` book's first day (28,012 and 3,408; 5,720 and 61). On the sixty-one-day history: 43,368 and
+5,404 transactions, 9,640 and 113 payments, no null. `make dbt-prove` fails the test on a flag all
+one way, one side below its floor, and a null.

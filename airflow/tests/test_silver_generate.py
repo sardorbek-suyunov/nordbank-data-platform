@@ -149,3 +149,13 @@ def test_every_latest_state_fact_resolves_its_dimensions_at_its_instant():
         text = silver_generate.render_yml(model)
         assert text.count("silver_resolves_one_version") == len(model.spec.resolves) >= 1
         assert model.spec.instant in text
+
+
+def test_customer_initiated_is_derived_on_both_converted_facts_with_stated_floors():
+    models = {m.name: m for m in silver_generate.build()}
+    for name in ("sl_transactions", "sl_payments"):
+        model = models[name]
+        assert "is_customer_initiated" in [c.name for c in model.columns]
+        column, minimum_true, minimum_false = model.spec.splits[0]
+        assert column == "is_customer_initiated" and minimum_true > 0 and minimum_false > 0
+        assert "silver_flag_split" in silver_generate.render_yml(model)
