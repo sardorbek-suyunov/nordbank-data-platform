@@ -36,6 +36,8 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [entry_side_id]
+            upstream: ref('br_corebank__entry_sides')
+            deleted: "false"
           config:
             severity: error
       - silver_observations_versioned:

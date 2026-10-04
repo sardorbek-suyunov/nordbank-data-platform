@@ -36,6 +36,8 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [login_outcome_id]
+            upstream: ref('br_corebank__login_outcomes')
+            deleted: "false"
           config:
             severity: error
       - silver_observations_versioned:

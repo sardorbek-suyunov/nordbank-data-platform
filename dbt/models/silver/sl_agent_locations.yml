@@ -36,6 +36,7 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [agent_location_id]
+            upstream: ref('br_corebank__agent_locations')
           config:
             severity: error
       - silver_observations_versioned:

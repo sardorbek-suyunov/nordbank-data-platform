@@ -36,15 +36,19 @@ having count(*) < {{ minimum }}
 {% endtest %}
 
 {#
-  The versions of each key tile time from the epoch with no gap and no overlap: the first opens
-  at the epoch, each later one at the instant the one before it closed, every interval is
-  non-empty, and only the last may be current, which it is exactly when it closes at the end of
-  time. A key whose last version closed by a soft delete has no current version and passes.
+  The versions of each key tile time from the epoch with no overlap: the first opens at the
+  epoch, each later one at the instant the one before it closed, every interval is non-empty, and
+  only the last may be current, which it is exactly when it closes at the end of time. A key whose
+  last version closed by a soft delete has no current version and passes.
 
-  A restoration after a soft delete would leave a gap, and this test fails on it: planning
-  measured none, and the first one is a decision to take rather than a shape to accept.
+  One gap is allowed, directly after a version a soft delete closed: a restored key opens a new
+  version when it is restored, and between the delete and the restore it has none (specification
+  008, amended 2026-10-04). Silver keeps no deleted row, so the delete is read from `upstream`,
+  the bronze the model historises: the gap must start at the `updated_at` of an observation whose
+  `deleted` expression is true. Any other gap fails. A model whose rows are never deleted, a `ref`
+  table, passes `deleted='false'` and is allowed none.
 #}
-{% test silver_scd2_intervals(model, key) %}
+{% test silver_scd2_intervals(model, key, upstream, deleted='is_deleted') %}
 {%- set k = key | join(', ') -%}
 with ordered as (
     select {{ k }}, _valid_from, _valid_to, _is_current,
@@ -55,20 +59,30 @@ with ordered as (
     window w as (partition by {{ k }} order by _valid_from)
 ),
 
+deletions as (
+    select distinct {{ k }}, updated_at as _deleted_at
+      from {{ upstream }}
+     where ({{ deleted }})
+),
+
 judged as (
-    select {{ k }}, _valid_from,
+    select {% for column in key %}o.{{ column }}, {% endfor %}o._valid_from,
            case
-               when _valid_from >= _valid_to then 'an empty or inverted interval'
-               when _version = 1 and _valid_from <> {{ scd2_epoch() }}
+               when o._valid_from >= o._valid_to then 'an empty or inverted interval'
+               when o._version = 1 and o._valid_from <> {{ scd2_epoch() }}
                    then 'the first version does not open at the epoch'
-               when _version > 1 and _valid_from <> _previous_to
-                   then 'a gap or an overlap with the version before'
-               when _is_current <> (_valid_to = {{ scd2_end() }})
+               when o._version > 1 and o._valid_from < o._previous_to
+                   then 'an overlap with the version before'
+               when o._version > 1 and o._valid_from > o._previous_to and d._deleted_at is null
+                   then 'a gap not opened by a soft delete'
+               when o._is_current <> (o._valid_to = {{ scd2_end() }})
                    then 'the current flag disagrees with the closing instant'
-               when _is_current and _next_from is not null
+               when o._is_current and o._next_from is not null
                    then 'a current version that is not the last'
            end as problem
-      from ordered
+      from ordered o
+      left join deletions d
+        on {% for column in key %}d.{{ column }} = o.{{ column }} and {% endfor %}d._deleted_at = o._previous_to
 )
 
 select * from judged where problem is not null

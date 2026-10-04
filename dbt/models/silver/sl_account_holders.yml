@@ -36,6 +36,7 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [account_holder_id]
+            upstream: ref('br_corebank__account_holders')
           config:
             severity: error
       - silver_observations_versioned:

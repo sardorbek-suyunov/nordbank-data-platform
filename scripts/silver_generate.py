@@ -597,6 +597,11 @@ def render_yml(silver: Silver) -> str:
             "      - silver_scd2_intervals:",
             "          arguments:",
             f"            key: [{key}]",
+            f"            upstream: ref('{silver.bronze.name}')",
+        ]
+        if spec.deleted != "is_deleted":
+            lines.append(f'            deleted: "{spec.deleted}"')
+        lines += [
             "          config:",
             "            severity: error",
         ]

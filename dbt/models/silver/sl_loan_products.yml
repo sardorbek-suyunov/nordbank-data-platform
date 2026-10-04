@@ -36,6 +36,8 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [loan_product_id]
+            upstream: ref('br_corebank__loan_products')
+            deleted: "false"
           config:
             severity: error
       - silver_observations_versioned:

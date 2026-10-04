@@ -36,6 +36,8 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [gl_account_id]
+            upstream: ref('br_corebank__gl_accounts')
+            deleted: "false"
           config:
             severity: error
       - silver_observations_versioned:

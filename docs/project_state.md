@@ -290,8 +290,6 @@ Found at specification 008 and not fixed there:
 - **The gold column guard cannot see a rename.** It compares a gold model's declared columns with
   its parents' quasi-identifier columns; `date_of_birth as born` passes. Column-level lineage,
   M8's, would close it.
-- **A restoration after a soft delete would fail `silver_scd2_intervals`**, which refuses the gap
-  between the delete and the restore. None exists in the data; the first is a decision.
 
 Found at specification 007 and not fixed there:
 

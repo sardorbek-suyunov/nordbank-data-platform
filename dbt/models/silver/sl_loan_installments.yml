@@ -36,6 +36,7 @@ models:
       - silver_scd2_intervals:
           arguments:
             key: [loan_installment_id]
+            upstream: ref('br_corebank__loan_installments')
           config:
             severity: error
       - silver_observations_versioned:

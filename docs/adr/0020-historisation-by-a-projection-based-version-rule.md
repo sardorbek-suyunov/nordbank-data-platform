@@ -2,6 +2,9 @@
 
 Status: Accepted
 Date: 2026-10-03
+Revised: 2026-10-04, before its milestone closed and on review of specification 008: a key
+restored after a soft delete opens a new version, and the gap between the delete and the restore
+is the only gap the interval test allows.
 
 ## Context
 
@@ -51,7 +54,8 @@ a question reads, and one row per entity for the rest. Specification 008's plann
   read from the current system-time version, so a correction recorded late moves a past fact to
   the corrected row. `ref.interchange_rates` is treated the same way.
 - **Soft deletes.** In an SCD2 model a soft delete closes the final version at the instant it was
-  recorded and leaves no current version; the history stays. A latest-state model excludes a
+  recorded and leaves no current version; the history stays. A later observation that is not deleted
+  restores the key and opens a new version. A latest-state model excludes a
   deleted row. A `ref` row is deactivated, never deleted, and is retained as a version, current
   with `is_active` false. A soft delete is not erasure, which is the vault's, at M8.
 
@@ -69,9 +73,10 @@ a question reads, and one row per entity for the rest. Specification 008's plann
   and was rejected below.
 - **An excluded measure has one home.** Asking for an account's balance as of a date means
   `sl_account_balance_observations`, never `sl_accounts`.
-- **A restoration after a soft delete leaves a gap** between the deletion and the restoration,
-  and the interval test fails on it. Planning measured none; the first one is a decision to take
-  rather than a shape the tests accept silently.
+- **A restoration after a soft delete leaves a gap** between the deletion and the restoration:
+  the restore opens a new version, and between the two the key has none, so a fact dated in the
+  gap resolves to nothing. The interval test allows a gap only there, directly after a version a
+  soft delete closed, read from bronze, and fails any other. Planning measured no restoration.
 - **At most one version per day** is inherited from extraction. If extraction ever read more often
   than daily, silver would see more versions without any change here.
 

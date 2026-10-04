@@ -513,11 +513,38 @@ SILVER_FIXTURES: dict[str, tuple[list, str | None]] = {
     "open_closed": ([(1, E, Z, "false")], "silver_scd2_intervals"),
     "disagree": (CLEAN_VERSIONS, "silver_rereads_agree"),
     "unversioned": ([(1, E, Z, "true")], "silver_observations_versioned"),
+    # A key soft-deleted at T1 and restored at T2: the gap directly after the deleted version is
+    # allowed, and every test passes.
+    "restored": ([(1, E, T1, "false"), (1, T2, Z, "true")], None),
+    # The same gap, but the upstream's delete is at T0, not where the gap starts.
+    "gap_elsewhere": ([(1, E, T1, "false"), (1, T2, Z, "true")], "silver_scd2_intervals"),
 }
-# The upstream each fixture's re-read test reads: two batches of one version, which agree for
-# every fixture but `disagree`.
-UPSTREAM_AGREE = [(1, "a", "b-01"), (1, "a", "b-02"), (2, "b", "b-01")]
-UPSTREAM_DISAGREE = [(1, "a", "b-01"), (1, "z", "b-02"), (2, "b", "b-01")]
+# The upstream each fixture's tests read: (key, updated_at, value, batch, is_deleted). By default
+# two batches of one version, which agree, and a second key.
+T20 = "timestamptz '2026-07-20 00:00:00+00'"
+T0_DELETE = "timestamptz '2026-07-20 12:00:00+00'"
+UPSTREAM_AGREE = [
+    (1, T20, "a", "b-01", "false"),
+    (1, T20, "a", "b-02", "false"),
+    (2, T20, "b", "b-01", "false"),
+]
+UPSTREAMS = {
+    "disagree": [
+        (1, T20, "a", "b-01", "false"),
+        (1, T20, "z", "b-02", "false"),
+        (2, T20, "b", "b-01", "false"),
+    ],
+    "restored": [
+        (1, T20, "a", "b-01", "false"),
+        (1, T1, "a", "b-02", "true"),
+        (1, T2, "a", "b-03", "false"),
+    ],
+    "gap_elsewhere": [
+        (1, T20, "a", "b-01", "false"),
+        (1, T0_DELETE, "a", "b-02", "true"),
+        (1, T2, "a", "b-03", "false"),
+    ],
+}
 
 
 def _values(rows: list, width: int) -> str:
@@ -659,11 +686,11 @@ def silver_fixture_files() -> dict[str, str]:
     files = {}
     properties = ["version: 2", "models:"]
     for name, (rows, planted) in SILVER_FIXTURES.items():
-        upstream = UPSTREAM_DISAGREE if name == "disagree" else UPSTREAM_AGREE
+        upstream = UPSTREAMS.get(name, UPSTREAM_AGREE)
         files[f"models/upstream_{name}.sql"] = (
-            "select k, timestamptz '2026-07-20 00:00:00+00' as updated_at, v, _batch_id\n"
-            f"from ({_values([(k, repr(v), repr(b)) for k, v, b in upstream], 3)}) "
-            "as t (k, v, _batch_id)\n"
+            "select * from ("
+            f"{_values([(k, at, repr(v), repr(b), d) for k, at, v, b, d in upstream], 5)}) "
+            "as t (k, updated_at, v, _batch_id, is_deleted)\n"
         )
         files[f"models/silver_{name}.sql"] = (
             f"select * from ({_values(rows, 4)}) as t (k, _valid_from, _valid_to, _is_current)\n"
@@ -672,13 +699,14 @@ def silver_fixture_files() -> dict[str, str]:
             "silver_unique_key": "{arguments: {columns: [k, _valid_from]}}",
             "silver_not_null": "{arguments: {columns: [k, _valid_from]}}",
             "silver_min_rows": "{arguments: {minimum: " + ("5" if name == "short" else "1") + "}}",
-            "silver_scd2_intervals": "{arguments: {key: [k]}}",
+            "silver_scd2_intervals": (
+                "{arguments: {key: [k], upstream: \"ref('upstream_" + name + "')\"}}"
+            ),
             "silver_rereads_agree": (
                 "{arguments: {upstream: \"ref('upstream_" + name + "')\", key: [k]}}"
             ),
             "silver_observations_versioned": (
-                "{arguments: {upstream: \"ref('upstream_" + name + "')\", key: [k], "
-                "deleted: 'false'}}"
+                "{arguments: {upstream: \"ref('upstream_" + name + "')\", key: [k]}}"
             ),
         }
         chosen = tests if planted is None else {planted: tests[planted]}
