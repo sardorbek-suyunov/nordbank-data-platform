@@ -87,7 +87,7 @@ models:
             classification: sensitive
       - name: birth_dates
         data_type: VARCHAR[]
-        description: "`birth_dates`: a field of each record, as OpenSanctions entity data format, https://www.opensanctions.org/docs/entities/ defines it. Classification: `sensitive` (retained at full precision, never exported). In silver, a list of text, never dates: FollowTheMoney dates are partial, a year or a year and month as often as a day."
+        description: "`birth_dates`: a field of each record, as OpenSanctions entity data format, https://www.opensanctions.org/docs/entities/ defines it. Classification: `sensitive` (retained at full precision, never exported). In silver, a list of text, never dates: FollowTheMoney dates are partial, a year or a year and month as often as a day. The name keeps no `_date` suffix on purpose: it is a list of partial dates stored as text, and the suffix would claim a date type it does not have (traceability.md). Do not rename it."
         config:
           meta:
             classification: sensitive
