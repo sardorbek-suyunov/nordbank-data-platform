@@ -390,3 +390,10 @@ what it is; one classified quasi-identifier that no parent declares is refused u
 quasi-identifier, and the date of birth declared non-personal. What remains, a renamed
 quasi-identifier classified as something else, needs column-level lineage, recorded as a known
 gap owned by M8.
+
+### 2026-10-04 — choices accepted on review
+
+The band edges, the meaning of `fx_is_carried` on a fact and representation-only merchant names,
+recorded above as choices, are accepted. ADR 0019 now states `fx_is_carried` exactly: true when
+the chosen rate's date differs from the UTC calendar date of the business instant, never for EUR
+or a missing rate, and on `sl_fx_rates` the same test against the row's date.
