@@ -69,7 +69,9 @@ reconciling the file against itself (landed plus quarantined to records read).
 | `settlement_currency` | ISO 4217 code of the amount |
 | `settlement_amount` | Four decimal places, positive where the bank owes the network, negative where the network owes the bank |
 
-Settlement is one calendar day after clearing for both networks.
+Settlement is one calendar day after clearing for both networks. The settlements contract's
+`source_of_truth.settlement_lag_days` is the machine-readable copy of this sentence, and the one
+the platform reads.
 
 ## Fields the processor added later
 

@@ -8,6 +8,7 @@ models:
         upstream: br_cardnet__settlements
         grain: [settlement_date, file_sequence, transaction_reference]
         generated_sql: false
+        settlement_lag_days: 1
     data_tests:
       - silver_unique_key:
           arguments:

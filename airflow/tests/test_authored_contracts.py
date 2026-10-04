@@ -162,3 +162,25 @@ def test_the_shape_is_part_of_the_fingerprint() -> None:
     base = parse(_minimal(), "test")
     reshaped = parse(_minimal(format={"response": "json", "top_level": {"date": "date"}}), "test")
     assert base.fingerprint != reshaped.fingerprint
+
+
+def test_the_settlement_lag_is_stated_once_and_the_simulated_processor_agrees() -> None:
+    """The settlements contract states the processor's settlement lag, which the reconciliation
+    reads (specification 009 section 6); the simulated processor's profile states it too, because
+    the simulation sits on the sender's side and must not read the platform's contracts. The two
+    copies are held together here rather than by discipline."""
+    import sys
+
+    root = CONTRACTS.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from generator.config import load_profiles
+
+    contract = load_history(CONTRACTS / "cardnet")["settlements"][-1]
+    lag = contract.source_of_truth["settlement_lag_days"]
+    assert isinstance(lag, int) and lag >= 0
+    profiles = load_profiles()
+    assert len(profiles) >= 3, "fewer profiles than ci, dev and full: nothing was compared"
+    for name, profile in profiles.items():
+        stated = int(profile.section("settlement")["settlement_lag_days"])
+        assert stated == lag, f"profile {name} settles {stated} day(s) after clearing, not {lag}"

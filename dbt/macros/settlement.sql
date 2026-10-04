@@ -57,3 +57,25 @@ left join (select distinct card_reference, card_id from {{ cards }}) as cards
 left join {{ transactions }} as transactions
     on lines.transaction_reference = transactions.transaction_reference
 {%- endmacro %}
+
+{#
+  The processor's settlement lag in calendar days, from clearing to settlement (specification
+  009 section 6). The settlements contract states it once, in `source_of_truth`, and
+  `scripts/silver_generate.py` copies it into `sl_card_settlements`' properties, where this
+  reads it: the reconciliation puts a ledger entry on the file's date as its posting date plus
+  this, and no SQL writes the number itself. Before execution, when dbt parses and nothing reads
+  the value, it is 0.
+#}
+{% macro settlement_lag_days() -%}
+{%- if not execute -%}
+    {{- return(0) -}}
+{%- endif -%}
+{%- set node = graph.nodes.get('model.' ~ project_name ~ '.sl_card_settlements') -%}
+{%- set lag = node.config.meta.get('settlement_lag_days') if node else none -%}
+{%- if lag is none -%}
+    {{- exceptions.raise_compiler_error(
+        "settlement_lag_days: sl_card_settlements states no settlement lag; regenerate its "
+        ~ "properties from the settlements contract with `make silver-generate`") -}}
+{%- endif -%}
+{{- return(lag | int) -}}
+{%- endmacro %}
