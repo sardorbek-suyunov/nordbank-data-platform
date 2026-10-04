@@ -371,12 +371,16 @@ publication instant is its date at 16:00 Europe/Berlin, the nominal time the ECB
 is 14:00 UTC in summer and 15:00 UTC in winter. Rates are quoted as currency per euro, and the
 EUR amount is the amount divided by the rate.
 
-**A final conversion is never restated.** A conversion is **provisional** when the rate it chose
-is the latest landed for its currency and the business instant is after the publication instant
-of the next weekday after that rate's date: a newer rate may still land, and a rebuild after it
-does would choose it. Every other conversion is final, and no rebuild from the same or more data
-changes it. Only a provisional conversion may be restated, and every converted row says which it
-is. There is no holiday calendar: a TARGET holiday is a weekday whose expected rate never comes.
+**A final conversion is never restated.** A conversion is **provisional** when the chosen
+rate's date is the latest publication date landed for the feed, across every currency, and the
+business instant is after the publication instant of the next weekday after it: the next
+publication has not landed, and a rebuild after it does may choose a newer rate. Every other
+conversion is final, and no rebuild from the same or more data changes it; once a later
+publication has landed, a currency it does not carry is final too, a holiday gap or a currency
+the ECB has stopped quoting alike. Only a provisional conversion may be restated, and every
+converted row says which it is. There is no holiday calendar: a TARGET holiday is a weekday on
+which no publication comes. A conversion is **carried** exactly when the rate's date differs
+from the UTC calendar date of the business instant.
 
 This is a choice about reproducibility rather than about precision. Converting as of the rate's
 date, the rule this section stated until specification 008, restated a fact booked before its

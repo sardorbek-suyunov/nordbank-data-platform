@@ -287,10 +287,6 @@ Found at specification 008 and not fixed there:
   simulated instant before the book. Silver works around it by opening every first version at the
   epoch (ADR 0020), so a reference row's `_valid_from` says nothing about when it came to exist.
   The source owns the fix: seeding with a simulated stamp before the history start.
-- **A currency the ECB stops quoting stays provisional.** BGN's last rate is 2025-12-31, Bulgaria
-  having adopted the euro, and the conversion rule as specified carries it to the last fact date
-  as the latest landed rate: 261 provisional rows in `sl_fx_rates`, none ever settled. No fact is
-  in BGN. Raised for a ruling (ADR 0019).
 - **The gold column guard cannot see a rename.** It compares a gold model's declared columns with
   its parents' quasi-identifier columns; `date_of_birth as born` passes. Column-level lineage,
   M8's, would close it.

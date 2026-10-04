@@ -64,7 +64,7 @@ models:
             classification: non-personal
       - name: fx_is_provisional
         data_type: BOOLEAN
-        description: "The rate in force is the latest landed for the currency and the end of the date is after the publication instant of the next weekday after the rate's date, so a newer rate may still land and change this row. Classification: `non-personal` (no restriction)."
+        description: "The rate in force is dated the feed's latest publication date, across every currency, and the end of the date is after the publication instant of the next weekday after it, so the next publication has not landed and may change this row. Once a later publication has landed the row is final, whether or not it carries this currency. Classification: `non-personal` (no restriction)."
         config:
           meta:
             classification: non-personal

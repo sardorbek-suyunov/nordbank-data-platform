@@ -3,9 +3,9 @@
 --
 -- The rule is restated here without the macros the model and the facts share: the rate in force
 -- is the one with the greatest date whose 16:00 Europe/Berlin publication is at or before the
--- end of the day; it is carried when its date is not the day; it is provisional when it is the
--- currency's latest landed rate and the end of the day is after 16:00 Europe/Berlin on the next
--- weekday after its date. Returns every row that disagrees.
+-- end of the day; it is carried when its date is not the day; it is provisional when its date is
+-- the latest publication date landed for any currency and the end of the day is after 16:00
+-- Europe/Berlin on the next weekday after its date. Returns every row that disagrees.
 with landed as (
     select distinct
         quote_currency as currency_code,
@@ -15,11 +15,8 @@ with landed as (
 ),
 
 latest as (
-    select
-        currency_code,
-        max(rate_date) as latest_rate_date
+    select max(rate_date) as latest_rate_date
     from landed
-    group by currency_code
 ),
 
 expected as (
@@ -63,7 +60,7 @@ judged as (
         on e.currency_code = s.currency_code and e.calendar_date = s.calendar_date
     left join landed as l
         on e.currency_code = l.currency_code and e.rate_date = l.rate_date
-    inner join latest as t on e.currency_code = t.currency_code
+    cross join latest as t
 )
 
 select *

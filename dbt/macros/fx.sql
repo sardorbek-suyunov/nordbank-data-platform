@@ -69,7 +69,8 @@ cast({{ fx_scaled_units(units) }} as decimal(18,4))
 
   `fx_published_rates()`: every landed rate, one per currency and rate date (re-reads collapse to
   the earliest batch), with its nominal publication instant, the publication instant of the next
-  weekday after its date, and whether it is the latest landed for its currency. A fact joins it
+  weekday after its date, and whether its date is the feed's latest publication: the greatest rate
+  date landed for any currency. A fact joins it
   with `asof left join ... on currency and instant >= published_at`; `sl_fx_rates` joins it the
   same way at 23:59:59 UTC of each calendar date, so the two cannot disagree.
 
@@ -84,10 +85,12 @@ cast({{ fx_scaled_units(units) }} as decimal(18,4))
   - `fx_is_carried`: the rate's date is not the fact's UTC business date, so the rate was carried
     to it: across a weekend or a holiday, or from the day before when the fact precedes the
     day's publication;
-  - `fx_is_provisional`: the rate is the latest landed for its currency and the instant is after
-    the publication instant of the next weekday after the rate's date, so a newer rate may still
-    land and a rebuild may restate the row. Every other conversion is final and is never
-    restated by any rebuild.
+  - `fx_is_provisional`: the rate's date is the feed's latest publication date, across every
+    currency, and the instant is after the publication instant of the next weekday after it, so
+    the next publication has not landed yet and a rebuild may restate the row. Once any later
+    publication has landed the conversion is final, even for a currency that publication does
+    not carry: a TARGET holiday, or a currency the ECB has stopped quoting (BGN after 2025). Every
+    final conversion is never restated by any rebuild.
 #}
 
 {% macro fx_next_weekday(rate_date) -%}
@@ -106,7 +109,7 @@ select
     rate,
     {{ fx_publication_instant('rate_date') }} as published_at,
     {{ fx_publication_instant(fx_next_weekday('rate_date')) }} as next_published_at,
-    rate_date = max(rate_date) over (partition by quote_currency) as is_latest_landed
+    rate_date = max(rate_date) over () as is_latest_publication
 from (
     select distinct on (quote_currency, rate_date) quote_currency, rate_date, rate
     from {{ ref('br_ecb__fx_rates') }}
@@ -135,5 +138,5 @@ coalesce({{ currency }} <> 'EUR' and {{ fx_is_provisional(rate, instant) }}, fal
 {%- endmacro %}
 
 {% macro fx_is_provisional(rate, instant) -%}
-({{ rate }}.is_latest_landed and {{ instant }} > {{ rate }}.next_published_at)
+({{ rate }}.is_latest_publication and {{ instant }} > {{ rate }}.next_published_at)
 {%- endmacro %}
