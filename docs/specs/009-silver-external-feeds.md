@@ -239,3 +239,14 @@ name, and the scan is clean.
 winning declaration that two batches landed, which ingestion refuses and which would double
 its records. The additivity test is a singular test whose comment states its live floor of zero
 and why, since a singular test has no floor argument.
+
+**2026-10-04, silver conforms feed column names; bronze keeps the contract names (ruled on
+review).** Renaming `amount_total` while keeping `settlement_currency` was two rules for one
+question. One rule now: a feed contract's names stay in bronze, silver applies the column
+conventions, gold inherits silver's names, and every rename is listed in `traceability.md`,
+which `conventions.md` now says. Applied to every column of the five models:
+`settlement_currency` becomes `settlement_currency_code` in both settlement models, as an
+`_amount` travels with a `_currency_code`; `first_seen` and `last_change` become `first_seen_at`
+and `last_changed_at`, as timestamps; and section 5's `observed_from` and `observed_to` become
+`observed_from_date` and `observed_to_date`, as dates. `birth_dates` keeps its name, being text.
+The models rebuild with every test passing, and `make dbt-prove` passes with the fixtures renamed.
