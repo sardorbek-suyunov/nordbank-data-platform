@@ -18,3 +18,6 @@ Generic tests are declared in the model schema files and defined in `macros/`.
 
 A test returns the rows that violate it, naming keys and instants and never a value an
 identifier, quasi-identifier or sensitive column holds, and never stores its failures.
+
+Fixture names must never be values that also appear in source data: the documentation site
+publishes every test's SQL, and `make docs-scan` fails on a value the vault holds.
