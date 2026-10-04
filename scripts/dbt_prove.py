@@ -529,9 +529,44 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
         "regexp_replace(trim(upper(strip_accents({{ expression }}))), '\\s+', ' ', 'g')",
         "assert_name_normalisation",
     ),
+    (
+        "the lowest revision winning",
+        "settlement.sql",
+        "max(revision) as revision",
+        "min(revision) as revision",
+        "assert_settlement_winning_revision",
+    ),
+    (
+        "the winner chosen from the lines alone",
+        "settlement.sql",
+        "    union all\n    select settlement_date, file_sequence, revision from {{ trailers }}\n",
+        "",
+        "assert_settlement_winning_revision",
+    ),
+    (
+        "one sequence's winner applied to another",
+        "settlement.sql",
+        "    and records.file_sequence = winners.file_sequence\n",
+        "",
+        "assert_settlement_winning_revision",
+    ),
+    (
+        "the card token joined to every version of its card",
+        "settlement.sql",
+        "(select distinct card_reference, card_id from {{ cards }})",
+        "{{ cards }}",
+        "assert_settlement_resolution",
+    ),
+    (
+        "an unresolved line dropped",
+        "settlement.sql",
+        "left join (select distinct card_reference, card_id",
+        "inner join (select distinct card_reference, card_id",
+        "assert_settlement_resolution",
+    ),
 ]
 # A floor stated as a number, never read from the folder: the macro tests that exist.
-MACRO_TEST_FLOOR = 7
+MACRO_TEST_FLOOR = 9
 
 # Fixture models for the generic silver tests: each model's rows, and the one test planted to
 # fail on it. `clean` carries every test and must pass them all. A row is
