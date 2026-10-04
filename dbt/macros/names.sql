@@ -9,7 +9,11 @@
   decomposed form. `strip_accents` removes a combining mark, so `É` becomes `E` and `Å` becomes
   `A`, but `Ł` and `Ø` are letters of their own and stay as they are; transliterating them is a
   matching rule, not a representation.
+
+  Whitespace is collapsed before it is trimmed: `trim` removes spaces only, so a name that began
+  with a tab or ended with a line feed, trimmed first, kept a space at its edge once the tab
+  became one.
 #}
 {% macro normalise_name(expression) -%}
-regexp_replace(trim(upper(strip_accents({{ expression }}))), '\s+', ' ', 'g')
+trim(regexp_replace(upper(strip_accents({{ expression }})), '\s+', ' ', 'g'))
 {%- endmacro %}

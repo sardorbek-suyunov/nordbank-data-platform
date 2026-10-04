@@ -522,6 +522,13 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
         "upper({{ expression }})",
         "assert_name_normalisation",
     ),
+    (
+        "a name trimmed before its whitespace is collapsed",
+        "names.sql",
+        "trim(regexp_replace(upper(strip_accents({{ expression }})), '\\s+', ' ', 'g'))",
+        "regexp_replace(trim(upper(strip_accents({{ expression }}))), '\\s+', ' ', 'g')",
+        "assert_name_normalisation",
+    ),
 ]
 # A floor stated as a number, never read from the folder: the macro tests that exist.
 MACRO_TEST_FLOOR = 7
