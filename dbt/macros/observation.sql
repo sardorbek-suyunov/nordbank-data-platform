@@ -8,8 +8,8 @@
   period again, revised or not. Silver collapses each period's run of identical values, across
   consecutive requests, into one interval:
 
-  * `observed_from` is the request day the value was first observed;
-  * `observed_to` is the request day a different value was first observed, exclusive, or
+  * `observed_from_date` is the request day the value was first observed;
+  * `observed_to_date` is the request day a different value was first observed, exclusive, or
     9999-12-31 while it is the latest;
   * `is_latest` marks the period's last interval.
 
@@ -66,7 +66,7 @@ intervals as (
         series_id,
         observation_date,
         _run,
-        min(realtime_start) as observed_from,
+        min(realtime_start) as observed_from_date,
         arg_min(value, realtime_start) as value,
         arg_min(_batch_id, realtime_start) as _batch_id
     from runs
@@ -77,12 +77,12 @@ select
     series_id,
     observation_date,
     value,
-    observed_from,
+    observed_from_date,
     coalesce(
-        lead(observed_from) over w, date '9999-12-31'
-    ) as observed_to,
-    (lead(observed_from) over w is null) as is_latest,
+        lead(observed_from_date) over w, date '9999-12-31'
+    ) as observed_to_date,
+    (lead(observed_from_date) over w is null) as is_latest,
     _batch_id
 from intervals
-window w as (partition by series_id, observation_date order by observed_from)
+window w as (partition by series_id, observation_date order by observed_from_date)
 {%- endmacro %}

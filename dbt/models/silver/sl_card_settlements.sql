@@ -3,7 +3,8 @@
 -- transaction and merchant without correction. The winner is chosen once, from lines and
 -- trailers together, by the macro `sl_card_settlement_totals` uses too, so the two never mix
 -- revisions. No amount is converted: a line has a settlement date and no instant, and the
--- reconciliation compares in the settlement currency.
+-- reconciliation compares in the settlement currency. Column names follow the conventions, the
+-- contract's in bronze (traceability.md).
 with lines as (
     select * from {{ ref('br_cardnet__settlements') }}
 ),
@@ -31,7 +32,7 @@ select
     merchant_category_code,
     merchant_name,
     presentment,
-    settlement_currency,
+    settlement_currency as settlement_currency_code,
     settlement_amount,
     settlement_date,
     file_sequence,

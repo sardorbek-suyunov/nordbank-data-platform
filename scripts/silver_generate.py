@@ -482,7 +482,14 @@ FEEDS: tuple[Feed, ...] = (
                 "processor retired the field on 2026-09-03 at the acceptance anchor, and never "
                 "back-filled. The merchant is `merchant_id`.",
             ),
-            *(Carried(c) for c in ("presentment", "settlement_currency", "settlement_amount")),
+            Carried("presentment"),
+            Carried(
+                "settlement_currency",
+                name="settlement_currency_code",
+                note="In silver, `settlement_currency_code`, the name the conventions give the "
+                "currency an `_amount` travels with; bronze keeps the contract's name.",
+            ),
+            Carried("settlement_amount"),
             *(Carried(c) for c in SETTLEMENT_HEADER),
             _batch("the batch the line landed in, of its winning revision."),
             Added(
@@ -511,7 +518,7 @@ FEEDS: tuple[Feed, ...] = (
     Feed(
         "sl_card_settlement_totals",
         "br_cardnet__settlement_totals",
-        ("settlement_date", "file_sequence", "network", "settlement_currency"),
+        ("settlement_date", "file_sequence", "network", "settlement_currency_code"),
         45,
         "Silver card settlement totals, from `br_cardnet__settlement_totals` "
         "(contracts/cardnet/settlement_totals.yml). One row per trailer of each settlement date "
@@ -522,7 +529,12 @@ FEEDS: tuple[Feed, ...] = (
         (
             Carried("record_type"),
             Carried("network"),
-            Carried("settlement_currency"),
+            Carried(
+                "settlement_currency",
+                name="settlement_currency_code",
+                note="In silver, `settlement_currency_code`, the name the conventions give the "
+                "currency an `_amount` travels with; bronze keeps the contract's name.",
+            ),
             Carried("record_count"),
             Carried(
                 "amount_total",
@@ -585,8 +597,17 @@ FEEDS: tuple[Feed, ...] = (
                     ),
                 )
             ),
-            Carried("first_seen"),
-            Carried("last_change"),
+            Carried(
+                "first_seen",
+                name="first_seen_at",
+                note="In silver, `first_seen_at`: a timestamp, named as the conventions name one.",
+            ),
+            Carried(
+                "last_change",
+                name="last_changed_at",
+                note="In silver, `last_changed_at`: a timestamp, named for its event as the "
+                "conventions name one.",
+            ),
             _batch("the batch the list version landed as."),
         ),
     ),
@@ -633,7 +654,7 @@ FEEDS: tuple[Feed, ...] = (
     Feed(
         "sl_macro_indicators",
         "br_fred__series",
-        ("series_id", "observation_date", "observed_from"),
+        ("series_id", "observation_date", "observed_from_date"),
         1,
         "Silver macro indicators, from `br_fred__series` (contracts/fred/series.yml). One row per "
         "series, observation period and observed interval: each period's run of identical values "
@@ -652,13 +673,13 @@ FEEDS: tuple[Feed, ...] = (
                 "number is a revision.",
             ),
             Added(
-                "observed_from",
+                "observed_from_date",
                 "DATE",
                 "The request day the platform first observed this value for the period: the "
                 "`realtime_start` of the first observation of the run. Not a FRED vintage date.",
             ),
             Added(
-                "observed_to",
+                "observed_to_date",
                 "DATE",
                 "The request day the platform first observed a different value for the period, "
                 "exclusive, or 9999-12-31 while this is the latest. Not a FRED vintage date.",

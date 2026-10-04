@@ -86,9 +86,9 @@ models:
         config:
           meta:
             classification: non-personal
-      - name: settlement_currency
+      - name: settlement_currency_code
         data_type: VARCHAR
-        description: "`settlement_currency`: a field of each record, as Card processor clearing file, layout 1, contracts/cardnet/README.md defines it. Classification: `non-personal` (no restriction)."
+        description: "`settlement_currency`: a field of each record, as Card processor clearing file, layout 1, contracts/cardnet/README.md defines it. Classification: `non-personal` (no restriction). In silver, `settlement_currency_code`, the name the conventions give the currency an `_amount` travels with; bronze keeps the contract's name."
         config:
           meta:
             classification: non-personal

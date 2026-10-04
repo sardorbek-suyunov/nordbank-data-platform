@@ -261,22 +261,22 @@ having count(*) < {{ minimum }}
 {% test silver_observed_intervals(model, key, value='value') %}
 {%- set k = key | join(', ') -%}
 with ordered as (
-    select {{ k }}, observed_from, observed_to, is_latest, "{{ value }}" as observed_value,
-           lag(observed_to) over w as previous_to,
+    select {{ k }}, observed_from_date, observed_to_date, is_latest, "{{ value }}" as observed_value,
+           lag(observed_to_date) over w as previous_to,
            lag("{{ value }}") over w as previous_value,
-           lead(observed_from) over w as next_from,
+           lead(observed_from_date) over w as next_from,
            row_number() over w as position
       from {{ model }}
-    window w as (partition by {{ k }} order by observed_from)
+    window w as (partition by {{ k }} order by observed_from_date)
 ),
 
 judged as (
-    select {{ k }}, observed_from,
+    select {{ k }}, observed_from_date,
            case
-               when observed_from >= observed_to then 'an empty or inverted interval'
-               when position > 1 and observed_from <> previous_to
+               when observed_from_date >= observed_to_date then 'an empty or inverted interval'
+               when position > 1 and observed_from_date <> previous_to
                    then 'a gap or an overlap with the interval before'
-               when next_from is null and observed_to <> date '9999-12-31'
+               when next_from is null and observed_to_date <> date '9999-12-31'
                    then 'the last interval is closed'
                when is_latest is distinct from (next_from is null)
                    then 'the latest flag is not on the last interval alone'

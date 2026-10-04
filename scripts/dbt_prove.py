@@ -724,9 +724,9 @@ SPLIT_FIXTURES: dict[str, tuple[list, bool]] = {
 
 
 # A series' observed intervals for `silver_observed_intervals` (specification 009 section 5):
-# (k, observed_from, observed_to, value, is_latest). The clean fixture holds a revision, 1.0 to
-# 1.2 on key 1, and a missing value followed by a number on key 2; FRED has never landed, so
-# these are the only intervals the test has run against.
+# (k, observed_from_date, observed_to_date, value, is_latest). The clean fixture holds a
+# revision, 1.0 to 1.2 on key 1, and a missing value followed by a number on key 2; FRED has never
+# landed, so these are the only intervals the test has run against.
 O1, O2, O3 = "date '2026-07-15'", "date '2026-08-15'", "date '2026-09-15'"
 NO_VALUE = "null::decimal(18,8)"
 REVISED = [(1, O1, O3, "1.0", "false"), (1, O3, OPEN, "1.2", "true")]
@@ -815,7 +815,7 @@ def fact_fixture_files() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
         typed = [(k, f, t, f"cast({v} as decimal(18,8))", latest) for k, f, t, v, latest in rows]
         files[f"models/observed_{name}.sql"] = (
             f"select * from ({_values(typed, 5)}) "
-            "as t (k, observed_from, observed_to, value, is_latest)\n"
+            "as t (k, observed_from_date, observed_to_date, value, is_latest)\n"
         )
         properties += [
             f"  - name: observed_{name}",

@@ -60,7 +60,7 @@ produced as (
         file_sequence,
         revision,
         _batch_id,
-        network || '/' || settlement_currency as record_key
+        network || '/' || settlement_currency_code as record_key
     from {{ ref('sl_card_settlement_totals') }}
 ),
 
