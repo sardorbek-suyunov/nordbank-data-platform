@@ -27,6 +27,13 @@ version's `created_at` and `updated_at`, the `_batch_id` that read it, and for S
 columns. It does not carry `is_deleted`, which is false on every row silver keeps, the excluded
 measures, which open no version and are wrong on every row but the one that opened it, or the
 other audit columns, which describe a read rather than the entity.
+
+**The external feeds** (specification 009) are not entities with versions: a clearing file's
+records, a list snapshot's entities and a series' observations. Their silver is written by hand,
+and `FEEDS` states, for each, the bronze columns it carries, under the same or a new name and
+type, the columns it adds, its grain and its floor; their properties are generated from that and
+the feed contracts the same way, so a column's type, description and classification still have
+one source.
 """
 
 from __future__ import annotations
@@ -390,6 +397,250 @@ HAND_WRITTEN: tuple[Spec, ...] = (
         ),
     ),
 )
+
+
+# --- the external feeds (specification 009) ---------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Carried:
+    """A bronze column a feed model carries: under its own name or `name`, in the bronze type or
+    `data_type`, with `note` appended to the bronze description where silver changes it."""
+
+    source: str
+    name: str = ""
+    data_type: str = ""
+    note: str = ""
+
+    @property
+    def silver_name(self) -> str:
+        return self.name or self.source
+
+
+@dataclass(frozen=True)
+class Feed:
+    """A silver model over a feed's bronze entity, written by hand.
+
+    `floor` is a number stated here, below what the stack job's week lands. A feed that may never
+    land, FRED without a key, states `floor_once_registered` instead: the floor applies only
+    once a batch of the entity is registered, and the test says so.
+    """
+
+    name: str
+    upstream: str
+    grain: tuple[str, ...]
+    floor: int
+    description: str
+    columns: tuple[Carried | Added, ...]
+    floor_once_registered: tuple[str, str] | None = None
+
+
+def _batch(meaning: str) -> Carried:
+    return Carried("_batch_id", note=f"In silver, {meaning}")
+
+
+# The batch arithmetic and resolution are the settlement macros' (dbt/macros/settlement.sql). The
+# floors sit below the stack job's week, 2026-07-20 to 2026-07-26: 926 winning lines and 60
+# trailers.
+SETTLEMENT_HEADER = ("settlement_date", "file_sequence", "processor_id", "revision",
+                     "file_created_at")  # fmt: skip
+FEEDS: tuple[Feed, ...] = (
+    Feed(
+        "sl_card_settlements",
+        "br_cardnet__settlements",
+        ("settlement_date", "file_sequence", "transaction_reference"),
+        700,
+        "Silver card settlement lines, from `br_cardnet__settlements` "
+        "(contracts/cardnet/settlements.yml). Every detail line of each settlement date and "
+        "sender sequence's winning revision: the highest revision declared in bronze, across "
+        "lines and trailers together, whatever order the files arrived in; lines of different "
+        "sequences add. Each line is resolved to its card, transaction and merchant without "
+        "correction, and a line that resolves to nothing is kept with nulls. Amounts stay in the "
+        "settlement currency at source precision: detection never converts.",
+        (
+            *(
+                Carried(c)
+                for c in (
+                    "record_type",
+                    "transaction_reference",
+                    "transaction_date",
+                    "clearing_date",
+                    "network",
+                    "card_reference",
+                    "masked_pan",
+                    "merchant_category_code",
+                )
+            ),
+            Carried(
+                "merchant_name",
+                note="In silver, as landed: null on every line of a file sent after the "
+                "processor retired the field on 2026-09-03 at the acceptance anchor, and never "
+                "back-filled. The merchant is `merchant_id`.",
+            ),
+            *(Carried(c) for c in ("presentment", "settlement_currency", "settlement_amount")),
+            *(Carried(c) for c in SETTLEMENT_HEADER),
+            _batch("the batch the line landed in, of its winning revision."),
+            Added(
+                "card_id",
+                "BIGINT",
+                "The card the line's `card_reference` token names, from the distinct pairs of "
+                "token and card in `sl_cards`, never a join to its versions. Null when the bank "
+                "holds no card under the token.",
+                "pseudonymous_key",
+            ),
+            Added(
+                "transaction_id",
+                "BIGINT",
+                "The transaction whose `transaction_reference` the line carries, from "
+                "`sl_transactions`. Null when the bank holds no such transaction.",
+            ),
+            Added(
+                "merchant_id",
+                "BIGINT",
+                "The merchant of the line's transaction, from `sl_transactions`. Null for a "
+                "cash withdrawal, or when the transaction did not resolve.",
+            ),
+        ),
+    ),
+    Feed(
+        "sl_card_settlement_totals",
+        "br_cardnet__settlement_totals",
+        ("settlement_date", "file_sequence", "network", "settlement_currency"),
+        45,
+        "Silver card settlement totals, from `br_cardnet__settlement_totals` "
+        "(contracts/cardnet/settlement_totals.yml). One row per trailer of each settlement date "
+        "and sender sequence's winning revision, chosen by the same macro as the lines: the "
+        "processor's own count and total per network and settlement currency, over every detail "
+        "record it wrote, quarantined ones included. Silver compares nothing: lines against "
+        "trailers and trailers against the ledger are the reconciliation mart's (Q15).",
+        (
+            Carried("record_type"),
+            Carried("network"),
+            Carried("settlement_currency"),
+            Carried("record_count"),
+            Carried(
+                "amount_total",
+                name="file_total_amount",
+                note="In silver, `file_total_amount`: the file side of the settlement "
+                "reconciliation, signed, negative where refunds outweigh purchases.",
+            ),
+            *(Carried(c) for c in SETTLEMENT_HEADER),
+            _batch("the batch the trailer landed in, of its winning revision."),
+        ),
+    ),
+)
+
+
+def _added_column(column: Added) -> dbt_generate.Column:
+    return dbt_generate.Column(
+        column.name,
+        column.data_type,
+        column.classification,
+        f"{column.description} Classification: `{column.classification}` "
+        f"({dbt_generate.CLASS_NOTE[column.classification]}).",
+    )
+
+
+@dataclass
+class FeedModel:
+    feed: Feed
+    columns: list[dbt_generate.Column] = field(default_factory=list)
+
+
+def build_feeds() -> list[FeedModel]:
+    bronze = {m.name: m for m in dbt_generate.build_models()}
+    out = []
+    for feed in FEEDS:
+        if feed.upstream not in bronze:
+            raise SystemExit(f"silver-generate: {feed.name} reads {feed.upstream}, not a model")
+        by_name = {c.name: c for c in bronze[feed.upstream].columns}
+        model = FeedModel(feed)
+        for column in feed.columns:
+            if isinstance(column, Added):
+                model.columns.append(_added_column(column))
+                continue
+            if column.source not in by_name:
+                raise SystemExit(
+                    f"silver-generate: {feed.name} carries {column.source}, which "
+                    f"{feed.upstream} does not have"
+                )
+            source = by_name[column.source]
+            description = source.description
+            if column.note:
+                description = f"{description} {column.note}"
+            model.columns.append(
+                dbt_generate.Column(
+                    column.silver_name,
+                    column.data_type or source.data_type,
+                    source.classification,
+                    description,
+                )
+            )
+        names = [c.name for c in model.columns]
+        if len(names) != len(set(names)) or not set(feed.grain) <= set(names):
+            raise SystemExit(f"silver-generate: {feed.name} repeats a column or misses its grain")
+        out.append(model)
+    return out
+
+
+def render_feed_yml(model: FeedModel) -> str:
+    feed = model.feed
+    grain = ", ".join(feed.grain)
+    description = f"{feed.description} Grain: " + ", ".join(f"`{c}`" for c in feed.grain) + "."
+    lines = [
+        "# Generated by scripts/silver_generate.py from the contracts; do not edit.",
+        "version: 2",
+        "models:",
+        f"  - name: {feed.name}",
+        "    description: " + _quote(description),
+        "    config:",
+        "      meta:",
+        f"        upstream: {feed.upstream}",
+        f"        grain: [{grain}]",
+        "        generated_sql: false",
+        "    data_tests:",
+        "      - silver_unique_key:",
+        "          arguments:",
+        f"            columns: [{grain}]",
+        "          config:",
+        "            severity: error",
+        "      - silver_not_null:",
+        "          arguments:",
+        f"            columns: [{grain}]",
+        "          config:",
+        "            severity: error",
+    ]
+    if feed.floor_once_registered:
+        source_system, entity = feed.floor_once_registered
+        lines += [
+            "      - silver_min_rows_once_registered:",
+            "          arguments:",
+            f"            minimum: {feed.floor}",
+            "            registry: source('ops', 'batch_registry')",
+            f"            source_system: {source_system}",
+            f"            entity: {entity}",
+        ]
+    else:
+        lines += [
+            "      - silver_min_rows:",
+            "          arguments:",
+            f"            minimum: {feed.floor}",
+        ]
+    lines += [
+        "          config:",
+        "            severity: error",
+        "    columns:",
+    ]
+    for column in model.columns:
+        lines += [
+            f"      - name: {column.name}",
+            f"        data_type: {column.data_type}",
+            "        description: " + _quote(column.description),
+            "        config:",
+            "          meta:",
+            f"            classification: {column.classification}",
+        ]
+    return "\n".join(lines) + "\n"
 
 
 def specs() -> list[Spec]:
@@ -772,6 +1023,8 @@ def outputs() -> dict[Path, str]:
         files[MODELS / f"{model.name}.yml"] = render_yml(model)
         if model.spec.generated:
             files[MODELS / f"{model.name}.sql"] = render_sql(model)
+    for feed in build_feeds():
+        files[MODELS / f"{feed.feed.name}.yml"] = render_feed_yml(feed)
     files[INVENTORY] = render_inventory(models, INVENTORY.read_text(encoding="utf-8"))
     return files
 
