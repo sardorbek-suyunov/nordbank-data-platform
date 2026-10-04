@@ -91,15 +91,15 @@ models:
         config:
           meta:
             classification: sensitive
-      - name: first_seen
+      - name: first_seen_at
         data_type: TIMESTAMP WITH TIME ZONE
-        description: "`first_seen`: a field of each record, as OpenSanctions entity data format, https://www.opensanctions.org/docs/entities/ defines it. Classification: `non-personal` (no restriction)."
+        description: "`first_seen`: a field of each record, as OpenSanctions entity data format, https://www.opensanctions.org/docs/entities/ defines it. Classification: `non-personal` (no restriction). In silver, `first_seen_at`: a timestamp, named as the conventions name one."
         config:
           meta:
             classification: non-personal
-      - name: last_change
+      - name: last_changed_at
         data_type: TIMESTAMP WITH TIME ZONE
-        description: "`last_change`: a field of each record, as OpenSanctions entity data format, https://www.opensanctions.org/docs/entities/ defines it. Classification: `non-personal` (no restriction)."
+        description: "`last_change`: a field of each record, as OpenSanctions entity data format, https://www.opensanctions.org/docs/entities/ defines it. Classification: `non-personal` (no restriction). In silver, `last_changed_at`: a timestamp, named for its event as the conventions name one."
         config:
           meta:
             classification: non-personal

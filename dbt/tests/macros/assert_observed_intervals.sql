@@ -25,7 +25,7 @@ with observations (series_id, observation_date, realtime_start, realtime_end, va
     ('GDP', date '2026-03-01', date '2026-10-15', date '2026-10-15', 3.0, 'b-1015-01')
 ),
 
-expected (series_id, observation_date, value, observed_from, observed_to, is_latest, _batch_id) as (
+expected (series_id, observation_date, value, observed_from_date, observed_to_date, is_latest, _batch_id) as (
     values
     ('GDP', date '2026-01-01', 1.0, date '2026-07-15', date '2026-09-15', false, 'b-0715-01'),
     ('GDP', date '2026-01-01', 1.2, date '2026-09-15', date '9999-12-31', true, 'b-0915-01'),
@@ -55,11 +55,11 @@ unexpected as (
 select
     'missing' as problem,
     observation_date,
-    observed_from
+    observed_from_date
 from missing
 union all
 select
     'unexpected' as problem,
     observation_date,
-    observed_from
+    observed_from_date
 from unexpected

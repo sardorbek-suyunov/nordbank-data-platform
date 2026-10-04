@@ -1,7 +1,8 @@
 -- Sanctions list entities (specification 009 section 4): one row per entity per landed list
 -- version. One batch is one whole list (ADR 0015) and a snapshot the platform recognised as a
 -- no-op landed no batch, so every bronze row is an entity of a version, once. The feed's
--- multi-valued properties stay lists, and the partial birth dates stay text.
+-- multi-valued properties stay lists, and the partial birth dates stay text. Column names follow
+-- the conventions, the contract's in bronze (traceability.md).
 select
     entity_id,
     publisher_version,
@@ -14,7 +15,7 @@ select
     cast(countries as varchar[]) as countries,
     cast(nationalities as varchar[]) as nationalities,
     cast(birth_dates as varchar[]) as birth_dates,
-    first_seen,
-    last_change,
+    first_seen as first_seen_at,
+    last_change as last_changed_at,
     _batch_id
 from {{ ref('br_opensanctions__entities') }}
