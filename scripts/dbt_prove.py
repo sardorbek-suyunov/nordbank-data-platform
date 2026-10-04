@@ -515,9 +515,16 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
         "coalesce({{ valid_to_inclusive }}, date '9999-12-31')",
         "assert_business_validity_backdated",
     ),
+    (
+        "a name normalised with its accents kept",
+        "names.sql",
+        "upper(strip_accents({{ expression }}))",
+        "upper({{ expression }})",
+        "assert_name_normalisation",
+    ),
 ]
 # A floor stated as a number, never read from the folder: the macro tests that exist.
-MACRO_TEST_FLOOR = 6
+MACRO_TEST_FLOOR = 7
 
 # Fixture models for the generic silver tests: each model's rows, and the one test planted to
 # fail on it. `clean` carries every test and must pass them all. A row is
