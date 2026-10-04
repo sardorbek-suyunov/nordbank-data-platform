@@ -340,3 +340,16 @@ stated floor: transactions at least 22,000 true and 2,500 false, payments 4,500 
 `ci` book's first day (28,012 and 3,408; 5,720 and 61). On the sixty-one-day history: 43,368 and
 5,404 transactions, 9,640 and 113 payments, no null. `make dbt-prove` fails the test on a flag all
 one way, one side below its floor, and a null.
+
+### 2026-10-04 — the intermittent `make lint` exit 2
+
+Twice during implementation `make lint` exited 2 on a tree whose next run passed. Ruled on
+review: find the cause. It is deterministic, not intermittent: both failing runs sent the output
+to `/dev/null`, and every passing run wrote to a file, a pipe or the console. On Windows
+`isatty()` is true for the null device, so sqlfluff took its terminal path and printed its
+summary with an emoji, which Python encoded in the ANSI code page (cp1251 on this machine) and
+could not: a `UnicodeEncodeError` after a clean lint, exit 1 from sqlfluff and 2 from make.
+Reproduced on a clean worktree of the branch, three runs of three, and confirmed absent with a
+file, 25 runs of 25. `scripts/lint_sql.py` now runs sqlfluff with UTF-8 output; with it, three
+runs to `/dev/null` exit 0, and the worktree without it still exits 2. CI on Linux never took the
+path. A unit test holds the environment.
