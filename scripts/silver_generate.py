@@ -433,6 +433,8 @@ class Feed:
     description: str
     columns: tuple[Carried | Added, ...]
     floor_once_registered: tuple[str, str] | None = None
+    # Further model-level tests, as the lines of their YAML under `data_tests`.
+    extra_tests: tuple[str, ...] = ()
 
 
 def _batch(meaning: str) -> Carried:
@@ -621,6 +623,58 @@ FEEDS: tuple[Feed, ...] = (
             _batch("the batch the list version landed as."),
         ),
     ),
+    # FRED has never landed: the deployment holds no key, so bronze is typed and empty and the
+    # floor applies only once a batch is registered. One observation per series and period is the
+    # least a keyed run lands.
+    Feed(
+        "sl_macro_indicators",
+        "br_fred__series",
+        ("series_id", "observation_date", "observed_from"),
+        1,
+        "Silver macro indicators, from `br_fred__series` (contracts/fred/series.yml). One row per "
+        "series, observation period and observed interval: each period's run of identical values "
+        "across consecutive requests is one interval, from the request day the value was first "
+        "observed to the request day a different value was, and the period's last interval is "
+        "the latest. The interval is when the platform observed the value, not FRED's real-time "
+        "vintage: the feed requests the current vintage only, so the `realtime_start` and "
+        "`realtime_end` FRED returns are both the request day, and silver does not carry them.",
+        (
+            Carried("series_id"),
+            Carried("observation_date"),
+            Carried(
+                "value",
+                note="In silver, the value observed throughout the interval; null where FRED "
+                "sent its missing marker, which is a value of its own: a null followed by a "
+                "number is a revision.",
+            ),
+            Added(
+                "observed_from",
+                "DATE",
+                "The request day the platform first observed this value for the period: the "
+                "`realtime_start` of the first observation of the run. Not a FRED vintage date.",
+            ),
+            Added(
+                "observed_to",
+                "DATE",
+                "The request day the platform first observed a different value for the period, "
+                "exclusive, or 9999-12-31 while this is the latest. Not a FRED vintage date.",
+            ),
+            Added(
+                "is_latest",
+                "BOOLEAN",
+                "Whether this is the period's latest observed interval, open to 9999-12-31.",
+            ),
+            _batch("the batch that landed the interval's first observation."),
+        ),
+        floor_once_registered=("fred", "series"),
+        extra_tests=(
+            "      - silver_observed_intervals:",
+            "          arguments:",
+            "            key: [series_id, observation_date]",
+            "          config:",
+            "            severity: error",
+        ),
+    ),
 )
 
 
@@ -722,6 +776,7 @@ def render_feed_yml(model: FeedModel) -> str:
     lines += [
         "          config:",
         "            severity: error",
+        *feed.extra_tests,
         "    columns:",
     ]
     for column in model.columns:
