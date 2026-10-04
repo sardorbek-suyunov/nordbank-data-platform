@@ -4,8 +4,7 @@ Every object the platform plans to build, with its layer, grain, upstream inputs
 business questions it serves. Each row carries the milestone that builds it. The platform tables
 marked M1 and M4 exist, defined in `infra/warehouse/schema/` and, for the health probe, by the
 warehouse initialiser, and so do the bronze models, generated from the contracts, the seed, and
-the silver models specification 008 builds; the settlement, sanctions and FRED silver models are
-specification 009's, and nothing in the gold sections exists yet.
+the silver models specifications 008 and 009 build; nothing in the gold sections exists yet.
 
 The inventory exists so that the coverage rule in
 [business_questions.md](business_questions.md) can be checked in both directions: no source
@@ -37,8 +36,8 @@ Built at M4 by specification 007. The section below is generated from the contra
 
 | Object | Grain | Lake prefix | Contract versions | Consumed by |
 |---|---|---|---|---|
-| `br_cardnet__settlement_totals` | `network`, `settlement_currency`, `_batch_id` | `bronze/cardnet/settlement_totals/` | 1 | `sl_card_settlement_totals` |
-| `br_cardnet__settlements` | `transaction_reference`, `_batch_id` | `bronze/cardnet/settlements/` | 1, 2 | `sl_card_settlements` |
+| `br_cardnet__settlement_totals` | `network`, `settlement_currency`, `_batch_id` | `bronze/cardnet/settlement_totals/` | 1 | `sl_card_settlement_totals`; `sl_card_settlements` |
+| `br_cardnet__settlements` | `transaction_reference`, `_batch_id` | `bronze/cardnet/settlements/` | 1, 2 | `sl_card_settlement_totals`; `sl_card_settlements` |
 | `br_corebank__account_holders` | `account_holder_id`, `_batch_id` | `bronze/corebank/account_holders/` | 1 | `sl_account_holders`; bridge_account_holder, Q3, Q6, Q11 |
 | `br_corebank__account_statuses` | `account_status_id`, `_batch_id` | `bronze/corebank/account_statuses/` | 1 | Active account rule, Q1; Attributes of `dim_account`; `sl_account_statuses` |
 | `br_corebank__account_types` | `account_type_id`, `_batch_id` | `bronze/corebank/account_types/` | 1 | Attributes of `dim_account`; Deposit balance, Q3; `sl_account_types` |
@@ -86,7 +85,7 @@ Built at M4 by specification 007. The section below is generated from the contra
 | `br_corebank__transactions` | `transaction_id`, `_batch_id` | `bronze/corebank/transactions/` | 1 | Active account rule, Q1; Customer-initiated rule, Q1, Q6, Q11; Q15, Q16; Q19; Structuring, Q11; `sl_transactions`; fct_transactions, Q10, Q19; fct_transactions, Q4, Q6, Q11; structuring, Q11 |
 | `br_ecb__fx_rates` | `rate_date`, `quote_currency`, `_batch_id` | `bronze/ecb/fx_rates/` | 1 | `sl_fx_rates`; `sl_payments`; `sl_transactions` |
 | `br_fred__series` | `series_id`, `observation_date`, `realtime_start`, `_batch_id` | `bronze/fred/series/` | 1 | `sl_macro_indicators` |
-| `br_opensanctions__entities` | `entity_id`, `_batch_id` | `bronze/opensanctions/entities/` | 1 | `sl_sanctions_entities` |
+| `br_opensanctions__entities` | `entity_id`, `_batch_id` | `bronze/opensanctions/entities/` | 1 | `sl_sanctions_entities`; `sl_sanctions_names` |
 
 <!-- end of generated bronze models -->
 
@@ -103,22 +102,23 @@ One model per source entity, at entity grain, built at M5 unless noted.
 | `sl_accounts` | One row per account version (SCD2) | `br_corebank__accounts` | Q1, Q3, Q13 |
 | `sl_account_balance_observations` | One row per account per observed balance | `br_corebank__accounts` | The balance `sl_accounts` excludes from its projection; M7 reconciles it against derived balances |
 | `sl_account_holders` | One row per account and holder version (SCD2) | `br_corebank__account_holders` | Q3, Q6, Q11 |
-| `sl_cards` | One row per card version (SCD2) | `br_corebank__cards` | Q4, Q10 |
+| `sl_cards` | One row per card version (SCD2) | `br_corebank__cards` | Q4, Q10; Q15, through `sl_card_settlements`' resolution and the ledger's card product |
 | `sl_merchants` | One row per merchant version (SCD2) | `br_corebank__merchants` | Q4 |
 | `sl_transactions` | One row per transaction | `br_corebank__transactions`, `br_ecb__fx_rates` | Q1, Q4, Q6, Q10, Q11, Q12, Q15, Q19 |
 | `sl_payments` | One row per payment instruction version | `br_corebank__payments`, `br_ecb__fx_rates` | Q12, Q13 |
 | `sl_loans` | One row per loan version (SCD2) | `br_corebank__loans` | Q5, Q7, Q8, Q9 |
 | `sl_loan_applications` | One row per application version | `br_corebank__loan_applications` | Q8, Q9 |
 | `sl_loan_installments` | One row per loan and installment version | `br_corebank__loan_installments` | Q7, Q8, Q9 |
-| `sl_gl_transactions` | One row per posting batch | `br_corebank__gl_transactions` | Q16 |
+| `sl_gl_transactions` | One row per posting batch | `br_corebank__gl_transactions` | Q15, the source entity that ties a ledger entry to its card transaction; Q16 |
 | `sl_gl_entries` | One row per ledger line | `br_corebank__gl_entries` | Q15, Q16 |
 | `sl_fraud_alerts` | One row per alert version | `br_corebank__fraud_alerts` | Q10 |
 | `sl_login_sessions` | One row per session | `br_corebank__login_sessions` | Q19 |
 | `sl_fx_rates` | One row per currency per calendar date: the conversion rule at 23:59:59 UTC, gap-filled, carried and provisional flags | `br_ecb__fx_rates`; the last fact date from `sl_transactions`, `sl_payments` | Every EUR conversion, Q14 |
-| `sl_sanctions_entities` | One row per sanctioned entity per list version | `br_opensanctions__entities` | Q12 |
-| `sl_card_settlements` | One row per settlement file line | `br_cardnet__settlements` | Q15 |
-| `sl_card_settlement_totals` | One row per clearing file trailer: settlement date, sequence, revision, network and currency | `br_cardnet__settlement_totals` | Q15, the processor's own totals `mart_control_settlement_reconciliation` compares with the ledger |
-| `sl_macro_indicators` | One row per series and period | `br_fred__series` | Reference-only at M5; consumer decided with the funding cost assumption before M6 |
+| `sl_sanctions_entities` | One row per entity per landed list version: `entity_id`, `publisher_version` | `br_opensanctions__entities` | Q12 |
+| `sl_sanctions_names` | One row per entity, landed list version and name, aliases included, with `name_type` and the normalised name: `entity_id`, `publisher_version`, `name` | `br_opensanctions__entities` | Q12, the names specification 010's screening job matches |
+| `sl_card_settlements` | One row per detail line of each settlement date and sender sequence's winning revision, resolved to card, transaction and merchant: `settlement_date`, `file_sequence`, `transaction_reference` | `br_cardnet__settlements`, `br_cardnet__settlement_totals`, `sl_cards`, `sl_transactions` | Q15 |
+| `sl_card_settlement_totals` | One row per trailer of each settlement date and sender sequence's winning revision: `settlement_date`, `file_sequence`, `network`, `settlement_currency` | `br_cardnet__settlement_totals`, `br_cardnet__settlements` | Q15, the processor's own totals, `file_total_amount`, which `mart_control_settlement_reconciliation` compares with the ledger |
+| `sl_macro_indicators` | One row per series, observation period and observed interval: `series_id`, `observation_date`, `observed_from`; `value`, `observed_from`, `observed_to` and `is_latest`, the interval being when the platform observed the value, not FRED's real-time vintage | `br_fred__series` | Reference-only at M5; consumer decided with the funding cost assumption before M6 |
 
 Every `ref` table and `agent_locations` has a silver model generated from its contract
 (specification 008 section 5), listed below with what consumes it. Gold reads silver only, so a
