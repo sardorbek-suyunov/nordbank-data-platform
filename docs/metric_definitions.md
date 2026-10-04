@@ -421,7 +421,7 @@ sequences, which add. Measured on the sixty-one-day history (specification 009):
 per date, 6 to 14 cells each, 644 cells in all.
 
 **The file side.** `sl_card_settlement_totals.file_total_amount`, `.network`,
-`.settlement_currency` and `.settlement_date`: the processor's own totals over every detail
+`.settlement_currency_code` and `.settlement_date`: the processor's own totals over every detail
 record it wrote, of each date and sequence's winning revision, which silver has already chosen.
 Not the lines: a quarantined line is missing from them and still counts in its trailer.
 
