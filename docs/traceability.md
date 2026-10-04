@@ -109,10 +109,13 @@ by the rule in architecture.md.
 | `fct_gl_entries.amount` | `core.gl_entries.amount` | Signed: debit positive, credit negative |
 | `fct_gl_entries.currency_code` | `core.gl_entries.entry_currency_code` | Balance is enforced per currency, so Q16 groups by it |
 | Posting batch for Q16 | `core.gl_transactions` | **Gap 9, resolved.** The header is new. `model_inventory.md` gains `br_corebank__gl_transactions` and `sl_gl_transactions` |
-| `sl_card_settlements.file_total_amount` | `cardnet` settlement totals contract: `settlement_totals.amount_total` | **Gap 10, resolved at M4.** The card network's clearing file is a separate source with its own contracts, `contracts/cardnet/`, and the file's total arrives in its trailer, landed as `br_cardnet__settlement_totals` |
-| `sl_card_settlements.settlement_currency` | `cardnet` settlements contract: `settlements.settlement_currency` | As above |
-| `sl_card_settlements.settlement_date` | `cardnet` settlements contract: `settlements.settlement_date` | As above |
-| `sl_card_settlements.network` | `cardnet` settlements contract: `settlements.network` | As above. `ref.card_products.network` is the issuing side and is not the same column |
+| `sl_card_settlement_totals.file_total_amount` | `cardnet` settlement totals contract: `settlement_totals.amount_total` | **Gap 10, resolved at M4.** The card network's clearing file is a separate source with its own contracts, `contracts/cardnet/`, and the file's total arrives in its trailer, landed as `br_cardnet__settlement_totals`. Specification 009 placed it on the totals model, where the trailer is, rather than on the lines, which a quarantined record leaves short |
+| `sl_card_settlement_totals.settlement_currency` | `cardnet` settlement totals contract: `settlement_totals.settlement_currency` | As above |
+| `sl_card_settlement_totals.settlement_date` | `cardnet` settlement totals contract: `settlement_totals.settlement_date`, from the file's header | As above |
+| `sl_card_settlement_totals.network` | `cardnet` settlement totals contract: `settlement_totals.network` | As above |
+| `sl_card_settlements.network` | `cardnet` settlements contract: `settlements.network` | The network the processor reports for a line. `ref.card_products.network` is the issuing side and a different column; the ledger side of Q15 reaches a network only through it, and the two agree on every one of the 11,260 landed lines |
+| Q15 ledger network | `core.gl_transactions.source_entity_code` and `source_entity_id`, then `core.transactions.card_id`, `core.cards.card_product_code` and `ref.card_products.network` | Specification 009's feasibility probe: no account attributes a card item to a network, because nothing posts to the card settlement accounts 1200 and 2100 and card items post to the shared cash account 1000. The path is stated in `metric_definitions.md` |
+| Q15 settlement lag | `cardnet` settlements contract: `source_of_truth.settlement_lag_days` | The calendar days from clearing, the ledger's posting date, to settlement. One machine-readable copy, read through the `settlement_lag_days` macro; the simulated processor's profile states it too, and a unit test holds the two equal |
 
 ## Platform tables
 

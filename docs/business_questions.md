@@ -47,7 +47,7 @@ tests. Every term below that could be computed more than one defensible way is p
 | # | Question | Persona | Target mart | Grain |
 |---|---|---|---|---|
 | 14 | Net FX exposure by currency, daily | Treasurer | `mart_treasury_fx_exposure` | One row per date and currency |
-| 15 | Settlement breaks: card network file totals versus internal ledger totals | Head of Financial Control | `mart_control_settlement_reconciliation` | One row per settlement date and card network file |
+| 15 | Settlement breaks: card network file totals versus internal ledger totals | Head of Financial Control | `mart_control_settlement_reconciliation` | One row per settlement date, card network and settlement currency, summed over the sender's file sequences |
 | 16 | Daily general ledger integrity: total debits equal total credits | Financial Controller | `mart_control_gl_integrity` | One row per posting date |
 
 ## Data operations
